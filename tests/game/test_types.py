@@ -1,5 +1,6 @@
 """P2 类型冒烟：能构造、字段可访问、默认值正确。"""
 from game import (
+    Cost,
     GameState,
     Grid,
     GridPos,
@@ -9,10 +10,13 @@ from game import (
     Point2,
     Queue,
     QueueItem,
+    QueueOp,
     RawGameState,
     RawOrder,
     RawUnit,
+    Role,
     Unit,
+    WorkerTask,
 )
 
 
@@ -73,8 +77,28 @@ def test_operation():
 def test_queue_item_defaults():
     qi = QueueItem(op="train", type="terran/marine")
     assert qi.count == 1 and qi.task is None and qi.when is None
+    assert qi.op is QueueOp.TRAIN  # 字符串构造自动归一化为枚举成员
     q = Queue(name="opening", items=[qi])
     assert q.items[0].count == 1
+
+
+def test_queue_item_op_and_task_coercion():
+    qi = QueueItem(op="assign_workers", task="gas")
+    assert qi.op is QueueOp.ASSIGN_WORKERS
+    assert qi.task is WorkerTask.GAS
+    assert WorkerTask.MINERAL == "mineral"  # str 基类：与字符串比较不破坏既有习惯
+
+
+def test_cost_dataclass():
+    c = Cost(minerals=50, vespene=0, supply=1)
+    assert c.minerals == 50 and c.vespene == 0 and c.supply == 1
+    assert Cost() == Cost(minerals=0, vespene=0, supply=0)  # 默认零成本
+
+
+def test_role_enum():
+    assert Role.WORKER == "worker"
+    assert Role("combat") is Role.COMBAT
+    assert [r.value for r in Role] == ["worker", "combat", "building"]
 
 
 def test_gamestate_owner_enum():

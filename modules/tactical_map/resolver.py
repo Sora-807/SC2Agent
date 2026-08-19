@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from game import Point2
-from game.operation import OP_CATALOG
+from game.operation import OP_CATALOG, ParamType
 
 from tactical_map.region import RegionLayer
 
@@ -44,10 +44,10 @@ def resolve_action_params(action: str, params: dict, layer: RegionLayer | None) 
     spec = OP_CATALOG.get(action, [])
     out = dict(params)
     for name, ptype, _required in spec:
-        if ptype == "point" and name in out:
+        if ptype == ParamType.POINT and name in out:
             p = resolve_target(out[name], layer)
             out[name] = _to_pair(p) if p is not None else out[name]
-        elif ptype == "points" and name in out:
+        elif ptype == ParamType.POINTS and name in out:
             pts: list = []
             for item in (out[name] or []):
                 p = resolve_target(item, layer)

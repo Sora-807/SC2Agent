@@ -5,8 +5,8 @@ from game import OP_CATALOG, Operation, is_known_action, validate_op
 def test_known_actions():
     for a in [
         "move_to", "attack_move_to", "hold_position", "stop", "follow", "patrol",
-        "focus_fire", "build", "train", "research", "load", "unload", "use_ability",
-        "cancel", "morph",
+        "focus_fire", "build", "train", "research", "assign_workers", "load",
+        "unload", "use_ability", "cancel", "morph",
     ]:
         assert is_known_action(a), a
 
@@ -36,3 +36,18 @@ def test_build_requires_type_and_position():
     op = Operation(op_id=1, unit_tags=[1], action="build", params={"type": "SUPPLYDEPOT"}, seq=0)
     errs = validate_op(op)
     assert any("position" in e for e in errs)
+
+def test_assign_workers_requires_task_and_count():
+    op = Operation(op_id=1, unit_tags=[1], action="assign_workers", params={"task": "mineral"}, seq=0)
+    errs = validate_op(op)
+    assert any("count" in e for e in errs)
+
+
+def test_op_catalog_param_types_are_paramtype():
+    """OP_CATALOG 的参数类型全部是 ParamType 枚举成员（闭集控制词，防拼写漂移）。"""
+    from game.operation import OP_CATALOG, ParamType
+    for action, params in OP_CATALOG.items():
+        for name, ptype, required in params:
+            assert isinstance(ptype, ParamType), f"{action}/{name}: {ptype!r} 不是 ParamType"
+            assert isinstance(required, bool), f"{action}/{name}: required 不是 bool"
+
