@@ -1,0 +1,62 @@
+{
+  "terran/scv": {
+    "burnysc2_name": "SCV",
+    "display_name_zh": "工程兵",
+    "role": "worker",
+    "capabilities": ["gather", "build", "repair"],
+    "cost": {"minerals": 50, "vespene": 0, "supply": 1},
+    "build_time": 12,
+    "produced_by": "terran/commandcenter",
+    "prerequisites": []
+  },
+  "terran/marine": {
+    "burnysc2_name": "MARINE",
+    "display_name_zh": "机枪兵",
+    "role": "combat",
+    "capabilities": ["attack", "move"],
+    "cost": {"minerals": 50, "vespene": 0, "supply": 1},
+    "build_time": 18,
+    "produced_by": "terran/barracks",
+    "prerequisites": ["terran/barracks"]
+  },
+  "terran/medivac": {
+    "burnysc2_name": "MEDIVAC",
+    "display_name_zh": "医疗运输机",
+    "role": "combat",
+    "capabilities": ["heal", "transport", "move"],
+    "cost": {"minerals": 100, "vespene": 100, "supply": 2},
+    "build_time": 30,
+    "produced_by": "terran/starport",
+    "prerequisites": ["terran/starport"]
+  },
+  "terran/commandcenter": {
+    "burnysc2_name": "COMMANDCENTER",
+    "display_name_zh": "指挥中心",
+    "role": "building",
+    "capabilities": ["train", "dropoff"],
+    "cost": {"minerals": 400, "vespene": 0, "supply": 0},
+    "build_time": 71,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "terran/supplydepot": {
+    "burnysc2_name": "SUPPLYDEPOT",
+    "display_name_zh": "补给站",
+    "role": "building",
+    "capabilities": ["supply"],
+    "cost": {"minerals": 100, "vespene": 0, "supply": 0},
+    "build_time": 21,
+    "produced_by": null,
+    "prerequisites": ["terran/commandcenter"]
+  },
+  "terran/barracks": {
+    "burnysc2_name": "BARRACKS",
+    "display_name_zh": "兵营",
+    "role": "building",
+    "capabilities": ["train"],
+    "cost": {"minerals": 150, "vespene": 0, "supply": 0},
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": ["terran/supplydepot"]
+  }
+}

@@ -1,0 +1,24 @@
+[project]
+name = "sc2-agent-next"
+version = "0.0.1"
+description = "StarCraft 2 agent rebuild (sc2_agent_next)"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "burnysc2>=7.3.0",
+    "pyyaml>=6.0.3",
+]
+
+# 不作为可安装包构建；modules/ 作为源根（pytest pythonpath=modules）
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["modules"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
