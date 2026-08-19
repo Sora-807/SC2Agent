@@ -24,6 +24,7 @@ class FakeUnit:
     def stop(self, queue=False): return ("stop", self.tag)
     def patrol(self, p, queue=False): return ("patrol", self.tag, p)
     def smart(self, t, queue=False): return ("smart", self.tag, t)
+    def gather(self, t, queue=False): return ("gather", self.tag, t)
     def build(self, t, p=None, queue=False): return ("build", self.tag, t, p)
     def train(self, t, queue=False): return ("train", self.tag, t)
     def research(self, t, queue=False): return ("research", self.tag, t)
@@ -80,6 +81,12 @@ def test_follow_and_focus_fire():
     assert fol == [("move", 1, units[1])]  # V1 近似：follow = move-to-target
     ff = translate_op(_op("focus_fire", unit_tags=[1], target_unit=2), _find(units))
     assert ff == [("attack", 1, units[1])]
+
+
+def test_gather():
+    units = [FakeUnit(1), FakeUnit(2)]
+    assert translate_op(_op("gather", unit_tags=[1], target_unit=2), _find(units)) == [("gather", 1, units[1])]
+    assert translate_op(_op("gather", target_unit=99), _find([FakeUnit(1)])) == []  # 目标缺失 no-op
 
 
 def test_load_uses_smart():

@@ -190,6 +190,13 @@ def _t_focus_fire(op, find_unit, catalog=None):
     return [u.attack(tgt) for u in units] if tgt is not None else []
 
 
+def _t_gather(op, find_unit, catalog=None):
+    """采集：assign_workers 经生产运行时 WorkerAllocator 展开后的落地原子（P0）。"""
+    tgt = find_unit(op.params["target_unit"]) if op.params.get("target_unit") else None
+    units = _units(op, find_unit)
+    return [u.gather(tgt) for u in units] if tgt is not None else []
+
+
 def _t_load(op, find_unit, catalog=None):
     """V1 近似：smart(target_unit)。
 
@@ -258,6 +265,7 @@ TRANSLATORS: dict[str, object] = {
     "train": _t_train,
     "research": _t_research,
     "load": _t_load,
+    "gather": _t_gather,
 }
 
 # OP_CATALOG 中尚未翻译到 burnysc2 命令的 action → 原因。
@@ -269,7 +277,7 @@ UNIMPLEMENTED_ACTIONS: dict[str, str] = {
     "use_ability": "params.ability 是稳定 ID；待 ability 目录（stable_id↔AbilityId 映射）落地",
     "cancel": "取消建造/训练需按上下文选 CANCEL_BUILDINPROGRESS/CANCEL_QUEUE*；待 ability 目录",
     "morph": "Zerg 变形（MORPH_*）；V1 Terran 场景暂不需要，待三族目录",
-    "assign_workers": "SCV→矿脉/气井的具体配对由生产运行时 WorkerAllocator 展开成 gather 级操作；driver 侧无对应单命令",
+    "assign_workers": "复合意图：由生产运行时 production.worker.WorkerAllocator 展开成 gather/stop 级操作（矿2气3饱和）；driver 不直接执行",
 }
 
 

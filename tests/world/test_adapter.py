@@ -1,5 +1,5 @@
 """world adapter：neutral 过滤 + owner 映射 + 字段对齐 + V1 no-op 透传。"""
-from game import Grid, Owner, Point2, RawGameState, RawOrder, RawUnit
+from game import GameState, Grid, Owner, Point2, RawGameState, RawOrder, RawUnit
 from world.adapter import adapt, is_neutral_resource
 
 
@@ -25,6 +25,21 @@ def test_neutral_resource_filtered():
     tags = {u.tag for u in gs.units}
     assert tags == {1, 3}  # mineral (tag 2) filtered out
     assert all(u.type_name != "MINERALFIELD" for u in gs.units)
+
+
+def test_resources_extracted():
+    """中性资源节点拆到 GameState.resources（WorkerAllocator/生产约束用），不进 units。"""
+    units = [_raw_unit(1, 1, "SCV"), _raw_unit(2, 3, "MINERALFIELD", pos=(5.0, 5.0)),
+             _raw_unit(3, 3, "VESPENEGEYSER", pos=(6.0, 6.0)), _raw_unit(4, 3, "ZERGLING")]
+    gs = adapt(_raw(units))
+    assert {u.tag for u in gs.units} == {1, 4}
+    res = {u.tag: u for u in gs.resources}
+    assert set(res) == {2, 3}
+    assert res[2].type_name == "MINERALFIELD" and res[2].position == Point2(5.0, 5.0)
+    assert res[3].type_name == "VESPENEGEYSER"
+    # 默认值：老构造方式不传 resources 也不炸
+    assert GameState(seq=0, game_time=0.0, minerals=0, vespene=0, supply_used=0, supply_cap=0,
+                     units=[], map_size=(0, 0), creep=Grid(1, 1, [[0]]), visibility=Grid(1, 1, [[0]])).resources == []
 
 
 def test_owner_mapping():

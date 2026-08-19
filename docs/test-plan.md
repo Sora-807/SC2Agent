@@ -29,8 +29,8 @@
 - ✅ 依赖：只 game（V1；dep-check 绿）。
 - ✅ RawGameState→GameState 对齐：`alliance+type→Owner`（**按 TYPE 判 neutral**，过滤矿脉/气井/装饰物）、`health→hp`、orders adapt、position/grid 透传。
 - ✅ V1 no-op：坐标原点一致（左下）、grid dims=map_size、无规则层（spike + 集成 check 已证）。
+- ✅ resource_nodes 抽取：中性资源拆到 `GameState.resources`（矿脉/气井；WorkerAllocator/生产约束用；不进 units）。
 - ⏳ 稳定 type_id / ability 映射（留 catalog）。
-- ⏳ resource_nodes 抽取（给 map 模块：矿脉/气井位置）。
 - ⏳ D11：mechanics.LayerComputer（power/addon）插入后补全（届时 adapt 注入 mechanics）。
 
 ## flow（modules/flow，引擎）
@@ -50,10 +50,20 @@
 - ⏳ burnysc2 Move order 的 target_world_space_pos 为 None（目标在 proto 别处；非 bug，review 留意）。
 
 ## constraint（modules/constraint）
-- ⏳ 依赖：game/mechanics/tactical_map（dep-check）。
-- ⏳ `(GameState, action)→bool`：minerals/vespene/supply/prereq/placement/overlap。
-- ⏳ 与 mechanics/tactical_map 同源（不另算规则）。
-- ⏳ 结构化错误（含原因+位置）。
+- ✅ 依赖：game（V1；dep-check 绿）；规则来源 = catalog 单点（改 JSON 不改代码）。
+- ✅ `check_build/check_train/check_assign_workers → ConstraintResult(ok, reasons)`：资源/供给/前置/放置格点占用（V1 单格近似，footprint 闭区间待 ADR-0027 升级）。
+- ✅ 结构化错误（reasons 带资源缺额/前置/供给/占用）。
+- ⏳ 与 mechanics 同源（upgrade 目录落地后 research 校验）；placement/overlap 完整 footprint。
+
+## production（modules/production，生产运行时）
+- ✅ 依赖：game/constraint/tactical_map（dep-check 绿）；port duck-typing（不 import driver）。
+- ✅ **队首 constraint 门控 drain**（`test_runtime.py`）：矿不够阻塞不发、够了再发；队首阻塞按住后续项；train count>1 逐帧排队；被丢弃项不占帧预算。
+- ✅ build：placement 解析（PlacementExact→PosMark/BuildSlot、PlacementInRegion→按声明顺序找未被占 slot、全占→阻塞）；缺 placement/未登记名/越界 index → 出队记入 `dropped`（R7 降级，不阻塞整队）。
+- ✅ assign_workers 无门控立即消费，展开成 gather/stop 级 op（`test_worker.py`：矿 2/气 3 饱和、矿脉分摊、饱和度从 orders 派生、idle 只解放采集者、catalog role 选工兵）。
+- ✅ 队列工具操作：submit/append/prepend/clear/remove/reorder。
+- ✅ research/cancel = V1 不支持清单（UNSUPPORTED_QUEUE_OPS，带原因，出队记入 dropped）。
+- ✅ `gather` 动作已落地到 OP_CATALOG + driver 翻译 + burnysc2 契约（assign_workers 的落地原子）。
+- 🚧 真机集成 `run_production_check.py`（手动跑）：build 补给站实体出现 + train SCV 数量增长 + idle/mineral 采集数往返。
 
 ## planner（modules/planner）
 - ⏳ 依赖：constraint/mechanics/game（**不依赖 flow 运行期**，dep-check）。

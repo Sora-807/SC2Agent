@@ -7,6 +7,7 @@
 - world：game（mechanics/tactical_map 待 D11/P4 启用）
 - flow：game/tactical_map（constraint 后补）
 - constraint：game/mechanics/tactical_map
+- production：game/constraint/tactical_map（生产运行时；port duck-typing）
 - planner：constraint/mechanics/game
 - tactical_map：game
 - mechanics：game
@@ -28,7 +29,8 @@ PROHIBITED = {
     "planner":      {"ports", "tactical_map", "world", "flow", "driver", "sc2"},
     "world":        {"ports", "tactical_map", "mechanics", "constraint", "planner", "flow", "driver", "sc2"},
     "flow":         {"ports", "mechanics", "constraint", "planner", "world", "driver", "sc2"},
-    "driver":       {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow"},
+    "production":   {"ports", "mechanics", "planner", "world", "flow", "driver", "sc2"},
+    "driver":       {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production"},
 }
 
 _IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)")

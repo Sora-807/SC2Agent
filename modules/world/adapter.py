@@ -65,8 +65,13 @@ def adapt_unit(u: RawUnit) -> Unit:
 
 
 def adapt(raw: RawGameState) -> GameState:
-    """RawGameState → GameState（V1：过滤 neutral + 字段对齐 + 透传）。"""
+    """RawGameState → GameState（V1：过滤 neutral + 字段对齐 + 透传）。
+
+    中性资源（矿脉/气井）不进 units（flow 谓词不数它们），拆到 resources：
+    WorkerAllocator / 生产约束需要节点位置（docs/测试计划.md world 节 resource_nodes）。
+    """
     units = [adapt_unit(u) for u in raw.units if not is_neutral_resource(u.type_name)]
+    resources = [adapt_unit(u) for u in raw.units if is_neutral_resource(u.type_name)]
     return GameState(
         seq=raw.seq,
         game_time=raw.game_time,
@@ -78,5 +83,6 @@ def adapt(raw: RawGameState) -> GameState:
         map_size=raw.map_size,
         creep=raw.creep,  # V1 透传（左下原点 + dims 对齐，no-op）
         visibility=raw.visibility,
+        resources=resources,  # 资源节点（矿脉/气井）
         # map_layers（power/addon）D11 后加
     )

@@ -37,6 +37,7 @@ OP_CATALOG: dict[str, list[tuple[str, ParamType, bool]]] = {
     "train":          [("type", ParamType.STABLE_ID, True)],
     "research":       [("type", ParamType.STABLE_ID, True)],
     "assign_workers": [("task", ParamType.TASK, True), ("count", ParamType.INT, True)],
+    "gather":         [("target_unit", ParamType.TAG, True)],
     "load":           [("target_unit", ParamType.TAG, True)],
     "unload":         [("position", ParamType.POINT, True)],
     "use_ability":    [("ability", ParamType.STABLE_ID, True)],

@@ -62,8 +62,9 @@ class GameState:
     vespene: int  # 当前高能瓦斯数量
     supply_used: int  # 已用供给（人口）
     supply_cap: int  # 供给上限
-    units: list[Unit]  # 可见单位（己/盟/可见敌方；中性矿脉/气井已由 world 过滤掉）
+    units: list[Unit]  # 可见单位（己/盟/可见敌方；中性矿脉/气井已由 world 拆出到 resources）
     map_size: tuple[int, int]  # 地图建筑格点尺寸 (width, height)
     creep: Grid  # 菌毯层（Zerg 相关；Terran 全 0）
     visibility: Grid  # 可见性层（0=Hidden/1=Fogged/2=Visible）
+    resources: list[Unit] = field(default_factory=list)  # 中性资源节点（矿脉/气井；world 拆分；WorkerAllocator/生产约束用）
     # map_layers（power/addon_attachment 供能层）D11 后由 mechanics.LayerComputer 补

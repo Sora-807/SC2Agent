@@ -5,7 +5,7 @@ from game import OP_CATALOG, Operation, is_known_action, validate_op
 def test_known_actions():
     for a in [
         "move_to", "attack_move_to", "hold_position", "stop", "follow", "patrol",
-        "focus_fire", "build", "train", "research", "assign_workers", "load",
+        "focus_fire", "build", "train", "research", "assign_workers", "gather", "load",
         "unload", "use_ability", "cancel", "morph",
     ]:
         assert is_known_action(a), a

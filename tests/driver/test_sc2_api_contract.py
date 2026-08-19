@@ -27,6 +27,7 @@ EXPECTED_UNIT_METHODS: dict[str, tuple[str, int]] = {
     "train": ("train", 1),
     "research": ("research", 1),
     "load": ("smart", 1),           # V1 近似：smart(target_unit)
+    "gather": ("gather", 1),
 }
 
 
