@@ -154,10 +154,24 @@ def _gs_arrive(seq, positions):
                      supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g)
 
 
+ARRIVED_ASSEMBLY = """
+id: arrive_assembly
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: arrive_test
+    bindings: {main: G1}
+    params: {}
+"""
+
+
 def test_arrived_spatial_predicate():
     """formup→advance；advance 用 arrived(main,[10,10],3)：兵接近目标到 3 内→exit。"""
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(ARRIVED_STRATEGY), parse_assembly(ASSEMBLY_YAML), port)
+    eng = FlowEngine(parse_strategy(ARRIVED_STRATEGY), parse_assembly(ARRIVED_ASSEMBLY), port)
     # 2 marines 接近 [10,10]：seq0 [0,0] formup→advance；seq1 [4,4] advance move（去重 1 条）；seq2 [8,8] arrived→exit
     eng.on_game_state(_gs_arrive(0, [(0, 0), (0, 0)]))
     eng.on_game_state(_gs_arrive(1, [(4, 4), (4, 4)]))
@@ -207,4 +221,285 @@ strategy_instances:
     op = port.submitted[0]
     assert op.action == "move_to"
     assert op.params == {"position": [1.5, 0.5]}  # map 名已解析为 [x, y]，不是字符串
+
+
+def test_dedup_resend_when_params_change():
+    """去重键 (slot,type,atom) 相同但 params 变 → 重发（spec-003 §2.1）。"""
+    strategy = """
+id: chg
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: s1
+steps:
+  - step_id: s1
+    branches:
+      - when: {op: "<", args: [{op: game_time}, {const: 3.0}]}
+        do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [10.0, 10.0]}}
+      - do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [20.0, 20.0]}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: chg
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    for seq, t in [(0, 0.0), (1, 1.0), (2, 2.0), (3, 3.0), (4, 4.0)]:
+        eng.on_game_state(_gs(seq, 2, t))
+    moves = [o for o in port.submitted if o.action == "move_to"]
+    assert len(moves) == 2, f"params 变化应重发，got {len(moves)}"
+    assert moves[0].params == {"position": [10.0, 10.0]}
+    assert moves[1].params == {"position": [20.0, 20.0]}
+
+
+def test_dedup_key_separates_by_type():
+    """同 slot 同 atom 不同 type → 各自独立去重键（同组多兵种协同）。"""
+    strategy = """
+id: multi
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1.0, 1.0]}}
+          - {op: group_action, group_slot: main, type: SCV, action_atom: move_to, params: {position: [2.0, 2.0]}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 1, target: 1, max: 1}
+      SCV: {min: 1, target: 1, max: 1}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: multi
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    units = [
+        Unit(tag=1, type_name="MARINE", position=Point2(0, 0), owner=Owner.SELF,
+             hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0),
+        Unit(tag=2, type_name="SCV", position=Point2(0, 0), owner=Owner.SELF,
+             hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0),
+    ]
+    g = Grid(1, 1, [[0]])
+    eng.on_game_state(GameState(seq=0, game_time=0.0, minerals=50, vespene=0, supply_used=2,
+                                supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g))
+    assert len(port.submitted) == 2  # 两个 type 各一条
+    assert {o.params["position"][0] for o in port.submitted} == {1.0, 2.0}
+
+
+def test_empty_group_action_is_noop():
+    """空 group 上的动作 = no-op，不产 Operation（spec-003 §3.2）。"""
+    strategy = """
+id: emptyg
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1.0, 1.0]}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: emptyg
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng.on_game_state(_gs(0, 0, 0.0))  # 没有任何 MARINE
+    assert port.submitted == []
+    assert not eng._done  # 引擎照常运行，不崩
+
+
+def test_exit_step_stops_remaining_do_items():
+    """运行时兜底：exit 之后的 do 项被跳过（spec-003 §3）。
+
+    编译期已拒绝这种写法（test_manifest.test_action_after_exit_rejected）；
+    这里绕过编译直接构造 manifest，验证 engine 执行路径同样安全。
+    """
+    from flow.manifest import FlowAssembly, GroupSpec, StrategyInstance, StrategyManifest
+
+    m = StrategyManifest(
+        id="exitstop", version=1, group_slots=["main"], params={}, variables={},
+        initial_step="s1",
+        steps={
+            "s1": {"branches": [{"do": [
+                {"op": "group_action", "group_slot": "main", "type": "MARINE",
+                 "action_atom": "move_to", "params": {"position": [1.0, 1.0]}},
+                {"op": "exit_step", "kind": "done", "reason": "GO"},
+                {"op": "group_action", "group_slot": "main", "type": "MARINE",
+                 "action_atom": "move_to", "params": {"position": [2.0, 2.0]}},
+            ]}]},
+            "s2": {"branches": [{"do": []}]},
+        },
+        edges=[{"from": "s1", "to": "s2", "kind": "done", "reason": "GO"}],
+        on_exit="release", loop_limits={},
+    )
+    a = FlowAssembly(
+        id="a",
+        groups=[GroupSpec("G1", {"MARINE": {"min": 2, "target": 2, "max": 2}})],
+        strategy_instances=[StrategyInstance("s1", "exitstop", {"main": "G1"}, {})],
+    )
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(m, a, port)
+    eng.on_game_state(_gs(0, 2, 0.0))
+    assert len(port.submitted) == 1  # exit 之后的第二条 move 被跳过
+    assert eng._active_step == "s2"
+
+
+def test_loop_limit_caps_step_transitions():
+    """有界环兜底：超过 loop_limits.max_step_transitions → strategy 结束（不无限循环）。"""
+    strategy = """
+id: loopy
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: s1
+steps:
+  - step_id: s1
+    branches:
+      - do: [{op: exit_step, kind: done, reason: LOOP}]
+edges:
+  - {from: s1, to: s1, kind: done, reason: LOOP}
+loop_limits: {max_step_transitions: 2}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: loopy
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    for seq in range(5):
+        eng.on_game_state(_gs(seq, 2, float(seq)))
+    assert eng._step_transition_count == 3  # 第 3 次转移超上限
+    assert eng._done is True
+
+
+def test_set_variable_roundtrip_through_when():
+    """set_variable 写入 → 下一帧 when 经 {var: name} 读回（spec-003 §5）。"""
+    strategy = """
+id: varflow
+group_slots: [main]
+params: {}
+variables: {stage: {type: int, default: 0}}
+initial_step: s1
+steps:
+  - step_id: s1
+    branches:
+      - when: {op: "==", args: [{var: stage}, {const: 1}]}
+        do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [9.0, 9.0]}}
+          - {op: exit_strategy, kind: done, reason: SAFE}
+      - do:
+          - {op: set_variable, name: stage, value: {const: 1}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: varflow
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng.on_game_state(_gs(0, 2, 0.0))  # stage 0 → else → set stage=1
+    assert port.submitted == []
+    eng.on_game_state(_gs(1, 2, 1.0))  # stage 1 → 命中 → move + exit
+    assert len(port.submitted) == 1
+    assert eng._done is True
+
+
+def test_enemy_visible_in_via_engine_with_region_layer():
+    """区域谓词走完整引擎链路：敌人在 main_base → exit_strategy。"""
+    from tactical_map import BigRegion, RegionLayer
+
+    layer = RegionLayer(
+        map_name="t", size=(4, 4),
+        big_grid=Grid(4, 4, [[1, 1, 2, 2]] * 4),
+        big_index={1: "main_base", 2: "field"},
+        big_regions={
+            "main_base": BigRegion(stable_id="main_base", anchor=Point2(1, 1)),
+            "field": BigRegion(stable_id="field", anchor=Point2(3, 3)),
+        },
+    )
+    strategy = """
+id: ewatch
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: watch
+steps:
+  - step_id: watch
+    branches:
+      - when: {op: enemy_visible_in, args: [main_base]}
+        do: [{op: exit_strategy, kind: done, reason: SAFE}]
+      - do: []
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 1, target: 1, max: 1}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: ewatch
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, region_layer=layer)
+    eng.on_game_state(_gs(0, 1, 0.0))  # 无敌人
+    assert not eng._done
+    units = [
+        Unit(tag=1, type_name="MARINE", position=Point2(0, 0), owner=Owner.SELF,
+             hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0),
+        Unit(tag=9, type_name="ZERGLING", position=Point2(1.5, 0.5), owner=Owner.ENEMY,
+             hp=35.0, hp_max=35.0, shield=0.0, energy=0.0, build_progress=1.0),
+    ]
+    g = Grid(1, 1, [[0]])
+    eng.on_game_state(GameState(seq=1, game_time=1.0, minerals=50, vespene=0, supply_used=1,
+                                supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g))
+    assert eng._done is True  # 敌人进入 main_base → exit
+
 

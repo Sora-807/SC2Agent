@@ -13,13 +13,14 @@ import json
 from game import GameState, Operation
 
 from flow.allocator import Allocator
-from flow.manifest import FlowAssembly, StrategyManifest
+from flow.manifest import FlowAssembly, StrategyManifest, validate_assembly
 from flow.predicates import EvalCtx, eval_when, group_center
 from tactical_map.resolver import resolve_action_params
 
 
 class FlowEngine:
     def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port, region_layer=None) -> None:
+        validate_assembly(manifest, assembly)  # R6：绑定/引用错误在构造期拒绝
         self._m = manifest
         self._port = port
         self._alloc = Allocator()
@@ -34,6 +35,7 @@ class FlowEngine:
         self._step_entry_count = 1
         self._step_transition_count = 0
         self._variables = {v: spec.get("default") for v, spec in manifest.variables.items()}
+        self._locals: dict = {}  # 进入 step 时重置（spec-003 §3.2）
         self._strategy_start: float | None = None
         self._step_entered: float | None = None
         self._last_emitted: dict[tuple, str] = {}  # (slot, type, atom) -> params_key
@@ -75,7 +77,12 @@ class FlowEngine:
                 return
             elif op == "set_variable":
                 self._variables[a["name"]] = _eval_value(a.get("value"), ctx)
-            # set_local / start_timer / stop_timer：V1 stub
+            elif op == "set_local":
+                self._locals[a["name"]] = _eval_value(a.get("value"), ctx)
+            elif op in ("start_timer", "stop_timer"):
+                pass  # V1 stub：timer_elapsed 谓词未实现前，计时器写操作无害空转
+            else:
+                raise ValueError(f"unknown do op {op!r}")  # 编译期已拦；此为兜底
 
     def _emit_group_action(self, a: dict, ctx: EvalCtx, gs: GameState) -> None:
         slot = a["group_slot"]
@@ -107,6 +114,10 @@ class FlowEngine:
         self._step_entry_count += 1
         self._step_transition_count += 1
         self._step_entered = gs.game_time
+        self._locals = {}  # 进入新 step：locals 重置（spec-003 §3.2）
+        limit = self._m.loop_limits.get("max_step_transitions")
+        if limit is not None and self._step_transition_count > limit:
+            self._done = True  # 有界环兜底：转移上限（需求文档/spec-004）
         # 本帧结束（不本帧求值新 step；下帧求值）
 
 

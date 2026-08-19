@@ -34,19 +34,19 @@
 - ⏳ D11：mechanics.LayerComputer（power/addon）插入后补全（届时 adapt 注入 mechanics）。
 
 ## flow（modules/flow，引擎）
-- ✅ 依赖：只 game（V1；dep-check 绿）。port duck-typing（不 import driver）。
+- ✅ 依赖：只 game + tactical_map（dep-check 绿）。port duck-typing（不 import driver）。
 - ✅ .md parse（YAML/pyyaml）：Strategy/Flow → manifest + assembly。
-- ✅ 最小 validate：initial_step / edge 端点 / exit_step 匹配 edge。
-- ✅ per-frame eval：branches 有序首匹配；else（无 when）；exit_step 本帧结束、下帧求值新 step。
-- ✅ 谓词 V1：group_count / game_time / strategy_elapsed / step_elapsed（结构化 AST）。
-- ✅ 动作去重：相同 (slot,type,action_atom,params) 不重发（spec-003 §2.1）。
-- ✅ 展开：(slot,type)→unit_tags via Allocator.expand。
-- ✅ Allocator V1：FCFS+sticky lease、create_group/refresh/count/expand（spec-006 接口预留）。
-- ✅ step 转移 + exit_strategy；FakeGamePort 驱动确定性测试（simple_push：formup→advance→exit）。
-- ✅ **端到端切片**（`run_flow_slice.py`，真 SC2）：driver→world→flow→driver，scv_move flow 驱动 SCV 移动到 (50,50)（到目标距离单调下降）✓。
-- ⏳ 空间谓词（arrived/enemy_count_near/group_center）需 tactical_map（P4）。
-- ⏳ 空 group 语义、loop max_iterations 兜底、hot-edit（live_editable）、full spec-006 仲裁、set_local/timer。
-- ⏳ compile 全集（未知槽位/原子、环无出口、(slot,type)粒度）。
+- ✅ **编译期校验全集**（`test_manifest.py`，spec-003 验收 1-5）：else 必须在最后；do 操作词表（未知 op 拒绝）；谓词词表（未知/未实现谓词在编译期拒绝，不等到运行时）；未声明 group_slot；action 缺必需参数（对照 OP_CATALOG）；exit 之后再有动作；重复 edge；edge 端点；set_variable/set_local 只写已声明变量；param/var 引用存在性；assembly 绑定校验（strategy_ref/slot/group）。
+- ✅ **谓词全目录单测**（`test_predicates.py`）：已实现谓词逐一断言（group_count/game_time/strategy_elapsed/step_elapsed/arrived/group_center/distance_between/enemy_count_near/group_hp_ratio/region_center/unit_count/group_center_in_region/enemy_visible_in/has_building + 6 比较符 + and/or/not + const/param/var 节点 + 空 group 语义）；未实现谓词（engaged/under_attack/has_ready_base/timer_elapsed/event_occurred/user_cancel）与空间工具（nearest_units/cluster_centers）**显式清单 + 原因 + 求值期拒绝**。
+- ✅ **Allocator 单测**（`test_allocator.py`）：FCFS 补到 target、sticky lease 不重分配、死亡清 lease + 补位、只租 SELF、空 group/未知 group、expand_all 跨兵种。
+- ✅ per-frame eval：branches 有序首匹配；else；exit_step 本帧结束、下帧求值新 step；exit 之后剩余 do 项运行时兜底跳过。
+- ✅ 动作去重：相同 (slot,type,action_atom,params) 不重发；params 变重发；不同 type 独立去重键（spec-003 §2.1）。
+- ✅ 展开：(slot,type)→unit_tags via Allocator.expand；空 group 动作 = no-op。
+- ✅ set_variable 写入 + 下一帧 when 经 `{var: name}` 读回。
+- ✅ loop_limits.max_step_transitions 有界环兜底（超限 → strategy 结束）。
+- ✅ step 转移 + exit_strategy；FakeGamePort 驱动确定性测试（simple_push/bio_push 全战术链/空间谓词/区域谓词/名字解析端到端）。
+- ✅ **端到端切片**（`run_flow_slice.py`/`run_flow_arrived.py`，真 SC2）：driver→world→flow→driver，scv_move flow 驱动 SCV 移动到 (50,50)，arrived 空间谓词真机验通。
+- ⏳ hot-edit（live_editable）、full spec-006 仲裁、set_local 读节点、start/stop_timer 运行时、event_occurred/user_cancel 通道（GameEvent 目录 D7 后）。
 - ⏳ burnysc2 Move order 的 target_world_space_pos 为 None（目标在 proto 别处；非 bug，review 留意）。
 
 ## constraint（modules/constraint）

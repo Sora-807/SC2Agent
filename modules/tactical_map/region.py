@@ -83,6 +83,23 @@ class RegionLayer:
         pm = self.pos_marks.get(name)
         return pm.pos if pm is not None else None
 
+    def contains(self, name: str, pos: Point2) -> bool:
+        """点位是否属于该区域（leaf 格点集 / 大区格点集）；未知名或越界 → False。
+
+        谓词 enemy_visible_in / group_center_in_region / has_building(region=...) 用它。
+        """
+        x, y = int(pos.x), int(pos.y)
+        w, h = self.size
+        if not (0 <= x < w and 0 <= y < h):
+            return False
+        r = self.regions.get(name)
+        if r is not None:
+            return (x, y) in r.cells
+        b = self.big_regions.get(name)
+        if b is not None:
+            return self.big_index.get(self.big_grid.data[y][x]) == name
+        return False
+
     def cells_of_big(self, big_id: str) -> frozenset[tuple[int, int]]:
         """大区全部格点（从 big_grid 扫描；校验/规划用，非热路径）。"""
         w, h = self.size

@@ -1,11 +1,15 @@
-"""flow 谓词：结构化 AST 求值 + V1 谓词目录。
+"""flow.predicates：结构化 AST 条件求值 + V1 谓词目录（spec-003 §4.1/§4.4 子集）。
 
-V1 谓词：group_count / game_time / strategy_elapsed / step_elapsed。
-AST node：
-- {"const": v} / {"param": name} → 字面 / 参数
-- {"op": "group_count", "args": [slot, type?]} → int
-- {"op": "game_time"} / {"op": "strategy_elapsed"} / {"op": "step_elapsed"} → float
-- {"op": ">="|">"|"<="|"<"|"=="|"!="|"and"|"or"|"not", "args": [...]} → bool
+AST node 形态：
+- {"const": v} / {"param": name} / {"var": name} → 字面 / 参数 / 持久变量
+- {"op": "...", "args": [...]} → 谓词/比较/逻辑
+比较：>= > <= < == !=；逻辑：and or not。
+
+词表三份（编译期校验用，见 flow.manifest.validate_strategy）：
+- KNOWN_PREDICATE_OPS：已实现
+- UNIMPLEMENTED_PREDICATE_OPS：spec 里有、V1 未实现（带原因；编译期/求值期都明确拒绝）
+- COMPARISON_OPS / LOGIC_OPS：运算符
+spec-003 验收 #5：原子目录外的新条件在编译期被拒绝。
 """
 from __future__ import annotations
 
@@ -17,11 +21,37 @@ from tactical_map.region import RegionLayer
 from tactical_map.resolver import resolve_target
 from tactical_map.spatial import center_of_units, distance, units_within
 
+COMPARISON_OPS = frozenset({">=", ">", "<=", "<", "==", "!="})
+LOGIC_OPS = frozenset({"and", "or", "not"})
+
+KNOWN_PREDICATE_OPS = frozenset({
+    "group_count", "game_time", "strategy_elapsed", "step_elapsed",
+    "arrived", "group_center", "distance_between", "enemy_count_near",
+    "group_hp_ratio", "region_center", "unit_count",
+    "group_center_in_region", "enemy_visible_in", "has_building",
+})
+
+# spec-003 §4.1 中 V1 未实现的谓词 → 原因（编译期/求值期都明确拒绝，不静默）
+UNIMPLEMENTED_PREDICATE_OPS: dict[str, str] = {
+    "engaged": "需引擎从 orders/攻击射程/近期事件推导交火状态",
+    "under_attack": "需引擎从 hp 历史推导受击状态",
+    "has_ready_base": "基地类型目录（三族 town hall）落 catalog 后实现",
+    "timer_elapsed": "计时器运行时（start_timer/stop_timer 的 deadline 存储）待建",
+    "event_occurred": "引擎事件流（GameEvent 目录 D7）待建",
+    "user_cancel": "用户接管/取消通道待建",
+}
+
+# spec-003 §4.4 空间工具中 V1 未实现的（只读工具；消费方是 when AST）
+UNIMPLEMENTED_SPATIAL_OPS: dict[str, str] = {
+    "nearest_units": "需要 selector/筛选词表（spec-003 §4.3），待建",
+    "cluster_centers": "需要聚类算法，待建",
+}
+
 
 @dataclass
 class EvalCtx:
     gs: GameState
-    allocator: object  # duck-typed：count(group_id, type=None), expand(group_id, type)
+    allocator: object  # duck-typed：count(group_id, type=None), expand_all(group_id)
     bindings: dict  # slot -> group_id
     params: dict
     variables: dict
@@ -31,12 +61,19 @@ class EvalCtx:
 
 
 def eval_when(node, ctx: EvalCtx):
+    """条件 AST 求值（只读、确定性；绑定当前 GameState seq，spec-003 §4.1）。"""
     if isinstance(node, dict):
         if "const" in node:
             return node["const"]
         if "param" in node:
             return ctx.params.get(node["param"])
+        if "var" in node:
+            return ctx.variables.get(node["var"])
         op = node.get("op")
+        if op in UNIMPLEMENTED_PREDICATE_OPS:
+            raise ValueError(f"predicate {op!r} 未实现：{UNIMPLEMENTED_PREDICATE_OPS[op]}")
+        if op in UNIMPLEMENTED_SPATIAL_OPS:
+            raise ValueError(f"spatial tool {op!r} 未实现：{UNIMPLEMENTED_SPATIAL_OPS[op]}")
         args = [eval_when(a, ctx) for a in node.get("args", [])]
         if op == "group_count":
             slot = args[0]
@@ -80,6 +117,12 @@ def eval_when(node, ctx: EvalCtx):
             return _p_region_center(ctx, args[0])
         if op == "unit_count":
             return _p_unit_count(ctx, args[0])
+        if op == "group_center_in_region":
+            return _p_group_center_in_region(ctx, *args)
+        if op == "enemy_visible_in":
+            return _p_enemy_visible_in(ctx, args[0])
+        if op == "has_building":
+            return _p_has_building(ctx, *args)
         raise ValueError(f"unknown op {op!r}")
     return node  # literal
 
@@ -111,7 +154,7 @@ def _resolve_target(val, ctx: EvalCtx) -> Point2 | None:
 
 
 def _p_arrived(ctx: EvalCtx, slot, target, radius) -> bool:
-    c = center_of_units(_group_units(ctx, slot))
+    c = group_center(ctx, slot)
     if c is None:
         return False
     t = _resolve_target(target, ctx)
@@ -125,8 +168,8 @@ def _p_group_center(ctx: EvalCtx, slot) -> Point2 | None:
 
 
 def _p_distance_between(ctx: EvalCtx, slot_a, slot_b) -> float:
-    a = center_of_units(_group_units(ctx, slot_a))
-    b = center_of_units(_group_units(ctx, slot_b))
+    a = group_center(ctx, slot_a)
+    b = group_center(ctx, slot_b)
     if a is None or b is None:
         return float("inf")
     return distance(a, b)
@@ -136,7 +179,7 @@ def _p_enemy_count_near(ctx: EvalCtx, anchor, radius) -> int:
     t = _resolve_target(anchor, ctx)
     if t is None:
         return 0
-    enemies = [u for u in ctx.gs.units if u.owner == Owner.ENEMY]
+    enemies = [u for u in ctx.gs.units if u.owner is Owner.ENEMY]
     return len(units_within(t, enemies, float(radius)))
 
 
@@ -155,4 +198,32 @@ def _p_region_center(ctx: EvalCtx, name) -> Point2 | None:
 
 
 def _p_unit_count(ctx: EvalCtx, type_name) -> int:
-    return sum(1 for u in ctx.gs.units if u.type_name == type_name and u.owner == Owner.SELF)
+    return sum(1 for u in ctx.gs.units if u.type_name == type_name and u.owner is Owner.SELF)
+
+
+def _p_group_center_in_region(ctx: EvalCtx, slot, region) -> bool:
+    layer = ctx.region_layer
+    if layer is None:
+        return False
+    c = group_center(ctx, slot)
+    return c is not None and layer.contains(region, c)
+
+
+def _p_enemy_visible_in(ctx: EvalCtx, region) -> bool:
+    layer = ctx.region_layer
+    if layer is None:
+        return False
+    return any(u.owner is Owner.ENEMY and layer.contains(region, u.position) for u in ctx.gs.units)
+
+
+def _p_has_building(ctx: EvalCtx, type_name, region=None, ready=False) -> bool:
+    layer = ctx.region_layer
+    for u in ctx.gs.units:
+        if u.owner is not Owner.SELF or u.type_name != type_name:
+            continue
+        if ready and u.build_progress < 1.0:
+            continue
+        if region is not None and (layer is None or not layer.contains(region, u.position)):
+            continue
+        return True
+    return False
