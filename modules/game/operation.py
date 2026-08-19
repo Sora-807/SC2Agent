@@ -4,6 +4,7 @@
 - engine/生产运行时 产 Operation → driver 翻译成 burnysc2 命令（下一 step 生效）。
 - flow 用它校验 action_atom（编译期拒未知 action / 缺参数）。
 - 加新 action = 在 OP_CATALOG 加一条 + driver 加对应翻译函数（TRANSLATORS）。
+- 本目录只定义词汇；map 名 → 坐标的解析归 tactical_map.resolver（ADR-0029 D1）。
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 
 # action -> [(param_name, type, required), ...]
 # type 含义：
-#   point      坐标 [x, y]（如 move_to 的 position）
+#   point      坐标 [x, y] 或 map 名（如 move_to 的 position；engine 经 tactical_map.resolver 解析成数值，ADR-0029）
 #   tag        单位 tag 整数（如 focus_fire 的 target_unit）
 #   int        整数（如 count）
 #   str        字符串（如 cancel 的 order 引用）

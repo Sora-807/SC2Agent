@@ -7,7 +7,7 @@ from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
 from game import GameState, Grid, Owner, Point2, Unit
-from tactical_map import PointRegistry
+from tactical_map import BigRegion, RegionLayer
 
 BIO_STRATEGY = """
 id: bio_push_test
@@ -85,10 +85,16 @@ def _gs_bio(seq, marines, enemies):
 
 
 def test_bio_push_full_tactical_chain():
-    reg = PointRegistry()
-    reg.register_point("main_base", 50, 50)
+    # 区域模型：整图一个大区 main_base（锚点 50,50），retreat 的 region_center(main_base) 用它
+    layer = RegionLayer(
+        map_name="bio_test",
+        size=(176, 160),
+        big_grid=Grid(176, 160, [[1] * 176 for _ in range(160)]),
+        big_index={1: "main_base"},
+        big_regions={"main_base": BigRegion(stable_id="main_base", anchor=Point2(50, 50))},
+    )
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(BIO_STRATEGY), parse_assembly(BIO_ASSEMBLY), port, registry=reg)
+    eng = FlowEngine(parse_strategy(BIO_STRATEGY), parse_assembly(BIO_ASSEMBLY), port, region_layer=layer)
 
     M = [(100 + i, (0, 0), 45.0) for i in range(6)]  # 6 marines @ (0,0) hp45
     Mlow = [(t, (0, 0), 10.0) for t, _, _ in M]  # 低血

@@ -14,15 +14,16 @@ from game import GameState, Operation
 
 from flow.allocator import Allocator
 from flow.manifest import FlowAssembly, StrategyManifest
-from flow.predicates import EvalCtx, eval_when
+from flow.predicates import EvalCtx, eval_when, group_center
+from tactical_map.resolver import resolve_action_params
 
 
 class FlowEngine:
-    def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port, registry=None) -> None:
+    def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port, region_layer=None) -> None:
         self._m = manifest
         self._port = port
         self._alloc = Allocator()
-        self._registry = registry
+        self._region_layer = region_layer  # 区域模型（map 名→坐标，ADR-0029）
         for g in assembly.groups:
             self._alloc.create_group(g.group_id, g.composition)
         si = assembly.strategy_instances[0]
@@ -49,7 +50,7 @@ class FlowEngine:
             self._step_entered = gs.game_time
         self._alloc.refresh(gs)
         ctx = EvalCtx(gs, self._alloc, self._bindings, self._params, self._variables,
-                      self._strategy_start, self._step_entered, self._registry)
+                      self._strategy_start, self._step_entered, self._region_layer)
         step = self._m.steps[self._active_step]
         for b in step.get("branches", []):
             when = b.get("when")
@@ -81,6 +82,8 @@ class FlowEngine:
         type_name = a["type"]
         atom = a["action_atom"]
         params = _resolve_params(a.get("params", {}), ctx)
+        # ADR-0029 D1：emit 前把 map 名解析成数值（去重也在解析后，spec-003 §2.1）
+        params = resolve_action_params(atom, params, self._region_layer)
         pkey = json.dumps(params, sort_keys=True, default=str)
         if self._last_emitted.get((slot, type_name, atom)) == pkey:
             return  # 去重：同 (slot,type,action,params) 不重发
@@ -108,11 +111,20 @@ class FlowEngine:
 
 
 def _eval_value(v, ctx: EvalCtx):
+    """动作参数值求值：const/param/静态空间工具（group_center/region_center）。
+
+    动态目标（nearest_enemy 等）后续按 spec-003 §4.4 补。
+    """
     if isinstance(v, dict):
         if "const" in v:
             return v["const"]
         if "param" in v:
             return ctx.params.get(v["param"])
+        op = v.get("op")
+        if op == "group_center":
+            return group_center(ctx, v["args"][0])
+        if op == "region_center":
+            return ctx.region_layer.anchor(v["args"][0]) if ctx.region_layer is not None else None
     return v
 
 

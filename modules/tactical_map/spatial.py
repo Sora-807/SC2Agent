@@ -1,6 +1,6 @@
-"""tactical_map：空间查询原语 + 点位名↔坐标登记。
+"""tactical_map.spatial：空间查询原语（只依赖 game；ADR-0002：game 不做空间查询）。
 
-只依赖 game（leaf）。纯函数（无 seq 缓存，V1 每次重算；M3 seq 缓存后补）。
+纯函数（无 seq 缓存，V1 每次重算；M3 seq 缓存后补）。
 flow 的空间谓词（arrived/enemy_count_near/group_center/...）组合这些原语。
 """
 from __future__ import annotations
@@ -26,26 +26,3 @@ def units_within(target: Point2, units: list[Unit], r: float) -> list[Unit]:
 
 def nearest(target: Point2, units: list[Unit], k: int = 1) -> list[Unit]:
     return sorted(units, key=lambda u: distance(target, u.position))[:k]
-
-
-class PointRegistry:
-    """点位名↔坐标 / 区域名↔(中心,半径) 登记。V1 手工登记。"""
-
-    def __init__(self) -> None:
-        self._points: dict[str, Point2] = {}
-        self._regions: dict[str, tuple[Point2, float]] = {}
-
-    def register_point(self, name: str, x: float, y: float) -> None:
-        self._points[name] = Point2(float(x), float(y))
-
-    def register_region(self, name: str, center: tuple[float, float], radius: float) -> None:
-        self._regions[name] = (Point2(float(center[0]), float(center[1])), float(radius))
-
-    def point(self, name: str) -> Point2 | None:
-        return self._points.get(name)
-
-    def region_center(self, name: str) -> Point2 | None:
-        r = self._regions.get(name)
-        if r is not None:
-            return r[0]
-        return self._points.get(name)  # 点名也当区域中心用

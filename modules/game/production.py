@@ -18,11 +18,11 @@ class PlacementExact:
 
 @dataclass(frozen=True, slots=True)
 class PlacementInRegion:
-    """区域内找位：查 RegionMark → 按 build_slots 顺序。
+    """区域内找位：查区域名（RegionLayer）→ 按区域 build_slots 顺序。
     index=None（默认）= 自动找第一个可用 slot（跳过被占的）。
     index=N = 指定用 slot[N]（不管占没占；被占就失败/等待）。"""
 
-    region: str  # RegionMark 名
+    region: str  # 区域名（tactical_map.RegionLayer 中登记，ADR-0029）
     index: int | None = None
 
 

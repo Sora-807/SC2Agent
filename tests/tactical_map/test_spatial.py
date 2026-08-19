@@ -1,6 +1,6 @@
-"""tactical_map 空间原语 + PointRegistry。"""
+"""tactical_map 空间原语：center/distance/units_within/nearest。"""
 from game import Owner, Point2, Unit
-from tactical_map import PointRegistry, center_of_units, distance, nearest, units_within
+from tactical_map import center_of_units, distance, nearest, units_within
 
 
 def _u(tag, x, y, hp=45.0, owner=Owner.SELF, type_name="MARINE"):
@@ -27,13 +27,3 @@ def test_nearest():
     us = [_u(1, 5, 5), _u(2, 1, 1), _u(3, 2, 2)]
     n = nearest(Point2(0, 0), us, k=2)
     assert [u.tag for u in n] == [2, 3]
-
-
-def test_point_registry():
-    r = PointRegistry()
-    r.register_point("main_base", 50, 50)
-    r.register_region("enemy_natural", (100, 100), 20)
-    assert r.point("main_base") == Point2(50, 50)
-    assert r.region_center("enemy_natural") == Point2(100, 100)
-    assert r.region_center("main_base") == Point2(50, 50)  # 点名当区域中心
-    assert r.point("missing") is None

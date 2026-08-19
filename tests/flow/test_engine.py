@@ -165,3 +165,46 @@ def test_arrived_spatial_predicate():
     moves = [op for op in port.submitted if op.action == "move_to"]
     assert len(moves) == 1, f"expected 1 move (dedup), got {len(moves)}"
     assert eng._done is True  # arrived at seq2 → exit_strategy
+
+def test_region_name_in_action_params_resolved_at_emission():
+    """ADR-0029 D1 端到端：do 动作里的 map 名在 emit 前解析成数值（driver 只见数值）。"""
+    from tactical_map import BigRegion, RegionLayer
+
+    layer = RegionLayer(
+        map_name="t",
+        size=(2, 2),
+        big_grid=Grid(2, 2, [[1, 1], [1, 1]]),
+        big_index={1: "main_base"},
+        big_regions={"main_base": BigRegion(stable_id="main_base", anchor=Point2(1.5, 0.5))},
+    )
+    strategy = """
+id: named_target
+group_slots: [main]
+params: {min_units: {type: int, default: 2}}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: main_base}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: named_target
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, region_layer=layer)
+    eng.on_game_state(_gs(0, 2, 0.0))
+    assert len(port.submitted) == 1
+    op = port.submitted[0]
+    assert op.action == "move_to"
+    assert op.params == {"position": [1.5, 0.5]}  # map 名已解析为 [x, y]，不是字符串
+

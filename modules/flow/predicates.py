@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from game import GameState, Owner, Point2
 
+from tactical_map.region import RegionLayer
+from tactical_map.resolver import resolve_target
 from tactical_map.spatial import center_of_units, distance, units_within
 
 
@@ -25,7 +27,7 @@ class EvalCtx:
     variables: dict
     strategy_start: float
     step_entered: float
-    registry: object = None  # tactical_map.PointRegistry
+    region_layer: RegionLayer | None = None  # 区域模型（名字→锚点/归属，ADR-0029）
 
 
 def eval_when(node, ctx: EvalCtx):
@@ -98,17 +100,14 @@ def _group_units(ctx: EvalCtx, slot) -> list:
     return [u for u in ctx.gs.units if u.tag in tags]
 
 
+def group_center(ctx: EvalCtx, slot) -> Point2 | None:
+    """slot group 的单位质心（公开版：谓词与 engine 的动作参数求值共用）。"""
+    return center_of_units(_group_units(ctx, slot))
+
+
 def _resolve_target(val, ctx: EvalCtx) -> Point2 | None:
-    """Point2 / (x,y) / 区域名(走 registry) -> Point2 | None。"""
-    if val is None:
-        return None
-    if isinstance(val, Point2):
-        return val
-    if isinstance(val, (tuple, list)) and len(val) >= 2:
-        return Point2(float(val[0]), float(val[1]))
-    if isinstance(val, str) and ctx.registry is not None:
-        return ctx.registry.region_center(val)
-    return None
+    """静态目标解析（统一走 tactical_map.resolver，ADR-0029 D1）。"""
+    return resolve_target(val, ctx.region_layer)
 
 
 def _p_arrived(ctx: EvalCtx, slot, target, radius) -> bool:
@@ -122,7 +121,7 @@ def _p_arrived(ctx: EvalCtx, slot, target, radius) -> bool:
 
 
 def _p_group_center(ctx: EvalCtx, slot) -> Point2 | None:
-    return center_of_units(_group_units(ctx, slot))
+    return group_center(ctx, slot)
 
 
 def _p_distance_between(ctx: EvalCtx, slot_a, slot_b) -> float:
@@ -150,9 +149,9 @@ def _p_group_hp_ratio(ctx: EvalCtx, slot) -> float:
 
 
 def _p_region_center(ctx: EvalCtx, name) -> Point2 | None:
-    if ctx.registry is None:
+    if ctx.region_layer is None:
         return None
-    return ctx.registry.region_center(name)
+    return ctx.region_layer.anchor(name)
 
 
 def _p_unit_count(ctx: EvalCtx, type_name) -> int:
