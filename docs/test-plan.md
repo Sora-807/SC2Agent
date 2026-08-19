@@ -47,6 +47,7 @@
 - ✅ loop_limits.max_step_transitions 有界环兜底（超限 → strategy 结束）。
 - ✅ step 转移 + exit_strategy；FakeGamePort 驱动确定性测试（simple_push/bio_push 全战术链/空间谓词/区域谓词/名字解析端到端）。
 - ✅ **端到端切片**（`run_flow_slice.py`/`run_flow_arrived.py`，真 SC2）：driver→world→flow→driver，scv_move flow 驱动 SCV 移动到 (50,50)，arrived 空间谓词真机验通。
+- ✅ **复杂协同节奏离线验证**（`test_tank_marine_push.py` + `docs/tank_marine_push.yaml`）：步坦协同蛙跳推进——坦克先推进到枪兵身边、距下一点 ≤ 架起射程 80% 才驻扎（hold 占位）、步兵推到覆盖内下一点、脱队（distance_between > 阈值）→ 停等 step_elapsed 秒再续、威胁评估（enemy_count_near + group_hp_ratio）通过才下一跳、总攻 arrived→done；23 帧确定性走完 3 跳 + 总攻，op 去重/分组展开逐项断言。
 - ⏳ hot-edit（live_editable）、full spec-006 仲裁、set_local 读节点、start/stop_timer 运行时、event_occurred/user_cancel 通道（GameEvent 目录 D7 后）。
 - ⏳ burnysc2 Move order 的 target_world_space_pos 为 None（目标在 proto 别处；非 bug，review 留意）。
 
