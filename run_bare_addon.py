@@ -1,8 +1,8 @@
-"""挂件建造裸实验（隔离 burnysc2/SC2 层；手动跑）：不经过我们的任何模块。
+"""挂件能力决定性实验 v5（裸 burnysc2；手动跑）：通用 BUILD_REACTOR + 专属实体类型。
 
-裸 bot 直接：建补给站 → 建兵营 → 对兵营发 BUILD_REACTOR_BARRACKS（三个变体轮换：
-a) rax(build_ability) 旧式直发  b) self.do(rax(...))  c) rax.build(REACTOR)）。
-每 10 步记录：兵营 orders、REACTOR 实体、矿气。
+前置（全部校准位）：补给站 → 精炼厂（最近气井）+ 3 气工 → 兵营（孤立）。
+然后发通用 AbilityId.BUILD_REACTOR（真机锁定：build() 静默失败、BUILD_REACTOR_BARRACKS 无实体产出），
+读 BARRACKSREACTOR 实体报告位置 → 反推真实贴附格点（验证右下 2×2 预留模型）。
 输出：docs/bare_addon.log
 """
 import sys
@@ -21,7 +21,6 @@ from sc2.player import Bot, Computer
 from sc2.position import Point2
 
 LOG = Path(__file__).parent / "docs" / "bare_addon.log"
-VARIANT = sys.argv[1] if len(sys.argv) > 1 else "a"
 
 
 def log(msg: object) -> None:
@@ -31,40 +30,62 @@ def log(msg: object) -> None:
         f.write(s + "\n")
 
 
+BL = {"depot": Point2((40.5, 32.5)), "rax": Point2((42.5, 42.5))}
+TR = {"depot": Point2((131.5, 107.5)), "rax": Point2((117.5, 110.5))}
+
+
 class BareBot(BotAI):
+    _did_depot = False
+    _refinery_iter = -99
+    _did_rax = False
     _did_reactor = False
 
+    async def on_start(self) -> None:
+        self.unit_command_uses_self_do = True
+
     async def on_step(self, iteration: int) -> None:
-        cc = self.townhalls.first
-        rax = self.structures(UnitTypeId.BARRACKS).ready.first             if self.structures(UnitTypeId.BARRACKS).ready else None
-        # 建补给站（CC 左上，裸 bot 固定位置）
-        if self.minerals >= 100 and not self.structures(UnitTypeId.SUPPLYDEPOT):
-            scv = self.workers.first
-            scv.build(UnitTypeId.SUPPLYDEPOT, Point2((cc.position.x - 8, cc.position.y + 4)))
-            log(f"[{iteration}] 发补给站建造 @ {cc.position.x - 8},{cc.position.y + 4}")
-        # 建兵营
-        if (self.minerals >= 150 and self.structures(UnitTypeId.SUPPLYDEPOT).ready
-                and not self.structures(UnitTypeId.BARRACKS)):
-            scv = self.workers.first
-            scv.build(UnitTypeId.BARRACKS, Point2((cc.position.x - 7, cc.position.y + 12)))
-            log(f"[{iteration}] 发兵营建造 @ {cc.position.x - 7},{cc.position.y + 12}")
-        # 挂件三变体
+        cc = self.townhalls.first.position
+        pos = TR if cc.x > 90 else BL
+        depot_ready = self.structures(UnitTypeId.SUPPLYDEPOT).ready
+        refinery_ready = self.gas_buildings.ready
+        rax = self.structures(UnitTypeId.BARRACKS).ready.first \
+            if self.structures(UnitTypeId.BARRACKS).ready else None
+        if not self._did_depot and self.minerals >= 100 and not self.structures(UnitTypeId.SUPPLYDEPOT):
+            self._did_depot = True
+            self.do(self.workers.first.build(UnitTypeId.SUPPLYDEPOT, pos["depot"]))
+            log(f"[{iteration}] 发补给站 @ {pos['depot']}")
+        if self._refinery_iter < 0 and depot_ready and self.minerals >= 75 \
+                and not self.gas_buildings and self.all_units.vespene_geyser:
+            self._refinery_iter = iteration
+            geyser = self.all_units.vespene_geyser.closest_to(cc)
+            self.do(self.workers.first.build(UnitTypeId.REFINERY, geyser))
+            log(f"[{iteration}] 发精炼厂 @ 气井 {geyser.tag} {geyser.position}")
+        # 派 3 气工（只一次）
+        if refinery_ready and not hasattr(self, "_gas_done"):
+            self._gas_done = True
+            refinery = self.gas_buildings.ready.first
+            for w in self.workers.idle.take(3):
+                self.do(w.gather(refinery))
+            log(f"[{iteration}] 派 3 气工")
+        # 兵营：精炼厂命令 2 帧后、换工兵（避免同帧同 SCV 去重）
+        if (not self._did_rax and depot_ready and iteration - self._refinery_iter >= 2
+                and self.minerals >= 150):
+            self._did_rax = True
+            builder = self.workers.random
+            self.do(builder.build(UnitTypeId.BARRACKS, pos["rax"]))
+            log(f"[{iteration}] 发兵营 @ {pos['rax']}（孤立，SCV={builder.tag}）")
         if rax is not None and self.vespene >= 50 and not self._did_reactor:
             self._did_reactor = True
-            if VARIANT == "a":
-                rax(AbilityId.BUILD_REACTOR_BARRACKS)  # 旧式直发
-            elif VARIANT == "b":
-                self.do(rax(AbilityId.BUILD_REACTOR_BARRACKS))
-            else:
-                rax.build(UnitTypeId.REACTOR)
-            log(f"[{iteration}] VARIANT={VARIANT} 对兵营 {rax.tag} @ {rax.position} 发挂件命令")
+            self.do(rax(AbilityId.BUILD_REACTOR))  # 通用能力（CREATION_ABILITY_FIX 的命名规律）
+            log(f"[{iteration}] 对兵营 {rax.tag} @ {rax.position} 发 BUILD_REACTOR 通用能力")
         if iteration % 10 == 0:
-            reactors = [(u.tag, u.position, round(u.build_progress, 2)) for u in
-                        self.structures(UnitTypeId.REACTOR) | self.units(UnitTypeId.REACTOR)]
-            rax_orders = [(u.tag, [o.ability.button_name for o in u.orders]) for u in
-                          self.structures(UnitTypeId.BARRACKS)]
+            # 挂件实体 = 父建筑专属类型（BARRACKSREACTOR=38）；通用 REACTOR=6 在游戏里不产出实体
+            reactors = [(u.tag, u.position) for u in
+                        self.structures(UnitTypeId.BARRACKSREACTOR) | self.units(UnitTypeId.BARRACKSREACTOR)]
+            rax_info = [(u.tag, u.position, [o.ability.button_name for o in u.orders])
+                        for u in self.structures(UnitTypeId.BARRACKS)]
             log(f"[{iteration}] t={self.time:.1f} 矿={self.minerals} 气={self.vespene} "
-                f"rax={rax_orders} reactors={reactors}")
+                f"rax={rax_info} reactors={reactors}")
 
 
 def main() -> None:
@@ -72,7 +93,7 @@ def main() -> None:
     run_game(
         maps.get("LadderMap"),
         [Bot(Race.Terran, BareBot()), Computer(Race.Random, Difficulty.Easy)],
-        realtime=False, game_time_limit=200,
+        realtime=False, game_time_limit=320,
     )
 
 

@@ -114,6 +114,29 @@ def test_build_placement_failure_retries_next_slot():
     assert len(rt.queue("open").items) == 1  # 仍在途
 
 
+def test_build_confirm_matches_position_not_type_count():
+    """真机教训（full_flow.log）：同类型建筑连续建时，晚到实体不能替别的项确认——
+    按放置位置匹配（奇数尺寸 R=P、偶数尺寸 R=P+0.5 锁定公式）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                      placement=PlacementInRegion("home"))])
+    gs0 = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs0)
+    assert port.submitted[0].params["position"] == [2.5, 2.5]  # s1
+    for _ in range(31):
+        rt.on_game_state(gs0)  # 无实体无 build order → 第 30 帧判失败 → 重发 s2
+    assert port.submitted[1].params["position"] == [5.5, 2.5]  # s2（预期报告位 (6.0,3.0)）
+    # s1 位置出现 depot 实体（类型相同、位置不匹配）→ 不能确认
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=2.5, y=2.5, progress=0.1)], minerals=400))
+    assert len(rt.queue("q").items) == 1  # 仍在途
+    # s2 位置实体出现 → 位置匹配 → 确认出队
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(10, "SUPPLYDEPOT", x=6.0, y=3.0, progress=0.1)], minerals=400))
+    assert rt.queue("q").items == []
+
+
 def test_build_dropped_when_candidates_exhausted():
     """唯一候选（PlacementExact）放置失败 → 出队记入 dropped，不卡死整队。"""
     port = _Port()
@@ -129,6 +152,23 @@ def test_build_dropped_when_candidates_exhausted():
         rt.on_game_state(gs)  # 放置失败（第 30 帧判定，重试时候选耗尽）
     assert any("耗尽" in r for _, r in rt.dropped)
     assert len(port.submitted) == 2 and port.submitted[1].action == "train"  # 后续项继续
+
+
+def test_same_frame_no_duplicate_unit_commands():
+    """同帧跨队列不对同一单位重复发令（burnysc2 同帧同单位命令去重丢单——真机踩坑：
+    建造工兵被 steward 的 gather 抢走导致 build 静默丢失）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q1", [QueueItem(op="build", type="terran/supplydepot",
+                                       placement=PlacementExact("spot"))])
+    rt.submit_queue("q2", [QueueItem(op="assign_workers", task="mineral", count=1)])
+    resources = [_u(10, "MINERALFIELD", owner=Owner.NEUTRAL, x=12.0, y=12.0)]
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")],
+                         resources=resources, minerals=400))
+    build_ops = [o for o in port.submitted if o.action == "build"]
+    gather_ops = [o for o in port.submitted if o.action == "gather"]
+    assert len(build_ops) == 1
+    assert not gather_ops  # 唯一空闲 SCV 已被 build 占用 → 分配器跳过（不重复命令）
 
 
 def test_train_count_multiple_frames():
@@ -153,6 +193,38 @@ def test_train_blocked_by_supply_then_resumes():
     assert port.submitted == []  # 供给满 → 阻塞
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER")], minerals=200, supply_used=14, supply_cap=15))
     assert len(port.submitted) == 1
+
+
+def test_train_skips_full_producer():
+    """真机教训（full_flow.log）：SC2 训练队列满静默拒单——只选有空槽的兵营（挂件双槽 ≈ 2 条订单为满）。"""
+    from game import Order
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="train", type="terran/marine")])
+    full = Unit(tag=3, type_name="BARRACKS", position=Point2(8.0, 8.0), owner=Owner.SELF,
+                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0,
+                orders=[Order(ability="Marine"), Order(ability="Marine")])
+    free = Unit(tag=4, type_name="BARRACKS", position=Point2(20.0, 20.0), owner=Owner.SELF,
+                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0)
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), full, free], minerals=200))
+    assert len(port.submitted) == 1
+    assert port.submitted[0].unit_tags == [4]  # 跳过满槽兵营(3)
+
+
+def test_train_skips_barracks_building_addon():
+    """兵营在建挂件（Reactor 订单）→ 不能训练 → 选另一台空闲兵营。"""
+    from game import Order
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="train", type="terran/marine")])
+    busy = Unit(tag=3, type_name="BARRACKS", position=Point2(8.0, 8.0), owner=Owner.SELF,
+                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0,
+                orders=[Order(ability="Reactor")])
+    free = Unit(tag=4, type_name="BARRACKS", position=Point2(20.0, 20.0), owner=Owner.SELF,
+                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0)
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), busy, free], minerals=200))
+    assert len(port.submitted) == 1
+    assert port.submitted[0].unit_tags == [4]  # 跳过在建挂件的兵营(3)
 
 
 def test_head_blocking_holds_back_later_items():
@@ -288,9 +360,9 @@ def test_addon_built_by_parent_not_scv():
     assert op.params["type"] == "terran/reactor"
     assert op.params["position"] is None  # 挂件无目标能力：SC2 吸附母建筑右下 2×2（真机教训）
     assert len(rt.queue("q").items) == 1  # 在途确认
-    # REACTOR 实体出现 → 确认 → 出队
+    # BARRACKSREACTOR 实体出现 → 确认 → 出队
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
-                          _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "REACTOR", x=11.5, y=8.5, progress=0.1)],
+                          _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "BARRACKSREACTOR", x=10.0, y=7.0, progress=0.1)],
                          minerals=150, vespene=150))
     assert rt.queue("q").items == []
 
@@ -300,9 +372,9 @@ def test_addon_blocked_when_parent_has_addon():
     port = _Port()
     rt = _runtime(port)
     rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
-    # 兵营 at (8,8) 3×3 → TL(7,7)；右下挂件 cells (10..11, 7..8)；REACTOR at (11.5,8.5) → TL(10,7) ✓ 占据
+    # 兵营 at (8,8) 3×3 → TL(6,6)；右下挂件 cells (9..10, 6..7)；BARRACKSREACTOR 报告 (10.0,7.0) → TL(9,6) ✓ 完全占据（裸实验锁定位置）
     gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
-              _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "REACTOR", x=11.5, y=8.5)],
+              _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "BARRACKSREACTOR", x=10.0, y=7.0)],
              minerals=200, vespene=200)
     rt.on_game_state(gs)
     assert port.submitted == []  # 阻塞等待
@@ -314,12 +386,67 @@ def test_addon_second_goes_to_other_barracks():
     rt = _runtime(port)
     rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
     gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
-              _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "REACTOR", x=11.5, y=8.5),
+              _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "BARRACKSREACTOR", x=10.0, y=7.0),
               _u(5, "BARRACKS", x=20.0, y=20.0)],
              minerals=200, vespene=200)
     rt.on_game_state(gs)
     assert len(port.submitted) == 1
     assert port.submitted[0].unit_tags == [5]  # 第二台兵营
+
+
+def test_addon_skips_barracks_with_orders():
+    """兵营有训练订单（忙碌）→ 不选它挂件（真机教训 full_flow.log：忙碌兵营的挂件命令
+    会被拒绝或与同帧训练命令冲突，订单静默消失）。"""
+    from game import Order
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
+    busy = Unit(tag=3, type_name="BARRACKS", position=Point2(8.0, 8.0), owner=Owner.SELF,
+                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0,
+                orders=[Order(ability="Marine")])
+    free = Unit(tag=5, type_name="BARRACKS", position=Point2(20.0, 20.0), owner=Owner.SELF,
+                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0)
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), busy, free],
+                         minerals=200, vespene=200))
+    assert len(port.submitted) == 1
+    assert port.submitted[0].unit_tags == [5]  # 跳过忙碌兵营(3)
+
+
+def test_addon_waits_when_parent_not_built_yet():
+    """母建筑还没建（macro 队列在建）→ 挂件项阻塞等待，不误判为被摧毁而丢弃
+    （真机教训：开局即判死 → 反应堆×4 全丢，后续枪兵全被按住）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")],
+                         minerals=200, vespene=200))
+    assert rt.dropped == []
+    assert port.submitted == []  # 前置未满足 → 等兵营
+    assert len(rt.queue("q").items) == 1
+
+
+def test_addon_retry_wait_does_not_burn_retries():
+    """重试等待（资源/母建筑不足）不计重试次数——只在实际重发时计（真机踩坑：
+    等待帧也烧次数会在 3 帧内误丢弃挂件）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), _u(3, "BARRACKS", x=8.0, y=8.0)],
+             minerals=200, vespene=200)
+    rt.on_game_state(gs)
+    assert len(port.submitted) == 1  # 发出挂件
+    for _ in range(30):
+        rt.on_game_state(gs)  # 无订单无实体 → 第 30 帧判失败 → 转重试
+    assert rt._build_flight["q"]["builder"] is None
+    poor = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), _u(3, "BARRACKS", x=8.0, y=8.0)],
+               minerals=200, vespene=0)
+    for _ in range(60):
+        rt.on_game_state(poor)  # 缺气等待 60 帧：不重发、不计次数、不丢弃
+    assert rt._build_flight.get("q") is not None
+    assert rt._build_flight["q"].get("retries", 0) == 0
+    rt.on_game_state(gs)  # 气够了 → 实际重发一次（retries=1）
+    assert len(port.submitted) == 2
+    assert rt._build_flight["q"]["retries"] == 1
 
 
 def test_gas_build_targets_free_geyser():
@@ -350,3 +477,21 @@ def test_gas_skips_occupied_geyser():
                           _u(3, "REFINERY", x=15.0, y=15.0)],
                          resources=geysers, minerals=200))
     assert port.submitted[0].params["target_unit"] == 11  # 10 号气井被占 → 选 11（两井都在主基半径内）
+
+
+def test_gas_skips_inflight_reserved_geyser():
+    """在途精炼厂预留的气井（命令已发、实体未出现）不能被第二项重选（SC2 静默拒绝第二个）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/refinery")])
+    geysers = [_u(10, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=12.0, y=12.0),
+               _u(11, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=18.0, y=10.0)]
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")],
+                         resources=geysers, minerals=200))
+    assert port.submitted[0].params["target_unit"] == 10
+    rt.submit_queue("q2", [QueueItem(op="build", type="terran/refinery")])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), _u(3, "SCV")],
+                         resources=geysers, minerals=200))
+    build_ops = [o for o in port.submitted if o.action == "build_gas"]
+    assert len(build_ops) == 2
+    assert build_ops[-1].params["target_unit"] == 11  # 避开在途预留的 10 号气井

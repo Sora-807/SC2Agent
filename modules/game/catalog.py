@@ -75,6 +75,11 @@ class CatalogEntry:
     produced_by: str | None # 产出建筑 stable ID（如 marine 由 "terran/barracks" 产；起始建筑 = None）
     prerequisites: list[str]  # 前置 stable ID 列表（如 barracks 需 ["terran/supplydepot"]）
     size: int | None = None  # footprint 格边长（建筑：depot=2/兵营=3/基地=5；非建筑=None；放置 slot 按它过滤）
+    # 挂件专用（真机锁定）：实体类型是父建筑专属（BARRACKSREACTOR 等），但建造能力是通用
+    # BUILD_REACTOR/BUILD_TECHLAB（burnysc2 的 per-parent 能力如 BUILD_REACTOR_BARRACKS 被接受却无实体产出；
+    # Unit.build() 也因 creation_ability 为 None 静默返回 False）。driver 按 build_ability 发命令。
+    build_ability: str | None = None    # 通用建造能力 burnysc2 名（仅挂件条目填；如 "BUILD_REACTOR"）
+    build_order_name: str | None = None  # 母建筑执行建造时的订单按钮名（如 "Reactor"；在途确认用）
 
 
 class Catalog:
@@ -117,6 +122,12 @@ class Catalog:
         burnysc2_name = data.get("burnysc2_name")
         if not burnysc2_name:
             raise ValueError(f"{stable_id}: 缺字段 burnysc2_name")
+        build_ability = data.get("build_ability")
+        build_order_name = data.get("build_order_name")
+        # 挂件必须给通用建造能力（真机锁定：实体类型是 BARRACKSREACTOR 等父建筑专属名，
+        # 用实体名拼 BUILD_* 不存在；缺 build_ability 的挂件条目 = 无法下发的坏数据）
+        if "addon" in capabilities and not build_ability:
+            raise ValueError(f"{stable_id}: addon 挂件条目必须提供 build_ability（通用建造能力名）")
         e = CatalogEntry(
             stable_id=stable_id,
             burnysc2_name=burnysc2_name,
@@ -128,6 +139,8 @@ class Catalog:
             size=data.get("size"),
             produced_by=data.get("produced_by"),
             prerequisites=list(data.get("prerequisites") or []),
+            build_ability=build_ability,
+            build_order_name=build_order_name,
         )
         if e.burnysc2_name in self._by_burnysc2:
             raise ValueError(f"{stable_id}: burnysc2_name {e.burnysc2_name!r} 已被占用")

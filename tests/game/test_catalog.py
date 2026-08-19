@@ -77,6 +77,24 @@ def test_register_custom():
     assert cat.stable_id_for("TEST") == "terran/test"
 
 
+def test_addon_entry_fields():
+    """挂件条目（真机锁定）：实体类型 = 父建筑专属（BARRACKSREACTOR），
+    建造走通用能力名 + 订单按钮名（与实体类型名不同）。"""
+    cat = load_terran()
+    r = cat.by_stable_id("terran/reactor")
+    assert r is not None
+    assert r.burnysc2_name == "BARRACKSREACTOR"  # 游戏里产出的实体是这个类型
+    assert r.build_ability == "BUILD_REACTOR"      # 建造命令是通用能力（per-parent 无实体产出）
+    assert r.build_order_name == "Reactor"         # 母建筑订单按钮名（在途确认检测用）
+    assert r.build_time == 36  # 反应堆真实建造时间（真机实测订单常驻 ~36 游戏秒）
+
+
+def test_register_rejects_addon_without_build_ability():
+    """addon 挂件缺通用建造能力名 = 无法下发的坏数据 → 加载当场报错。"""
+    with pytest.raises(ValueError, match="build_ability"):
+        Catalog().register("terran/test", _bad({"capabilities": ["addon"], "size": 2}))
+
+
 # ---- 加载边界校验（非法数据当场报错，R7 降级告警不静默）----
 
 

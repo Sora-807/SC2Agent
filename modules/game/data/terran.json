@@ -113,7 +113,7 @@
     ]
   },
   "terran/reactor": {
-    "burnysc2_name": "REACTOR",
+    "burnysc2_name": "BARRACKSREACTOR",
     "display_name_zh": "反应堆（双倍挂件）",
     "role": "building",
     "capabilities": [
@@ -124,15 +124,17 @@
       "vespene": 50,
       "supply": 0
     },
-    "build_time": 25,
+    "build_time": 36,
     "produced_by": "terran/barracks",
     "prerequisites": [
       "terran/barracks"
     ],
-    "size": 2
+    "size": 2,
+    "build_ability": "BUILD_REACTOR",
+    "build_order_name": "Reactor"
   },
   "terran/techlab": {
-    "burnysc2_name": "TECHLAB",
+    "burnysc2_name": "BARRACKSTECHLAB",
     "display_name_zh": "科技实验室",
     "role": "building",
     "capabilities": [
@@ -148,7 +150,9 @@
     "prerequisites": [
       "terran/barracks"
     ],
-    "size": 2
+    "size": 2,
+    "build_ability": "BUILD_TECHLAB",
+    "build_order_name": "Techlab"
   },
   "terran/refinery": {
     "burnysc2_name": "REFINERY",

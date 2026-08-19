@@ -13,6 +13,7 @@
 - ✅ **翻译层全量单测**（`test_translate.py`）：OP_CATALOG 每个 action 逐一断言 → burnysc2 方法+参数；目标缺失/空单位/未知 action 的 no-op；`resolve_point` 各形态与非法输入；**清单对齐**——`TRANSLATORS ∪ UNIMPLEMENTED_ACTIONS == OP_CATALOG`（catalog 加 action 不会静默漏掉）。
 - ✅ **burnysc2 API 契约测试**（`test_sc2_api_contract.py`）：inspect 真实 `sc2.Unit`——translator 调用的每个方法存在且必需参数个数匹配（升级 burnysc2 版本时当场红，不等真机）。
 - ✅ **bot 应用层单测**（`test_bot_apply.py`）：op_queue FIFO drain → `self.do`；命令失败静默跳过且不影响其余 op（R7）；on_step = 抽 state 推 sink → drain 队列。
+- ✅ **挂件翻译锁定**（`test_addon_build_uses_generic_build_ability`）：addon 走 catalog `build_ability` 通用能力（BUILD_REACTOR）——真机锁定：`Unit.build()` 静默返回 False（creation_ability 为 None）、per-parent 拼名 `BUILD_REACTOR_BARRACKS` 被接受扣钱却无实体产出。
 - 🚧 **真机 op 集成**：`run_ops_check.py`（手动跑）——逐 op 发命令并回读 orders/state 验生效（move/attack_move/hold/stop/patrol/follow + train/build 等矿）；`run_driver_check.py`（形态+move）。
 - ⏳ V1 未实现 op 缺口（**清单已锁死并有原因说明**）：unload/use_ability/cancel/morph（待 ability 稳定 ID 目录）、assign_workers（待生产运行时 WorkerAllocator 展开）。
 - ⏳ CommandPolicy 表（per action 持续性/重发/清空）：move ✅（spike）；attack_move/hold/follow/patrol/stop 待续 spike。
@@ -22,8 +23,8 @@
 
 ## game（modules/game）
 - ✅ 类型构造 + 默认值（Point2/Grid/RawGameState/Unit/GameState/Operation/ActionRequest/QueueItem/Owner）。
-- ⏳ catalog：`terran.json` schema 校验；`reg.where(role/capability/kind)` 查询；改 JSON 不改下游。
-- ⏳ 稳定 type ID 映射（burnysc2 `SCV`→`terran/scv`）。
+- ✅ catalog（`test_catalog.py`）：`terran.json` 加载 + `where(role/capability)` 查询 + 稳定 ID ↔ burnysc2 名双向映射；加载边界校验（stable_id 两段式/role/capability/cost/build_time/重名）。
+- ✅ **挂件条目真机锁定**：实体类型 = 父建筑专属（`BARRACKSREACTOR` 等，通用 `REACTOR` 在游戏里不产出实体）；`build_ability` = 通用建造能力名（addon 缺它加载当场报错）；`build_order_name` = 母建筑订单按钮名（在途确认检测用）。
 
 ## world（modules/world）
 - ✅ 依赖：只 game（V1；dep-check 绿）。
@@ -63,7 +64,15 @@
 - ✅ 队列工具操作：submit/append/prepend/clear/remove/reorder。
 - ✅ research/cancel = V1 不支持清单（UNSUPPORTED_QUEUE_OPS，带原因，出队记入 dropped）。
 - ✅ `gather` 动作已落地到 OP_CATALOG + driver 翻译 + burnysc2 契约（assign_workers 的落地原子）。
+- ✅ **挂件路径**（`test_runtime.py`）：builder = 母建筑（非 SCV）+ 无目标能力（position=None）；确认 = 挂件实体出现在母建筑右下 2×2 的预期报告位（`_expected_addon_reported`：R = TL+(size,0)+(1,1)，裸实验锁定）——并行多条挂件队列也不互认；母建筑右下 2×2 已被挂件占用 → 换下一台；只选完全空闲（无任何订单）的母建筑——真机锁定：带训练订单的兵营挂件命令被拒/同帧冲突静默消失；订单检测走 catalog `build_order_name`（订单按钮名如 Reactor 与实体类型名 BARRACKSREACTOR 不同）；挂件重试 = 重选母建筑重发，只在实际重发时计次（等待帧不计——踩坑：等待帧烧次数 3 帧内误丢弃），上限 6 次防永久阻塞。
+- ✅ **训练槽节奏**（`test_runtime.py`）：`_pick_producer` 只选有空槽的产出建筑（挂件双槽 ≈ 2 条订单为满；在建挂件不可训练）——真机锁定（full_flow.log）：SC2 训练队列满时静默拒绝新订单（无反馈、资源不扣但命令作废）。
+- ✅ **在途建造按位置确认**（`test_runtime.py`）：实体出现 ≠ 类型计数+1，须匹配预期报告位（锁定公式：奇数尺寸 R=P、偶数尺寸 R=P+0.5；半径 1.5）——真机锁定（full_flow.log）：同类型建筑连续建时晚到实体误确认 → 重选已下单位 → 丢补给站 → 供给卡死。
+- ✅ **在途放置位预留**（`test_runtime.py`）：命令已发、实体未出现的 slot/气井不能被别的项重选（`_resolve_placement` 并入在途 footprint；`_pick_free_geyser` 跳过在途气井）——SC2 对重复下单位静默拒绝。
+- ✅ **同帧跨队列去重**（`test_runtime.py`）：每帧 `_frame_busy` 记录已命令单位，`_pick_builder/_pick_producer/_pick_parent_for_addon` 与 WorkerAllocator(skip) 跳过——真机锁定：burnysc2 同帧同单位命令被去重丢单（建造工兵被 steward gather 抢走）。
 - ✅ 真机集成 `run_production_check.py`：**固定位置顺序摆放**——depot1/depot2/barracks1 实体落位 ≈ 模板校准点（dist≤0.75，兵营 dist=0.00）、每个 build 只发一次零重试、train SCV 8→11、idle/mineral 采集数往返、dropped=0；bl/tr 两出生点变体自动选择均验证。
+- ✅ 真机集成 `run_full_flow.py`（**engine_done=True 全链打通**，trace 见 docs/full_flow.log）：补给站×8→精炼厂×2→兵营×4→反应堆×4（4 条独立队列并行，t≈295 全部挂上）→枪兵到 50（t≈426 formup→advance）→attack_move 敌方主矿→arrived→exit（t≈536 done=True）；dropped=0。
+- ✅ 演示粘合（真机教训驱动）：枪兵维持（macro 排空 + 每台兵营挂上反应堆后按空槽补训，<50 且有空槽才补，formup 后停补——advance 后新兵拖拽组心让 arrived 永不成立）；补给维持（macro 排空后被打掉的补给站补建——丢 1 个补给站 = 供给 69 卡死第 50 枪兵）；与 macro 抢位的教训（补给补建必须等 macro 排空，否则多建到 12 个）。
+- ✅ **挂件真机锁定**（`run_bare_addon.py` + `docs/bare_addon.log`；与参考工程 C:/dev/project/sc2_agent 的写法交叉验证一致——其用母建筑 + BARRACKSREACTOR 等父专属类型的 creation_ability + has_add_on 守卫）：通用 `BUILD_REACTOR` 订单一帧内产 `BARRACKSREACTOR` 实体、常驻 ~36 游戏秒（= build_time）后完工；贴附格点 = 母建筑右下 2×2（报告位置 (120.0,110.0) vs 兵营 (117.5,110.5)，TL=floor(R-1) 反推吻合）。
 
 ## planner（modules/planner）
 - ⏳ 依赖：constraint/mechanics/game（**不依赖 flow 运行期**，dep-check）。

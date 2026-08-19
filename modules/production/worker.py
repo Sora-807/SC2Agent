@@ -85,11 +85,13 @@ class WorkerAllocator:
         idle = [w for w in workers if not w.orders]
         return (idle or workers or [None])[0]
 
-    def assign(self, gs: GameState, task: WorkerTask, count: int, base_pos=None) -> list[Emission]:
-        """assign_workers(task, count) → gather/stop 级 Emission 列表。base_pos = 主基锚点（节点过滤）。"""
+    def assign(self, gs: GameState, task: WorkerTask, count: int, base_pos=None,
+               skip: frozenset[int] = frozenset()) -> list[Emission]:
+        """assign_workers(task, count) → gather/stop 级 Emission 列表。base_pos = 主基锚点（节点过滤）；
+        skip = 本帧已被其他队列下过令的单位 tag（同帧同单位命令会被 burnysc2 去重丢单——真机踩坑）。"""
         if task is WorkerTask.IDLE:
             return self._idle(gs, count)
-        workers = self._workers(gs)
+        workers = [u for u in self._workers(gs) if u.tag not in skip]
         nodes = self._nodes(gs, gas=(task is WorkerTask.GAS), base_pos=base_pos)
         if not workers or not nodes:
             return []

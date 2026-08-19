@@ -215,17 +215,15 @@ def _t_build(op, find_unit, catalog=None):
     if not units:
         return []
     type_id = _resolve_type_id(op.params["type"], catalog)
-    # 挂件（REACTOR/TECHLAB 等）：game_data 里 creation_ability 为 None，build() 静默返回 False
-    # （真机踩坑，trace 见 docs/full_flow.log）；需直接发 BUILD_<挂件>_<母建筑> 能力（burnysc2 命名规律），
-    # 由母建筑自建、SC2 吸附到右下 2×2。
+    # 挂件（REACTOR/TECHLAB）：game_data 里 creation_ability 为 None，build() 静默返回 False；
+    # 需直接发通用 BUILD_REACTOR/BUILD_TECHLAB 能力（catalog build_ability），由母建筑自建、
+    # SC2 吸附到右下 2×2。真机踩坑（trace 见 docs/full_flow.log）：per-parent 拼名
+    # BUILD_REACTOR_BARRACKS 被接受、扣钱、订单常驻却永不产实体——通用能力才有实体产出。
     entry = catalog.by_burnysc2_name(type_id.name) if catalog is not None else None
     if entry is not None and "addon" in entry.capabilities:
-        parent_entry = (
-            catalog.by_stable_id(entry.produced_by) if entry.produced_by else None
-        )
-        if parent_entry is None:
-            return []
-        ability_name = f"BUILD_{type_id.name}_{parent_entry.burnysc2_name}"
+        ability_name = entry.build_ability
+        if not ability_name:
+            return []  # catalog 校验已挡（addon 必须填 build_ability）；双保险 no-op
         try:
             ability = AbilityId[ability_name]
         except KeyError:
