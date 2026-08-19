@@ -62,6 +62,19 @@ def test_bot_ai_has_do():
     assert callable(getattr(BotAI, "do", None)), "BotAI 缺 do()（命令下发通道）"
 
 
+def test_train_build_research_param_types():
+    """train/build 的 unit 参数是 UnitTypeId、research 的 upgrade 是 UpgradeId。
+
+    真机实测教训：translator 把字符串直接传入时 burnysc2 静默失败
+    （str 没有 .value）——这条契约锁死参数类型，不让它再发生。
+    """
+    expected = {"train": "UnitTypeId", "build": "UnitTypeId", "research": "UpgradeId"}
+    for method, want in expected.items():
+        params = list(inspect.signature(getattr(Unit, method)).parameters.values())
+        ann = str(params[1].annotation)  # 第二个位置参数（第一个是 self）
+        assert want in ann, f"sc2.Unit.{method} 第 2 参数注解 {ann!r} 不含 {want}"
+
+
 def test_catalog_partitioned_between_translators_and_unimplemented():
     """OP_CATALOG 权威源：每个 action ∈ TRANSLATORS ∪ UNIMPLEMENTED_ACTIONS，且互斥。"""
     implemented = set(TRANSLATORS)

@@ -110,11 +110,31 @@ def test_patrol_noop_when_empty_positions():
 
 
 def test_build_train_research():
+    """type 参数必须解析成 burnysc2 枚举（真机上字符串会静默失败——实测踩过）。"""
+    from sc2.ids.unit_typeid import UnitTypeId
+    from sc2.ids.upgrade_id import UpgradeId
     fu = _find([FakeUnit(1)])
     b = translate_op(_op("build", type="SUPPLYDEPOT", position=[9, 9]), fu)
-    assert b[0][0] == "build" and b[0][2] == "SUPPLYDEPOT" and b[0][3].x == 9
-    assert translate_op(_op("train", type="SCV"), fu) == [("train", 1, "SCV")]
-    assert translate_op(_op("research", type="STIMPACK"), fu) == [("research", 1, "STIMPACK")]
+    assert b[0][0] == "build" and b[0][2] is UnitTypeId.SUPPLYDEPOT and b[0][3].x == 9
+    assert translate_op(_op("train", type="SCV"), fu) == [("train", 1, UnitTypeId.SCV)]
+    assert translate_op(_op("research", type="STIMPACK"), fu) == [("research", 1, UpgradeId.STIMPACK)]
+
+
+def test_train_with_stable_id_via_catalog():
+    """catalog 场景：stable ID（terran/scv）→ burnysc2 名 → 枚举。"""
+    from game.catalog import load_terran
+    from sc2.ids.unit_typeid import UnitTypeId
+    fu = _find([FakeUnit(1)])
+    cmds = translate_op(_op("train", type="terran/scv"), fu, catalog=load_terran())
+    assert cmds == [("train", 1, UnitTypeId.SCV)]
+
+
+def test_unknown_type_raises():
+    """解析不了的类型直接抛（_apply_op 会静默跳过，V1 降级）；不静默发错命令。"""
+    with pytest.raises(ValueError, match="type id"):
+        translate_op(_op("train", type="BOGUS"), _find([FakeUnit(1)]))
+    with pytest.raises(ValueError, match="type id"):
+        translate_op(_op("train", type=123), _find([FakeUnit(1)]))
 
 
 def test_build_train_research_noop_when_no_units():

@@ -14,6 +14,7 @@ from sc2.data import Difficulty, Race
 from sc2.main import run_game
 from sc2.player import Bot, Computer
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2 as SC2Point2
 
 from game import (
@@ -29,6 +30,7 @@ from game import (
     RuntimeSink,
     SessionEvent,
 )
+from game.catalog import load_terran
 
 # ---------- extraction（纯函数，duck-typed burnysc2 对象）----------
 
@@ -150,31 +152,31 @@ def _units(op, find_unit):
     return [u for u in (find_unit(t) for t in op.unit_tags) if u is not None]
 
 
-def _t_move_to(op, find_unit):
+def _t_move_to(op, find_unit, catalog=None):
     p = resolve_point(op.params["position"])
     return [u.move(p) for u in _units(op, find_unit)]
 
 
-def _t_attack_move_to(op, find_unit):
+def _t_attack_move_to(op, find_unit, catalog=None):
     p = resolve_point(op.params["position"])
     return [u.attack(p) for u in _units(op, find_unit)]
 
 
-def _t_hold_position(op, find_unit):
+def _t_hold_position(op, find_unit, catalog=None):
     return [u.hold_position() for u in _units(op, find_unit)]
 
 
-def _t_stop(op, find_unit):
+def _t_stop(op, find_unit, catalog=None):
     return [u.stop() for u in _units(op, find_unit)]
 
 
-def _t_follow(op, find_unit):
+def _t_follow(op, find_unit, catalog=None):
     tgt = find_unit(op.params["target_unit"]) if op.params.get("target_unit") else None
     units = _units(op, find_unit)
     return [u.move(tgt) for u in units] if tgt is not None else []
 
 
-def _t_patrol(op, find_unit):
+def _t_patrol(op, find_unit, catalog=None):
     pts = op.params.get("positions", [])
     if not pts:
         return []
@@ -182,13 +184,13 @@ def _t_patrol(op, find_unit):
     return [u.patrol(p) for u in _units(op, find_unit)]
 
 
-def _t_focus_fire(op, find_unit):
+def _t_focus_fire(op, find_unit, catalog=None):
     tgt = find_unit(op.params["target_unit"]) if op.params.get("target_unit") else None
     units = _units(op, find_unit)
     return [u.attack(tgt) for u in units] if tgt is not None else []
 
 
-def _t_load(op, find_unit):
+def _t_load(op, find_unit, catalog=None):
     """V1 近似：smart(target_unit)。
 
     smart() 是 burnysc2 的多态命令（运输机对被载单位执行装载），避免 driver 按单位类型
@@ -200,22 +202,47 @@ def _t_load(op, find_unit):
     return [u.smart(tgt) for u in units] if tgt is not None else []
 
 
-def _t_build(op, find_unit):
+def _t_build(op, find_unit, catalog=None):
     units = _units(op, find_unit)
     if not units:
         return []
     p = resolve_point(op.params["position"])
-    return [units[0].build(op.params["type"], p)]
+    # 注：burnysc2 build 要求 UnitTypeId 枚举（字符串会静默失败）；气矿建筑
+    # （REFINERY 等）还需要传气井 Unit 而非坐标——待 ability 目录后处理。
+    return [units[0].build(_resolve_type_id(op.params["type"], catalog), p)]
 
 
-def _t_train(op, find_unit):
+def _t_train(op, find_unit, catalog=None):
     units = _units(op, find_unit)
-    return [units[0].train(op.params["type"])] if units else []
+    return [units[0].train(_resolve_type_id(op.params["type"], catalog))] if units else []
 
 
-def _t_research(op, find_unit):
+def _t_research(op, find_unit, catalog=None):
     units = _units(op, find_unit)
-    return [units[0].research(op.params["type"])] if units else []
+    return [units[0].research(_resolve_type_id(op.params["type"], catalog))] if units else []
+
+
+def _resolve_type_id(val, catalog=None):
+    """build/train/research 的 type 参数 → burnysc2 枚举（UnitTypeId/UpgradeId）。
+
+    接受三种形态：
+    - 枚举实例（UnitTypeId/UpgradeId）：透传；
+    - burnysc2 枚举名（如 "SCV"/"SUPPLYDEPOT"/"STIMPACK"）：直接查名（无 catalog 场景）；
+    - catalog 稳定 ID（如 "terran/barracks"）：先经 catalog 映射到枚举名再查。
+    解析失败抛 ValueError → 上层 _apply_op 静默跳过（D6/V1 降级路径）。
+    """
+    if isinstance(val, (UnitTypeId, UpgradeId)):
+        return val
+    if not isinstance(val, str):
+        raise ValueError(f"cannot resolve type id: {val!r}")
+    name = catalog.burnysc2_name_for(val) if catalog is not None else None
+    name = name or val  # 无 catalog 或非稳定 ID：按 burnysc2 枚举名直接查
+    for cls in (UnitTypeId, UpgradeId):
+        try:
+            return cls[name]
+        except KeyError:
+            continue
+    raise ValueError(f"cannot resolve type id: {val!r}")
 
 
 # action -> translator（查表；key 与 game.operation.OP_CATALOG 一致）
@@ -246,13 +273,14 @@ UNIMPLEMENTED_ACTIONS: dict[str, str] = {
 }
 
 
-def translate_op(op, find_unit) -> list:
+def translate_op(op, find_unit, catalog=None) -> list:
     """查表翻译 Operation → burnysc2 UnitCommand 列表（纯函数，可单测）。
 
+    catalog 用于 stable ID → burnysc2 枚举（build/train/research 的 type）；
     未注册 action（含 UNIMPLEMENTED_ACTIONS 的 V1 缺口）返回 []（no-op，不崩游戏）。
     """
     fn = TRANSLATORS.get(op.action)
-    return fn(op, find_unit) if fn is not None else []
+    return fn(op, find_unit, catalog) if fn is not None else []
 
 
 class SC2DriverBot(BotAI):
@@ -264,6 +292,7 @@ class SC2DriverBot(BotAI):
     _sink: RuntimeSink | None = None
     _op_queue: list[Operation] | None = None
     _last_raw: RawGameState | None = None
+    _catalog = None  # game.Catalog：stable ID → burnysc2 名（build/train/research 的 type 解析）
 
     async def on_step(self, iteration: int) -> None:
         raw = extract_raw_state(self, iteration)
@@ -284,7 +313,7 @@ class SC2DriverBot(BotAI):
 
     def _apply_op(self, op: Operation) -> None:
         try:
-            for cmd in translate_op(op, self._find_unit):
+            for cmd in translate_op(op, self._find_unit, self._catalog):
                 self.do(cmd)
         except Exception:
             pass  # D6：经 ApplyResult/events 回流；V1 静默
@@ -301,6 +330,7 @@ class SC2GamePort:
         sink: RuntimeSink | None = None,
         game_time_limit: int = 120,
         realtime: bool = False,
+        catalog=None,  # game.Catalog：stable ID → burnysc2 名；None 时默认加载 terran catalog
     ) -> None:
         self._map_name = map_name
         self._race = race
@@ -308,6 +338,7 @@ class SC2GamePort:
         self._sink = sink
         self._game_time_limit = game_time_limit
         self._realtime = realtime
+        self._catalog = catalog if catalog is not None else load_terran()
         self._op_queue: list[Operation] = []
         self._bot: SC2DriverBot | None = None
         self._events: list[GameEvent] = []
@@ -319,6 +350,7 @@ class SC2GamePort:
         bot = SC2DriverBot()
         bot._sink = self._sink
         bot._op_queue = self._op_queue
+        bot._catalog = self._catalog
         self._bot = bot
         run_game(
             maps.get(self._map_name),
