@@ -141,8 +141,17 @@ class ProductionRuntime:
         if not isinstance(head.task, WorkerTask):
             self._drop(head, "assign_workers 缺 task（mineral|gas|idle）")
             return
-        emissions = self._workers.assign(gs, head.task, max(1, head.count))
+        emissions = self._workers.assign(gs, head.task, max(1, head.count), base_pos=self._base_anchor())
         self._emit(emissions, gs.seq)
+
+    def _base_anchor(self):
+        """主基锚点（资源节点过滤中心）；无区域层 → None（不过滤）。"""
+        if self._region_layer is None:
+            return None
+        b = self._region_layer.big_regions.get(self._region_layer.big_index.get(
+            self._region_layer.big_grid.data[0][0]
+        ))
+        return b.anchor if b is not None else None
 
     def _try_train(self, head: QueueItem, gs: GameState) -> str:
         """返回 emitted / consumed（丢弃）/ blocked（等待）。"""
@@ -224,13 +233,18 @@ class ProductionRuntime:
             flight["builder"] = None  # 建造者没了 → 转重试
             return "failed"
         has_build_order = any(
-            o.ability and o.ability.lower() == (name or "").lower() for o in builder.orders
-        )
-        if flight["frames"] >= 5 and not has_build_order:
+            o.ability and (name or "").lower() in o.ability.lower() for o in builder.orders
+        )  # 子串匹配：挂件订单名如 Reactor/Techlab
+        entry = self._catalog.by_stable_id(flight["type"])
+        build_time = entry.build_time if entry is not None else 21
+        # 超时按 build_time 换算（~5.6 帧/游戏秒 ×2 余量；挂件 25s ≈ 140 帧，
+        # 旧固定 120 帧在完工前误判失败——真机踩坑）
+        timeout = max(120, int(build_time * 5.6 * 2))
+        if flight["frames"] >= 30 and not has_build_order:
             flight["builder"] = None  # 命令已消失且无实体 → 放置失败 → 转重试
             return "failed"
-        if flight["frames"] >= 120:
-            flight["builder"] = None  # 超时（走过去太久/卡住）→ 转重试
+        if flight["frames"] >= timeout:
+            flight["builder"] = None  # 超时（卡死）→ 转重试
             return "failed"
         return "waiting"
 
@@ -361,14 +375,19 @@ class ProductionRuntime:
         return bool(occupied_cells(gs, self._catalog) & self._addon_cells(building, gs))
 
     def _pick_parent_for_addon(self, gs: GameState, stable_id: str):
-        """找一个就绪且无挂件的母建筑（produced_by）。"""
+        """找一个就绪、无挂件且无在建挂件订单的母建筑（produced_by）。"""
         entry = self._catalog.by_stable_id(stable_id)
         if entry is None or entry.produced_by is None:
             return None
         name = self._catalog.burnysc2_name_for(entry.produced_by)
         for u in gs.units:
             if u.owner is Owner.SELF and u.type_name == name and u.build_progress >= 1.0:
-                if not self._has_addon(u, gs):
+                busy = any(
+                    "reactor" in (o.ability or "").lower()
+                    or "techlab" in (o.ability or "").lower()
+                    for o in u.orders
+                )  # 挂件在建：实体未出现但订单持续，不能再下单
+                if not self._has_addon(u, gs) and not busy:
                     return u
         return None
 
@@ -380,9 +399,9 @@ class ProductionRuntime:
         parent = self._pick_parent_for_addon(gs, head.type)
         if parent is None:
             return "blocked"  # 无空闲母建筑 → 等
+        # 挂件是无目标能力：position=None，SC2 吸附到母建筑右下 2×2（真机教训：传点会被静默拒绝）
         self._emit(
-            [Emission("build", [parent.tag],
-                      {"type": head.type, "position": [parent.position.x, parent.position.y]})],
+            [Emission("build", [parent.tag], {"type": head.type, "position": None})],
             gs.seq,
         )
         self._build_flight[q_name] = {
@@ -395,7 +414,7 @@ class ProductionRuntime:
         return "emitted"
 
     def _pick_free_geyser(self, gs: GameState):
-        """找一个未被精炼厂占据的气井（任一己方建筑距气井 < 2.5 即视为已建）。"""
+        """找一个未被精炼厂占据的气井（仅主基锚点附近；真机教训：别把精炼厂建敌方气井上）。"""
         buildings = []
         for u in gs.units:
             if u.owner is not Owner.SELF:
@@ -403,6 +422,8 @@ class ProductionRuntime:
             e = self._catalog.by_burnysc2_name(u.type_name)
             if e is not None and e.size is not None:
                 buildings.append(u)
+        anchor = self._base_anchor()
+        from production.worker import NODE_RADIUS
 
         def _taken(geyser) -> bool:
             return any(
@@ -410,7 +431,12 @@ class ProductionRuntime:
                 for b in buildings
             )
 
-        return next((u for u in gs.resources if "GEYSER" in u.type_name and not _taken(u)), None)
+        nodes = [u for u in gs.resources if "GEYSER" in u.type_name]
+        if anchor is not None:
+            nodes = [u for u in nodes
+                     if (u.position.x - anchor.x) ** 2 + (u.position.y - anchor.y) ** 2
+                     <= NODE_RADIUS ** 2]
+        return next((u for u in nodes if not _taken(u)), None)
 
     def _try_build_gas(self, head: QueueItem, q_name: str, gs: GameState) -> str:
         """气矿：SCV 把精炼厂建在空闲气井上（build_gas 动作，target = 气井 Unit）。"""

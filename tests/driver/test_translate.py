@@ -26,6 +26,8 @@ class FakeUnit:
     def smart(self, t, queue=False): return ("smart", self.tag, t)
     def gather(self, t, queue=False): return ("gather", self.tag, t)
     def build(self, t, p=None, queue=False): return ("build", self.tag, t, p)
+
+    def __call__(self, ability, target=None, queue=False): return ("call", self.tag, ability)
     def train(self, t, queue=False): return ("train", self.tag, t)
     def research(self, t, queue=False): return ("research", self.tag, t)
 
@@ -114,6 +116,15 @@ def test_patrol_noop_when_empty_positions():
 
 
 # ---- build / train / research ----
+
+
+def test_addon_build_uses_build_ability():
+    """挂件：直接发 BUILD_<挂件>_<母建筑> 能力（creation_ability 为 None，build() 会静默失败）。"""
+    from game.catalog import load_terran
+    from sc2.ids.ability_id import AbilityId
+    cmds = translate_op(_op("build", unit_tags=[1], type="terran/reactor", position=None),
+                        _find([FakeUnit(1)]), catalog=load_terran())
+    assert cmds == [("call", 1, AbilityId.BUILD_REACTOR_BARRACKS)]
 
 
 def test_build_gas_targets_geyser_unit():

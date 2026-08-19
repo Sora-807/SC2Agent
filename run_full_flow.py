@@ -92,6 +92,7 @@ class FullFlowSink:
         self._placed: set[str] = set()
         self._reported: dict[str, str] = {}
         self._steward_seq = 0
+        self._bot = None
 
     def on_game_state(self, raw) -> None:
         gs = adapt(raw)
@@ -119,17 +120,27 @@ class FullFlowSink:
             bs = layer.build_slots.get(name)
             if bs is not None:
                 self._slots[name] = bs.reported_position
+        orig_submit = self._port.submit_operations
+
+        def logging_submit(ops):
+            for o in ops:
+                log(f"[op] {o.action} tags={o.unit_tags} params={o.params} seq={o.seq}")
+            return orig_submit(ops)
+
+        self._port.submit_operations = logging_submit  # type: ignore[method-assign]
         self._runtime = ProductionRuntime(load_terran(), self._port, region_layer=layer)
         self._runtime.submit_queue("macro", [
             QueueItem(op="assign_workers", task="mineral", count=16),
             *[QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home"))
-              for _ in range(8)],
+              for _ in range(2)],
+            QueueItem(op="train", type="terran/scv", count=12),  # 单矿满 SCV 优先（先补农民）
+            *[QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home"))
+              for _ in range(6)],
             *[QueueItem(op="build", type="terran/refinery") for _ in range(2)],
             QueueItem(op="assign_workers", task="gas", count=6),
             *[QueueItem(op="build", type="terran/barracks", placement=PlacementInRegion("home"))
               for _ in range(4)],
             *[QueueItem(op="build", type="terran/reactor") for _ in range(4)],
-            QueueItem(op="train", type="terran/scv", count=12),
             QueueItem(op="train", type="terran/marine", count=50),
         ])
         self._engine = FlowEngine(
@@ -140,6 +151,8 @@ class FullFlowSink:
         )
         log(f"[setup] CC={cc} 模板出生点={layout.origin} 敌方主矿={self._enemy}")
         log(f"[setup] macro 队列 = 补给站×8 精炼厂×2 兵营×4 反应堆×4 SCV×12 枪兵×50（固定位顺序摆放）")
+        self._bot = self._port._bot
+        self._bot._apply_failures = []
 
     def _steward(self, raw, gs) -> None:
         """演示粘合：空闲 SCV → 矿/气（真实维持规则 post-V1 再进运行时）。"""
@@ -187,9 +200,18 @@ class FullFlowSink:
             depots = self._count(gs, "SUPPLYDEPOT")
             scvs = self._count(gs, "SCV")
             step = self._engine._active_step
+            rax_orders = sorted({o.ability or "" for u in gs.units
+                                 if u.owner is Owner.SELF and u.type_name == "BARRACKS"
+                                 for o in u.orders})
+            fails = getattr(self._bot, "_apply_failures", []) if self._bot else []
             log(f"[tick] seq={raw.seq} t={raw.game_time:.0f} 矿={gs.minerals} 气={gs.vespene} "
                 f"depot={depots} rax={rax} reactor={reactors} scv={scvs} marine={marines} "
                 f"step={step} done={self._engine._done}")
+            if rax_orders:
+                flight = {k: (v["type"], v["frames"]) for k, v in
+                          self._runtime._build_flight.items()}
+                log(f"[tick] rax_orders={rax_orders} apply_failures={fails[-3:]} flight={flight} "
+                    f"dropped={[(i.type, r) for i, r in self._runtime.dropped][-3:]}")
             if step == "advance":
                 attacks = [o for o in self._port._op_queue if o.action == "attack_move_to"]
                 if attacks:
@@ -203,7 +225,7 @@ def main() -> None:
     LOG.unlink(missing_ok=True)
     port = SC2GamePort(
         map_name="LadderMap", race=Race.Terran, difficulty=Difficulty.Easy,
-        sink=None, game_time_limit=420, realtime=False,
+        sink=None, game_time_limit=520, realtime=False,
     )
     sink = FullFlowSink(port)
     port.set_sink(sink)

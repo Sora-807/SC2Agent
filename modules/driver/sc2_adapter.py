@@ -13,6 +13,7 @@ from sc2.bot_ai import BotAI
 from sc2.data import Difficulty, Race
 from sc2.main import run_game
 from sc2.player import Bot, Computer
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2 as SC2Point2
@@ -213,10 +214,26 @@ def _t_build(op, find_unit, catalog=None):
     units = _units(op, find_unit)
     if not units:
         return []
-    p = resolve_point(op.params["position"])
-    # 注：burnysc2 build 要求 UnitTypeId 枚举（字符串会静默失败）；气矿建筑
-    # （REFINERY 等）还需要传气井 Unit 而非坐标——待 ability 目录后处理。
-    return [units[0].build(_resolve_type_id(op.params["type"], catalog), p)]
+    type_id = _resolve_type_id(op.params["type"], catalog)
+    # 挂件（REACTOR/TECHLAB 等）：game_data 里 creation_ability 为 None，build() 静默返回 False
+    # （真机踩坑，trace 见 docs/full_flow.log）；需直接发 BUILD_<挂件>_<母建筑> 能力（burnysc2 命名规律），
+    # 由母建筑自建、SC2 吸附到右下 2×2。
+    entry = catalog.by_burnysc2_name(type_id.name) if catalog is not None else None
+    if entry is not None and "addon" in entry.capabilities:
+        parent_entry = (
+            catalog.by_stable_id(entry.produced_by) if entry.produced_by else None
+        )
+        if parent_entry is None:
+            return []
+        ability_name = f"BUILD_{type_id.name}_{parent_entry.burnysc2_name}"
+        try:
+            ability = AbilityId[ability_name]
+        except KeyError:
+            raise ValueError(f"unknown addon build ability {ability_name}")
+        return [units[0](ability)]
+    pos_raw = op.params.get("position")
+    p = resolve_point(pos_raw) if pos_raw is not None else None
+    return [units[0].build(type_id, p)]
 
 
 def _t_build_gas(op, find_unit, catalog=None):
@@ -311,6 +328,8 @@ class SC2DriverBot(BotAI):
     _op_queue: list[Operation] | None = None
     _last_raw: RawGameState | None = None
     _catalog = None  # game.Catalog：stable ID → burnysc2 名（build/train/research 的 type 解析）
+    _apply_failures: list | None = None  # V1 审计：翻译/下发失败记录（D6 正式 ApplyResult 通道前的降级）
+    _apply_trace: list | None = None  # V1 调试：翻译结果追踪（runner 注入后记录每条 op 的翻译输出）
 
     async def on_step(self, iteration: int) -> None:
         raw = extract_raw_state(self, iteration)
@@ -331,10 +350,14 @@ class SC2DriverBot(BotAI):
 
     def _apply_op(self, op: Operation) -> None:
         try:
-            for cmd in translate_op(op, self._find_unit, self._catalog):
+            cmds = translate_op(op, self._find_unit, self._catalog)
+            if self._apply_trace is not None:
+                self._apply_trace.append((op.action, len(cmds), repr(cmds[0]) if cmds else ""))
+            for cmd in cmds:
                 self.do(cmd)
-        except Exception:
-            pass  # D6：经 ApplyResult/events 回流；V1 静默
+        except Exception as e:  # D6：经 ApplyResult/events 回流；V1 记入审计清单，不崩游戏
+            if self._apply_failures is not None:
+                self._apply_failures.append((op.action, repr(e)))
 
 
 class SC2GamePort:
@@ -368,6 +391,9 @@ class SC2GamePort:
 
     def start(self, request_id: str) -> None:
         bot = self._bot_cls()
+        # burnysc2 现代模式：unit 方法返回 UnitCommand，由我们的 do() 统一下发。
+        # 默认旧式直发路径返回 bool、do(True) 被静默忽略——挂件建造真机踩坑（trace 见 docs/full_flow.log）。
+        bot.unit_command_uses_self_do = True
         bot._sink = self._sink
         bot._op_queue = self._op_queue
         bot._catalog = self._catalog

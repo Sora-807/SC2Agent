@@ -106,8 +106,8 @@ def test_build_placement_failure_retries_next_slot():
     gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
     assert port.submitted[0].params["position"] == [2.5, 2.5]  # s1
-    # 之后 6 帧：SCV 无 build order、无实体 → 第 5 帧判失败、第 6 帧重发 s2
-    for _ in range(6):
+    # 之后 31 帧：SCV 无 build order、无实体 → 第 30 帧判失败、第 31 帧重发 s2
+    for _ in range(31):
         rt.on_game_state(gs)  # 命令已消失（FakeUnit 无 orders）
     assert len(port.submitted) == 2
     assert port.submitted[1].params["position"] == [5.5, 2.5]  # s2
@@ -125,8 +125,8 @@ def test_build_dropped_when_candidates_exhausted():
     gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
     assert len(port.submitted) == 1  # 发出 spot
-    for _ in range(6):
-        rt.on_game_state(gs)  # 放置失败（第 5 帧判定，第 6 帧重试时耗尽）
+    for _ in range(32):
+        rt.on_game_state(gs)  # 放置失败（第 30 帧判定，重试时候选耗尽）
     assert any("耗尽" in r for _, r in rt.dropped)
     assert len(port.submitted) == 2 and port.submitted[1].action == "train"  # 后续项继续
 
@@ -286,7 +286,7 @@ def test_addon_built_by_parent_not_scv():
     assert op.action == "build"
     assert op.unit_tags == [3]  # 兵营自建，不是 SCV(2)
     assert op.params["type"] == "terran/reactor"
-    assert op.params["position"] == [8.0, 8.0]  # 母建筑位置（SC2 吸附）
+    assert op.params["position"] is None  # 挂件无目标能力：SC2 吸附母建筑右下 2×2（真机教训）
     assert len(rt.queue("q").items) == 1  # 在途确认
     # REACTOR 实体出现 → 确认 → 出队
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
@@ -345,8 +345,8 @@ def test_gas_skips_occupied_geyser():
     rt = _runtime(port)
     rt.submit_queue("q", [QueueItem(op="build", type="terran/refinery")])
     geysers = [_u(10, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=15.0, y=15.0),
-               _u(11, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=25.0, y=25.0)]
+               _u(11, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=10.0, y=10.0)]
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
                           _u(3, "REFINERY", x=15.0, y=15.0)],
                          resources=geysers, minerals=200))
-    assert port.submitted[0].params["target_unit"] == 11  # 10 号气井被占 → 选 11
+    assert port.submitted[0].params["target_unit"] == 11  # 10 号气井被占 → 选 11（两井都在主基半径内）

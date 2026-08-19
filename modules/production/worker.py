@@ -14,6 +14,7 @@ from game.catalog import Catalog
 
 MINERAL_SATURATION = 2  # 每个矿脉的采集上限（P0）
 GAS_SATURATION = 3  # 每个气井的采集上限（P0）
+NODE_RADIUS = 20.0  # 资源节点归属半径：只取距主基锚点此距离内的矿脉/气井（真机教训：全图选节点会把农民派到敌方基地送死）
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,13 +37,23 @@ class WorkerAllocator:
         names = self._worker_names()
         return [u for u in gs.units if u.owner is Owner.SELF and u.type_name in names]
 
-    def _nodes(self, gs: GameState, gas: bool) -> list:
+    def _nodes(self, gs: GameState, gas: bool, base_pos) -> list:
         """资源节点：gas=True 取气井，否则取矿脉（来自 world 拆出的 gs.resources）。
 
+        只取主基锚点 NODE_RADIUS 内的节点（真机教训：全图取节点会把农民派去送死）；
         气井只取已建精炼厂的（裸气井不能采）；判定 = 气井 2.5 距离内有己方建筑。
+        base_pos=None 时不过滤（测试/无区域层场景）。
         """
+        def _is_node(u) -> bool:
+            return ("GEYSER" in u.type_name) if gas else u.type_name.startswith("MINERALFIELD")
+
+        nodes = [u for u in gs.resources if _is_node(u)]
+        if base_pos is not None:
+            nodes = [u for u in nodes
+                     if (u.position.x - base_pos.x) ** 2 + (u.position.y - base_pos.y) ** 2
+                     <= NODE_RADIUS ** 2]
         if not gas:
-            return [u for u in gs.resources if u.type_name.startswith("MINERALFIELD")]
+            return nodes
         buildings = []
         for u in gs.units:
             if u.owner is not Owner.SELF:
@@ -57,7 +68,7 @@ class WorkerAllocator:
                 for b in buildings
             )
 
-        return [u for u in gs.resources if "GEYSER" in u.type_name and _has_refinery(u)]
+        return [u for u in nodes if _has_refinery(u)]
 
     def _saturation(self, workers: list, nodes: list) -> dict[int, int]:
         """节点 tag -> 正在采集它的 SCV 数（从 orders 的 target_tag 派生，无内部状态）。"""
@@ -74,12 +85,12 @@ class WorkerAllocator:
         idle = [w for w in workers if not w.orders]
         return (idle or workers or [None])[0]
 
-    def assign(self, gs: GameState, task: WorkerTask, count: int) -> list[Emission]:
-        """assign_workers(task, count) → gather/stop 级 Emission 列表。"""
+    def assign(self, gs: GameState, task: WorkerTask, count: int, base_pos=None) -> list[Emission]:
+        """assign_workers(task, count) → gather/stop 级 Emission 列表。base_pos = 主基锚点（节点过滤）。"""
         if task is WorkerTask.IDLE:
             return self._idle(gs, count)
         workers = self._workers(gs)
-        nodes = self._nodes(gs, gas=(task is WorkerTask.GAS))
+        nodes = self._nodes(gs, gas=(task is WorkerTask.GAS), base_pos=base_pos)
         if not workers or not nodes:
             return []
         sat = self._saturation(workers, nodes)
@@ -112,7 +123,7 @@ class WorkerAllocator:
     def _idle(self, gs: GameState, count: int) -> list[Emission]:
         """idle：把正在采集的 SCV 从矿/气解放（stop）——给建造/修理用。"""
         workers = self._workers(gs)
-        nodes = self._nodes(gs, gas=False) + self._nodes(gs, gas=True)
+        nodes = self._nodes(gs, gas=False, base_pos=None) + self._nodes(gs, gas=True, base_pos=None)
         node_tags = {n.tag for n in nodes}
         out: list[Emission] = []
         for w in workers:
