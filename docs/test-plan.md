@@ -10,8 +10,11 @@
 ## driver（modules/driver）
 - ✅ extraction 单测：`extract_raw_unit/order/state`（duck-typed 假 burnysc2 对象）→ 字段/类型对齐。
 - ✅ FakeGamePort：脚本驱动 + 捕获 submitted ops + stop 中断（**给 world/flow/engine 测试用，不测 driver 本身**）。
-- 🚧 **集成 check**（真 SC2）：Round1 抽 RawGameState 验形态；Round2 submit op → 跟踪 orders/pos → 验生效+state 反映。= `run_driver_check.py`。
-- ⏳ op-apply dispatch：各 action（move/attack_move/hold/stop/follow/patrol/focus_fire/build/train）→ burnysc2 命令。集成级（或 FakeGamePort+假 bot 单测）。
+- ✅ **翻译层全量单测**（`test_translate.py`）：OP_CATALOG 每个 action 逐一断言 → burnysc2 方法+参数；目标缺失/空单位/未知 action 的 no-op；`resolve_point` 各形态与非法输入；**清单对齐**——`TRANSLATORS ∪ UNIMPLEMENTED_ACTIONS == OP_CATALOG`（catalog 加 action 不会静默漏掉）。
+- ✅ **burnysc2 API 契约测试**（`test_sc2_api_contract.py`）：inspect 真实 `sc2.Unit`——translator 调用的每个方法存在且必需参数个数匹配（升级 burnysc2 版本时当场红，不等真机）。
+- ✅ **bot 应用层单测**（`test_bot_apply.py`）：op_queue FIFO drain → `self.do`；命令失败静默跳过且不影响其余 op（R7）；on_step = 抽 state 推 sink → drain 队列。
+- 🚧 **真机 op 集成**：`run_ops_check.py`（手动跑）——逐 op 发命令并回读 orders/state 验生效（move/attack_move/hold/stop/patrol/follow + train/build 等矿）；`run_driver_check.py`（形态+move）。
+- ⏳ V1 未实现 op 缺口（**清单已锁死并有原因说明**）：unload/use_ability/cancel/morph（待 ability 稳定 ID 目录）、assign_workers（待生产运行时 WorkerAllocator 展开）。
 - ⏳ CommandPolicy 表（per action 持续性/重发/清空）：move ✅（spike）；attack_move/hold/follow/patrol/stop 待续 spike。
 - ⏳ 用户接管识别（order 从 auto 变用户命令）：续 spike。
 - ⏳ 建筑坐标 size 2/3/5（placement grid↔世界坐标）：续 spike。

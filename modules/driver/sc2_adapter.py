@@ -188,6 +188,18 @@ def _t_focus_fire(op, find_unit):
     return [u.attack(tgt) for u in units] if tgt is not None else []
 
 
+def _t_load(op, find_unit):
+    """V1 近似：smart(target_unit)。
+
+    smart() 是 burnysc2 的多态命令（运输机对被载单位执行装载），避免 driver 按单位类型
+    硬编码 LOAD_MEDIVAC/LOAD_BUNKER 等能力（R2：driver 零业务规则）；精确 per-type 能力
+    走 ability 稳定 ID 目录后补（见 UNIMPLEMENTED_ACTIONS 的同类条目）。
+    """
+    tgt = find_unit(op.params["target_unit"]) if op.params.get("target_unit") else None
+    units = _units(op, find_unit)
+    return [u.smart(tgt) for u in units] if tgt is not None else []
+
+
 def _t_build(op, find_unit):
     units = _units(op, find_unit)
     if not units:
@@ -218,12 +230,27 @@ TRANSLATORS: dict[str, object] = {
     "build": _t_build,
     "train": _t_train,
     "research": _t_research,
+    "load": _t_load,
+}
+
+# OP_CATALOG 中尚未翻译到 burnysc2 命令的 action → 原因。
+# 测试锁死这份清单（TRANSLATORS ∪ UNIMPLEMENTED_ACTIONS == OP_CATALOG）：
+# catalog 加新 action 要么进 TRANSLATORS、要么进这里，不会静默漏掉。
+# V1 行为：translate_op 对它们返回 []（no-op；D6/V1 降级路径，不崩游戏）。
+UNIMPLEMENTED_ACTIONS: dict[str, str] = {
+    "unload": "卸载需按运输单位类型选 UNLOADALLAT_MEDIVAC/UNLOADALL_BUNKER 等能力；待 ability 稳定 ID 目录（catalog data）落地后经目录名→AbilityId 翻译",
+    "use_ability": "params.ability 是稳定 ID；待 ability 目录（stable_id↔AbilityId 映射）落地",
+    "cancel": "取消建造/训练需按上下文选 CANCEL_BUILDINPROGRESS/CANCEL_QUEUE*；待 ability 目录",
+    "morph": "Zerg 变形（MORPH_*）；V1 Terran 场景暂不需要，待三族目录",
+    "assign_workers": "SCV→矿脉/气井的具体配对由生产运行时 WorkerAllocator 展开成 gather 级操作；driver 侧无对应单命令",
 }
 
 
 def translate_op(op, find_unit) -> list:
     """查表翻译 Operation → burnysc2 UnitCommand 列表（纯函数，可单测）。
-    未注册的 action（load/unload/use_ability/cancel/morph）返回 []（待补）。"""
+
+    未注册 action（含 UNIMPLEMENTED_ACTIONS 的 V1 缺口）返回 []（no-op，不崩游戏）。
+    """
     fn = TRANSLATORS.get(op.action)
     return fn(op, find_unit) if fn is not None else []
 
