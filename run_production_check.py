@@ -74,7 +74,7 @@ class ProdCheckSink:
         for name in ("depot1", "depot2", "barracks1"):
             bs = layer.build_slots.get(name)
             if bs is not None:
-                self._expected[name] = bs.pos
+                self._expected[name] = bs.reported_position  # SC2 报告位置（真机锁定公式）
         orig_submit = self._port.submit_operations
 
         def logging_submit(ops):

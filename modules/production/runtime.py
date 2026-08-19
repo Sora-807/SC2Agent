@@ -23,6 +23,7 @@ from game import (
 from game.catalog import Catalog
 from game.production import PlacementExact, PlacementInRegion
 from constraint.checks import check_build, check_train
+from tactical_map.placement import BuildSlot
 
 from production.worker import Emission, WorkerAllocator
 
@@ -324,11 +325,22 @@ class ProductionRuntime:
         return bs.build_point
 
     def _occupied_cells(self, gs: GameState) -> set[tuple[int, int]]:
-        """己方建筑占据的格点（V1 单格近似：单位位置格）。"""
-        return {
-            (int(u.position.x), int(u.position.y))
-            for u in gs.units if u.owner is Owner.SELF
-        }
+        """己方建筑占据的格点（完整 footprint：catalog size + 报告位置反推 TL；非建筑不占位）。
+
+        换算公式见 tactical_map.placement（ADR-0027 §3，真机锁定）：TL = int(R - size/2)。
+        兵/工兵（size=None）不阻塞建造位——修掉了旧版把 SCV 当障碍的问题。
+        """
+        cells: set[tuple[int, int]] = set()
+        for u in gs.units:
+            if u.owner is not Owner.SELF:
+                continue
+            entry = self._catalog.by_burnysc2_name(u.type_name)
+            size = entry.size if entry is not None else None
+            if size is None:
+                continue
+            tl = BuildSlot.tl_from_reported(u.position, size)
+            cells |= {(x, y) for x in range(tl.x, tl.x + size) for y in range(tl.y, tl.y + size)}
+        return cells
 
     # ---- 输出 ----
 

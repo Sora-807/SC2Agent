@@ -31,7 +31,12 @@
 6. **命名 = 跨图统一语义槽**：stable id 如 main_base / main_ramp / natural / choke，flow 文件可跨图复用；每张图按地形把格点分给这些槽位。中文名/别名只用于展示与输入解析，歧义澄清走 router（ADR-0002 §2）。
 7. 归属判定：单位 = (int(x), int(y)) 所在格；建筑按 footprint 闭区间（ADR-0027），跨区以 TL 归属，放置校验要求整 footprint 同区。
 8. **V1 区域静态**：菌毯推进/矿区枯竭不改变分区；自动矿区划分后置（需求文档 S9）。
-9. BuildSlot 改 **TL+BR+size**（br = tl + size - 1）；偶数尺寸的世界坐标换算由 driver 统一实现（ADR-0027 §3），tactical_map 不做奇偶特判。
+9. BuildSlot 改 **TL+BR+size**（br = tl + size - 1）。footprint 换算已用真机观测锁定在 `tactical_map.placement`（唯一换算点，ADR-0027 §3）：
+   - 命令点 P = footprint 半格中心：奇数尺寸（3×3/5×5）= TL + size/2（格心）；偶数尺寸（2×2）= TL + (size-1)/2（格角）——**tl+size/2 对偶数尺寸错 0.5 格**（SC2 半格放置网格，真机踩坑）
+   - 命令点 → 格点：TL = ceil(P - size/2)，BR = TL + size - 1
+   - SC2 报告的实体位置 = footprint 矩形中心 = TL + size/2（两种尺寸统一；真机：2×2 报告 (132,108)、3×3 报告 (44.5,28.5)）
+   - 报告位置 → TL：floor(R - size/2)
+   - fixture 测试：tests/tactical_map/test_placement_footprint.py（真机观测值）
 
 ### D3 Authoring 形态（L1 版本化数据）
 

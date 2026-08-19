@@ -48,7 +48,9 @@ def load_base_template(path: str | Path) -> BaseTemplate:
             BuildSlot(
                 name=sname,
                 pos=Point2(float(s["pos"][0]), float(s["pos"][1])),
-                tl=GridPos(int(float(s["pos"][0])), int(float(s["pos"][1]))),
+                tl=BuildSlot.tl_from_pos(
+                    Point2(float(s["pos"][0]), float(s["pos"][1])), int(s["size"])
+                ),
                 size=int(s["size"]),
             )
             for sname, s in (data.get("build_slots") or {}).items()
@@ -98,9 +100,9 @@ def instantiate_spawn(
     slots = {
         s.name: BuildSlot(
             name=s.name,
-            tl=GridPos(int(round(s.tl.x + dx)), int(round(s.tl.y + dy))),
+            tl=GridPos(s.tl.x + int(round(dx)), s.tl.y + int(round(dy))),
             size=s.size,
-            pos=Point2(s.pos.x + dx, s.pos.y + dy),
+            pos=Point2(s.pos.x + dx, s.pos.y + dy) if s.pos is not None else None,
         )
         for s in layout.build_slots
     }

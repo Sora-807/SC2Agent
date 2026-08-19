@@ -105,12 +105,12 @@ def test_build_placement_failure_retries_next_slot():
                                        placement=PlacementInRegion("home"))])
     gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
-    assert port.submitted[0].params["position"] == [3.0, 3.0]  # s1
+    assert port.submitted[0].params["position"] == [2.5, 2.5]  # s1
     # 之后 6 帧：SCV 无 build order、无实体 → 第 5 帧判失败、第 6 帧重发 s2
     for _ in range(6):
         rt.on_game_state(gs)  # 命令已消失（FakeUnit 无 orders）
     assert len(port.submitted) == 2
-    assert port.submitted[1].params["position"] == [6.0, 3.0]  # s2
+    assert port.submitted[1].params["position"] == [5.5, 2.5]  # s2
     assert len(rt.queue("open").items) == 1  # 仍在途
 
 
@@ -213,14 +213,14 @@ def test_build_region_slot_auto_pick_and_blocked_when_full():
                                        placement=PlacementInRegion("home"))])
     gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
-    assert port.submitted[0].params["position"] == [3.0, 3.0]  # s1（tl 2,2 size 2 → 中心 3,3）
+    assert port.submitted[0].params["position"] == [2.5, 2.5]  # s1（tl 2,2 size 2 → 格角偏移 0.5）
     # s1 被占（新补给站出现在 3,3）→ 下一次 build 用 s2
     port2 = _Port()
     rt2 = _runtime(port2)
     rt2.submit_queue("open", [QueueItem(op="build", type="terran/supplydepot",
                                         placement=PlacementInRegion("home"))])
     rt2.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"), _u(3, "SUPPLYDEPOT", x=3.0, y=3.0)], minerals=400))
-    assert port2.submitted[0].params["position"] == [6.0, 3.0]  # s2（tl 5,2 → 中心 6,3）
+    assert port2.submitted[0].params["position"] == [5.5, 2.5]  # s2（tl 5,2 size 2）
     # 两 slot 全占 → 阻塞
     port3 = _Port()
     rt3 = _runtime(port3)
