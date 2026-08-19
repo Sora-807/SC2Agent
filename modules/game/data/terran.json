@@ -36,6 +36,7 @@
     "capabilities": ["train", "dropoff"],
     "cost": {"minerals": 400, "vespene": 0, "supply": 0},
     "build_time": 71,
+    "size": 5,
     "produced_by": null,
     "prerequisites": []
   },
@@ -46,6 +47,7 @@
     "capabilities": ["supply"],
     "cost": {"minerals": 100, "vespene": 0, "supply": 0},
     "build_time": 21,
+    "size": 2,
     "produced_by": null,
     "prerequisites": ["terran/commandcenter"]
   },
@@ -56,6 +58,7 @@
     "capabilities": ["train"],
     "cost": {"minerals": 150, "vespene": 0, "supply": 0},
     "build_time": 46,
+    "size": 3,
     "produced_by": null,
     "prerequisites": ["terran/supplydepot"]
   }

@@ -339,6 +339,7 @@ class SC2GamePort:
         game_time_limit: int = 120,
         realtime: bool = False,
         catalog=None,  # game.Catalog：stable ID → burnysc2 名；None 时默认加载 terran catalog
+        bot_cls: type = SC2DriverBot,  # 注入 bot 类（扫描/校准类 runner 用；默认 SC2DriverBot）
     ) -> None:
         self._map_name = map_name
         self._race = race
@@ -347,6 +348,7 @@ class SC2GamePort:
         self._game_time_limit = game_time_limit
         self._realtime = realtime
         self._catalog = catalog if catalog is not None else load_terran()
+        self._bot_cls = bot_cls
         self._op_queue: list[Operation] = []
         self._bot: SC2DriverBot | None = None
         self._events: list[GameEvent] = []
@@ -355,7 +357,7 @@ class SC2GamePort:
         self._sink = sink
 
     def start(self, request_id: str) -> None:
-        bot = SC2DriverBot()
+        bot = self._bot_cls()
         bot._sink = self._sink
         bot._op_queue = self._op_queue
         bot._catalog = self._catalog

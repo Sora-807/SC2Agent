@@ -72,6 +72,7 @@ class CatalogEntry:
     build_time: int         # 建造/训练时间（游戏秒；如 机枪兵 18、兵营 46）
     produced_by: str | None # 产出建筑 stable ID（如 marine 由 "terran/barracks" 产；起始建筑 = None）
     prerequisites: list[str]  # 前置 stable ID 列表（如 barracks 需 ["terran/supplydepot"]）
+    size: int | None = None  # footprint 格边长（建筑：depot=2/兵营=3/基地=5；非建筑=None；放置 slot 按它过滤）
 
 
 class Catalog:
@@ -122,6 +123,7 @@ class Catalog:
             capabilities=capabilities,
             cost=cost,
             build_time=int(data["build_time"]),
+            size=data.get("size"),
             produced_by=data.get("produced_by"),
             prerequisites=list(data.get("prerequisites") or []),
         )

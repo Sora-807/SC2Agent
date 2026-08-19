@@ -300,6 +300,13 @@ class ProductionRuntime:
                     return (None, None, f"区域 {placement.region!r} slot index {placement.index} 越界")
                 bs = slots[placement.index]
                 return (self._slot_point(bs), bs.name, None)
+            # 按 footprint 尺寸过滤：兵营(3×3)不能放补给站(2×2)的位（真机踩过）
+            entry = self._catalog.by_stable_id(head.type)
+            target_size = entry.size if entry is not None else None
+            if target_size is not None:
+                slots = [bs for bs in slots if bs.size == target_size]
+                if not slots:
+                    return (None, None, f"区域 {placement.region!r} 无 size={target_size} 的 build_slots")
             occupied = self._occupied_cells(gs)
             for bs in slots:  # index=None：按声明顺序找第一个未被占/未尝试过的 slot（P0）
                 if bs.name in attempted:
@@ -313,8 +320,8 @@ class ProductionRuntime:
         return {(x, y) for x in range(bs.tl.x, bs.br.x + 1) for y in range(bs.tl.y, bs.br.y + 1)}
 
     def _slot_point(self, bs) -> Point2:
-        # V1 近似：footprint 中心；偶数尺寸偏移待 ADR-0027 driver fixture 校准
-        return Point2(bs.tl.x + bs.size / 2.0, bs.tl.y + bs.size / 2.0)
+        """下发 driver 的世界建造点：校准值优先（BuildSlot.build_point）。"""
+        return bs.build_point
 
     def _occupied_cells(self, gs: GameState) -> set[tuple[int, int]]:
         """己方建筑占据的格点（V1 单格近似：单位位置格）。"""

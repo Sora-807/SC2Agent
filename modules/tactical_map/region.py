@@ -324,7 +324,10 @@ def load_region_layer(yaml_str: str, base_dir: str | Path | None = None) -> Regi
     build_slots: dict[str, BuildSlot] = {}
     for name, data in (d.get("build_slots") or {}).items():
         build_slots[name] = BuildSlot(
-            name=name, tl=GridPos(int(data["tl"][0]), int(data["tl"][1])), size=int(data["size"]),
+            name=name,
+            tl=GridPos(int(data["tl"][0]), int(data["tl"][1])),
+            size=int(data["size"]),
+            pos=_point2(data["pos"]) if "pos" in data else None,
         )
 
     layer = RegionLayer(

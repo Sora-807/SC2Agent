@@ -63,7 +63,7 @@
 - ✅ 队列工具操作：submit/append/prepend/clear/remove/reorder。
 - ✅ research/cancel = V1 不支持清单（UNSUPPORTED_QUEUE_OPS，带原因，出队记入 dropped）。
 - ✅ `gather` 动作已落地到 OP_CATALOG + driver 翻译 + burnysc2 契约（assign_workers 的落地原子）。
-- 🚧 真机集成 `run_production_check.py`（手动跑）：build 补给站实体出现 + train SCV 数量增长 + idle/mineral 采集数往返。
+- ✅ 真机集成 `run_production_check.py`：**固定位置顺序摆放**——depot1/depot2/barracks1 实体落位 ≈ 模板校准点（dist≤0.75，兵营 dist=0.00）、每个 build 只发一次零重试、train SCV 8→11、idle/mineral 采集数往返、dropped=0；bl/tr 两出生点变体自动选择均验证。
 
 ## planner（modules/planner）
 - ⏳ 依赖：constraint/mechanics/game（**不依赖 flow 运行期**，dep-check）。
@@ -72,12 +72,13 @@
 - ⏳ 不模拟战斗。
 
 ## tactical_map（modules/tactical_map）
-- ⏳ 依赖：game only（dep-check）。
-- ⏳ 点位名↔坐标登记。
-- ⏳ 空间查询：`region_center/group_center/distance/nearest_units/cluster_centers`。
-- ⏳ seq 缓存（同 seq 同结果、新 seq 重算）。
-- ⏳ 空 group 语义（count=0、中心谓词 false）。
-- ⏳ footprint/overlap（size 2/3/5 placement）。
+- ✅ 依赖：game only（dep-check 绿）。
+- ✅ 区域模型（ADR-0029）：双层分区 + 加载校验 + `region_at/contains/anchor`（`test_region.py`）；PNG 调色板格点层（`test_pnggrid.py`）。
+- ✅ 空间查询：`center_of_units/distance/units_within/nearest`（`test_spatial.py`）；目标解析 resolver（`test_resolver.py`）。
+- ✅ **主基建造模板**（`base.py` + `data/ladder_map/base_layout.yaml`，`test_base.py`）：按出生点分变体（bl/tr）+ 平移实例化 + **固定有序建造位**（真机 can_place 扫描校准，`run_slot_scan.py`；BL 主矿左上 4×4 补给站网格 + 兵营×2，TR 镜像）。
+- ✅ BuildSlot：TL+BR+size（ADR-0027）+ 校准世界点 pos（偶数尺寸建筑半格，真机验证）；生产运行时按 catalog footprint size 过滤 slot（兵营不落补给站位）。
+- ⏳ seq 缓存、nearest_units/cluster_centers（spec-003 §4.4 未实现清单）、完整 footprint 闭区间重叠。
+- ⏳ 全图区域 authoring（大区/leaf PNG；观察层区域化摘要用）。
 
 ## mechanics（modules/mechanics）
 - ⏳ 依赖：game only（dep-check）。

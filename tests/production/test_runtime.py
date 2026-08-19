@@ -33,12 +33,13 @@ leaf_grid:
 big_regions:
   main_base: {anchor: [4, 4]}
 regions:
-  home: {parent: main_base, anchor: [4, 4], build_slots: [s1, s2]}
+  home: {parent: main_base, anchor: [4, 4], build_slots: [s1, s2, b1]}
 pos_marks:
   spot: {pos: [1.5, 1.5]}
 build_slots:
   s1: {tl: [2, 2], size: 2}
   s2: {tl: [5, 2], size: 2}
+  b1: {tl: [2, 5], size: 3}
 """
 
 
@@ -228,6 +229,17 @@ def test_build_region_slot_auto_pick_and_blocked_when_full():
     rt3.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
                            _u(3, "SUPPLYDEPOT", x=3.0, y=3.0), _u(4, "SUPPLYDEPOT", x=6.0, y=3.0)], minerals=400))
     assert port3.submitted == []
+
+
+def test_build_slot_filtered_by_footprint_size():
+    """兵营(3×3)不落补给站(2×2)位：slot 按 catalog size 过滤（真机踩过）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/barracks",
+                                       placement=PlacementInRegion("home"))])
+    # 前置 = 就绪补给站（放在 6,6，不占 b1）；s1/s2 空闲但 size 2 不匹配 → 选 b1(3×3)
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"), _u(3, "SUPPLYDEPOT", x=6.0, y=6.0)], minerals=400))
+    assert port.submitted[0].params["position"] == [3.5, 6.5]  # b1（tl 2,5 size 3 → 中心 3.5,6.5）
 
 
 def test_placement_unknown_mark_dropped():
