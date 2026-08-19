@@ -33,6 +33,8 @@ KNOWN_CAPABILITIES: frozenset[str] = frozenset({
     "train",      # 训练单位（如 指挥中心/兵营）
     "dropoff",    # 资源上交点（如 指挥中心）
     "supply",     # 提供补给（如 补给站）
+    "addon",      # 挂件（反应堆/科技实验室；由母建筑自建，贴右下 2×2）
+    "gas",        # 气矿建筑（精炼厂；建在气井上）
 })
 
 

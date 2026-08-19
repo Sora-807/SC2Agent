@@ -36,7 +36,7 @@ def test_check_build_blocked_by_prereq():
 def test_check_build_blocked_by_occupied_cell():
     r = check_build(_gs([_u(1, "COMMANDCENTER"), _u(2, "SUPPLYDEPOT", x=50.0, y=50.0)]),
                     CAT, "terran/supplydepot", Point2(50, 50))
-    assert not r.ok and any("占据" in x for x in r.reasons)
+    assert not r.ok and any("重叠" in x for x in r.reasons)  # footprint 闭区间判定
 
 
 def test_check_build_unknown_type():

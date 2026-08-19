@@ -34,6 +34,7 @@ OP_CATALOG: dict[str, list[tuple[str, ParamType, bool]]] = {
     "patrol":         [("positions", ParamType.POINTS, True)],
     "focus_fire":     [("target_unit", ParamType.TAG, True)],
     "build":          [("type", ParamType.STABLE_ID, True), ("position", ParamType.POINT, True)],
+    "build_gas":       [("type", ParamType.STABLE_ID, True), ("target_unit", ParamType.TAG, True)],
     "train":          [("type", ParamType.STABLE_ID, True)],
     "research":       [("type", ParamType.STABLE_ID, True)],
     "assign_workers": [("task", ParamType.TASK, True), ("count", ParamType.INT, True)],

@@ -22,7 +22,13 @@ from game import (
 )
 from game.catalog import Catalog
 from game.production import PlacementExact, PlacementInRegion
-from constraint.checks import check_build, check_train
+from constraint.checks import (
+    check_addon,
+    check_build,
+    check_gas,
+    check_train,
+    occupied_cells,
+)
 from tactical_map.placement import BuildSlot
 
 from production.worker import Emission, WorkerAllocator
@@ -153,10 +159,21 @@ class ProductionRuntime:
         return "emitted"
 
     def _try_build(self, head: QueueItem, q_name: str, gs: GameState) -> str:
-        """发出首个候选放置位并记入在途确认（不立即出队）。"""
+        """发出首个候选放置位并记入在途确认（不立即出队）。
+
+        按目标类型分派：addon 挂件（母建筑自建）→ gas 气矿（SCV 建在气井）→ 常规。
+        """
         if head.type is None:
             self._drop(head, "build 缺 type")
             return "consumed"
+        entry = self._catalog.by_stable_id(head.type)
+        if entry is None:
+            self._drop(head, f"build 未知类型 {head.type!r}")
+            return "consumed"
+        if "addon" in entry.capabilities:
+            return self._try_build_addon(head, q_name, gs)
+        if "gas" in entry.capabilities:
+            return self._try_build_gas(head, q_name, gs)
         pos, slot_name, reason = self._resolve_placement(head, gs, attempted=frozenset())
         if reason is not None:
             self._drop(head, reason)  # 作者错误：丢弃并继续，不阻塞整队
@@ -301,14 +318,21 @@ class ProductionRuntime:
                     return (None, None, f"区域 {placement.region!r} slot index {placement.index} 越界")
                 bs = slots[placement.index]
                 return (self._slot_point(bs), bs.name, None)
-            # 按 footprint 尺寸过滤：兵营(3×3)不能放补给站(2×2)的位（真机踩过）
+            # 按槽位类别 + footprint 尺寸过滤：supply→补给位、production→生产位、
+            # addon 位不参与放置（挂件由母建筑吸附，几何预留）；兵营(3×3)不放补给站(2×2)位（真机踩过）
             entry = self._catalog.by_stable_id(head.type)
+            if entry is not None and "supply" in entry.capabilities:
+                slots = [bs for bs in slots if bs.kind == "supply"]
+            else:
+                slots = [bs for bs in slots if bs.kind == "production"]
+            if not slots:
+                return (None, None, f"区域 {placement.region!r} 无匹配类别的 build_slots")
             target_size = entry.size if entry is not None else None
             if target_size is not None:
                 slots = [bs for bs in slots if bs.size == target_size]
                 if not slots:
                     return (None, None, f"区域 {placement.region!r} 无 size={target_size} 的 build_slots")
-            occupied = self._occupied_cells(gs)
+            occupied = occupied_cells(gs, self._catalog)
             for bs in slots:  # index=None：按声明顺序找第一个未被占/未尝试过的 slot（P0）
                 if bs.name in attempted:
                     continue
@@ -324,23 +348,92 @@ class ProductionRuntime:
         """下发 driver 的世界建造点：校准值优先（BuildSlot.build_point）。"""
         return bs.build_point
 
-    def _occupied_cells(self, gs: GameState) -> set[tuple[int, int]]:
-        """己方建筑占据的格点（完整 footprint：catalog size + 报告位置反推 TL；非建筑不占位）。
+    # ---- 挂件（addon）与气矿（gas）建造路径 ----
 
-        换算公式见 tactical_map.placement（ADR-0027 §3，真机锁定）：TL = int(R - size/2)。
-        兵/工兵（size=None）不阻塞建造位——修掉了旧版把 SCV 当障碍的问题。
-        """
-        cells: set[tuple[int, int]] = set()
+    def _addon_cells(self, building, gs: GameState) -> set[tuple[int, int]]:
+        """building 的右下 2×2 挂件预留格点（锁定公式：TL = floor(R - size/2)）。"""
+        entry = self._catalog.by_burnysc2_name(building.type_name)
+        size = entry.size if entry is not None else 3
+        tl = BuildSlot.tl_from_reported(building.position, size)
+        return {(tl.x + size + dx, tl.y + dy) for dx in range(2) for dy in range(2)}
+
+    def _has_addon(self, building, gs: GameState) -> bool:
+        return bool(occupied_cells(gs, self._catalog) & self._addon_cells(building, gs))
+
+    def _pick_parent_for_addon(self, gs: GameState, stable_id: str):
+        """找一个就绪且无挂件的母建筑（produced_by）。"""
+        entry = self._catalog.by_stable_id(stable_id)
+        if entry is None or entry.produced_by is None:
+            return None
+        name = self._catalog.burnysc2_name_for(entry.produced_by)
+        for u in gs.units:
+            if u.owner is Owner.SELF and u.type_name == name and u.build_progress >= 1.0:
+                if not self._has_addon(u, gs):
+                    return u
+        return None
+
+    def _try_build_addon(self, head: QueueItem, q_name: str, gs: GameState) -> str:
+        """挂件：母建筑自建（builder = 母建筑，非 SCV）；SC2 把挂件吸附到右下 2×2。"""
+        res = check_addon(gs, self._catalog, head.type)
+        if not res.ok:
+            return "blocked"
+        parent = self._pick_parent_for_addon(gs, head.type)
+        if parent is None:
+            return "blocked"  # 无空闲母建筑 → 等
+        self._emit(
+            [Emission("build", [parent.tag],
+                      {"type": head.type, "position": [parent.position.x, parent.position.y]})],
+            gs.seq,
+        )
+        self._build_flight[q_name] = {
+            "type": head.type,
+            "builder": parent.tag,
+            "frames": 0,
+            "attempted": set(),
+            "seen_tags": self._type_entity_tags(gs, head.type),
+        }
+        return "emitted"
+
+    def _pick_free_geyser(self, gs: GameState):
+        """找一个未被精炼厂占据的气井（任一己方建筑距气井 < 2.5 即视为已建）。"""
+        buildings = []
         for u in gs.units:
             if u.owner is not Owner.SELF:
                 continue
-            entry = self._catalog.by_burnysc2_name(u.type_name)
-            size = entry.size if entry is not None else None
-            if size is None:
-                continue
-            tl = BuildSlot.tl_from_reported(u.position, size)
-            cells |= {(x, y) for x in range(tl.x, tl.x + size) for y in range(tl.y, tl.y + size)}
-        return cells
+            e = self._catalog.by_burnysc2_name(u.type_name)
+            if e is not None and e.size is not None:
+                buildings.append(u)
+
+        def _taken(geyser) -> bool:
+            return any(
+                (b.position.x - geyser.position.x) ** 2 + (b.position.y - geyser.position.y) ** 2 < 6.25
+                for b in buildings
+            )
+
+        return next((u for u in gs.resources if "GEYSER" in u.type_name and not _taken(u)), None)
+
+    def _try_build_gas(self, head: QueueItem, q_name: str, gs: GameState) -> str:
+        """气矿：SCV 把精炼厂建在空闲气井上（build_gas 动作，target = 气井 Unit）。"""
+        res = check_gas(gs, self._catalog, head.type)
+        if not res.ok:
+            return "blocked"
+        geyser = self._pick_free_geyser(gs)
+        builder = self._pick_builder(gs)
+        if geyser is None or builder is None:
+            return "blocked"
+        self._emit(
+            [Emission("build_gas", [builder.tag],
+                      {"type": head.type, "target_unit": geyser.tag})],
+            gs.seq,
+        )
+        self._build_flight[q_name] = {
+            "type": head.type,
+            "builder": builder.tag,
+            "frames": 0,
+            "attempted": set(),
+            "seen_tags": self._type_entity_tags(gs, head.type),
+        }
+        return "emitted"
 
     # ---- 输出 ----
 

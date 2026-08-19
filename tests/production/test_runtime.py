@@ -37,9 +37,9 @@ regions:
 pos_marks:
   spot: {pos: [1.5, 1.5]}
 build_slots:
-  s1: {tl: [2, 2], size: 2}
-  s2: {tl: [5, 2], size: 2}
-  b1: {tl: [2, 5], size: 3}
+  s1: {tl: [2, 2], size: 2, kind: supply}
+  s2: {tl: [5, 2], size: 2, kind: supply}
+  b1: {tl: [2, 5], size: 3, kind: production}
 """
 
 
@@ -81,10 +81,10 @@ def test_build_head_blocked_by_minerals_then_emits():
     rt = _runtime(port)
     rt.submit_queue("open", [QueueItem(op="build", type="terran/supplydepot",
                                        placement=PlacementExact("spot"))])
-    gs_poor = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=50)
+    gs_poor = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=50)
     rt.on_game_state(gs_poor)
     assert port.submitted == []  # 阻塞
-    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=200))
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=200))
     assert len(port.submitted) == 1
     op = port.submitted[0]
     assert op.action == "build"
@@ -122,7 +122,7 @@ def test_build_dropped_when_candidates_exhausted():
         QueueItem(op="build", type="terran/supplydepot", placement=PlacementExact("spot")),
         QueueItem(op="train", type="terran/scv"),
     ])
-    gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
     assert len(port.submitted) == 1  # 发出 spot
     for _ in range(6):
@@ -269,3 +269,84 @@ def test_queue_tool_operations():
     assert rt.queue("q").items == [b, c]
     rt.clear("q")
     assert rt.queue("q").items == []
+
+# ---- 挂件（addon）与气矿（gas）建造路径 ----
+
+
+def test_addon_built_by_parent_not_scv():
+    """挂件：builder = 母建筑（兵营），非 SCV；SC2 吸附到右下 2×2。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), _u(3, "BARRACKS", x=8.0, y=8.0)],
+             minerals=200, vespene=200)
+    rt.on_game_state(gs)
+    assert len(port.submitted) == 1
+    op = port.submitted[0]
+    assert op.action == "build"
+    assert op.unit_tags == [3]  # 兵营自建，不是 SCV(2)
+    assert op.params["type"] == "terran/reactor"
+    assert op.params["position"] == [8.0, 8.0]  # 母建筑位置（SC2 吸附）
+    assert len(rt.queue("q").items) == 1  # 在途确认
+    # REACTOR 实体出现 → 确认 → 出队
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
+                          _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "REACTOR", x=11.5, y=8.5, progress=0.1)],
+                         minerals=150, vespene=150))
+    assert rt.queue("q").items == []
+
+
+def test_addon_blocked_when_parent_has_addon():
+    """兵营右下 2×2 已有建筑（挂件）→ 该兵营不可再挂；无其他母建筑 → 阻塞。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
+    # 兵营 at (8,8) 3×3 → TL(7,7)；右下挂件 cells (10..11, 7..8)；REACTOR at (11.5,8.5) → TL(10,7) ✓ 占据
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
+              _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "REACTOR", x=11.5, y=8.5)],
+             minerals=200, vespene=200)
+    rt.on_game_state(gs)
+    assert port.submitted == []  # 阻塞等待
+
+
+def test_addon_second_goes_to_other_barracks():
+    """两台兵营：第一台已挂 → 第二台自建。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/reactor")])
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
+              _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "REACTOR", x=11.5, y=8.5),
+              _u(5, "BARRACKS", x=20.0, y=20.0)],
+             minerals=200, vespene=200)
+    rt.on_game_state(gs)
+    assert len(port.submitted) == 1
+    assert port.submitted[0].unit_tags == [5]  # 第二台兵营
+
+
+def test_gas_build_targets_free_geyser():
+    """气矿：SCV 把精炼厂建在空闲气井上（build_gas，target = 气井 Unit）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/refinery")])
+    geysers = [_u(10, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=15.0, y=15.0),
+               _u(11, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=25.0, y=25.0)]
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")],
+                         resources=geysers, minerals=200))
+    assert len(port.submitted) == 1
+    op = port.submitted[0]
+    assert op.action == "build_gas"
+    assert op.unit_tags == [2]  # SCV 建造
+    assert op.params["type"] == "terran/refinery"
+    assert op.params["target_unit"] == 10  # 第一个空闲气井
+
+
+def test_gas_skips_occupied_geyser():
+    """气井旁已有精炼厂 → 选另一个空闲气井。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/refinery")])
+    geysers = [_u(10, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=15.0, y=15.0),
+               _u(11, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=25.0, y=25.0)]
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
+                          _u(3, "REFINERY", x=15.0, y=15.0)],
+                         resources=geysers, minerals=200))
+    assert port.submitted[0].params["target_unit"] == 11  # 10 号气井被占 → 选 11

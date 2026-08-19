@@ -28,6 +28,7 @@ EXPECTED_UNIT_METHODS: dict[str, tuple[str, int]] = {
     "research": ("research", 1),
     "load": ("smart", 1),           # V1 近似：smart(target_unit)
     "gather": ("gather", 1),
+    "build_gas": ("build", 1),        # build(unit, position)：气矿时 position=气井 Unit
 }
 
 

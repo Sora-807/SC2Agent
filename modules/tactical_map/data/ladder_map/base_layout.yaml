@@ -1,11 +1,13 @@
 # LadderMap（破晓黎明）主基建造模板 —— 固定有序建造位（authoring 数据）
-# 来源：run_slot_scan.py 真机 can_place 扫描（docs/slot_scan.log，不花矿）+ 手动 trace 实测
+# 来源：run_slot_scan.py 真机 can_place 扫描（docs/slot_scan*.log，不花矿）+ 手动 trace 实测
 # 语义：
-#   - spawns 按出生点分变体（出生点随机、几何随 180° 旋转）；运行时 spawn_layout_nearest 自动选
-#   - pos = 校准过的世界建造点（权威，偶数尺寸建筑在半格上）；size = footprint 边长
-#   - build_slots 声明顺序 = 建造顺序（生产运行时 PlacementInRegion("home") 按序取未占位）
-# bl 出生点 (48.5,28.5)：主矿左上 4×4 补给站网格（16 格全可建造）+ 兵营 ×2（与 CC/网格不重叠）
-# tr 出生点 (127.5,119.5)：镜像布局（180° 旋转），同样 4×4 网格 + 兵营 ×2
+#   - spawns 按出生点分变体（出生点随机）；运行时 spawn_layout_nearest 自动选
+#   - pos = 校准过的世界建造点（权威；2×2 锚点在格角、3×3 在格心，ADR-0027 锁定公式）
+#   - kind：supply=补给位 / production=生产位（3×3）/ addon=挂件预留（2×2，不参与放置）
+#   - build_slots 声明顺序 = 建造顺序（生产运行时按 kind+size 过滤取未占位）
+# 布局（错位楼梯，每栋生产建筑右下 2×2 为挂件预留）：
+#   bl：补给站 4×4 网格（主矿左上 x40–47/y32–39）+ 生产区在其上方（rax1-4 楼梯 + 4 挂件）
+#   tr：镜像含义（生产区在补给站网格左侧，独立扫描校准）
 map_name: LadderMap
 region_name: main_base
 spawns:
@@ -13,43 +15,55 @@ spawns:
     origin: [48.5, 28.5]
     anchor: [48.5, 28.5]
     build_slots:
-      depot1:  {pos: [40.5, 32.5], size: 2}
-      depot2:  {pos: [42.5, 32.5], size: 2}
-      depot3:  {pos: [44.5, 32.5], size: 2}
-      depot4:  {pos: [46.5, 32.5], size: 2}
-      depot5:  {pos: [40.5, 34.5], size: 2}
-      depot6:  {pos: [42.5, 34.5], size: 2}
-      depot7:  {pos: [44.5, 34.5], size: 2}
-      depot8:  {pos: [46.5, 34.5], size: 2}
-      depot9:  {pos: [40.5, 36.5], size: 2}
-      depot10: {pos: [42.5, 36.5], size: 2}
-      depot11: {pos: [44.5, 36.5], size: 2}
-      depot12: {pos: [46.5, 36.5], size: 2}
-      depot13: {pos: [40.5, 38.5], size: 2}
-      depot14: {pos: [42.5, 38.5], size: 2}
-      depot15: {pos: [44.5, 38.5], size: 2}
-      depot16: {pos: [46.5, 38.5], size: 2}
-      barracks1: {pos: [44.5, 28.5], size: 3}
-      barracks2: {pos: [42.5, 30.5], size: 3}
+      depot1:  {pos: [40.5, 32.5], size: 2, kind: supply}
+      depot2:  {pos: [42.5, 32.5], size: 2, kind: supply}
+      depot3:  {pos: [44.5, 32.5], size: 2, kind: supply}
+      depot4:  {pos: [46.5, 32.5], size: 2, kind: supply}
+      depot5:  {pos: [40.5, 34.5], size: 2, kind: supply}
+      depot6:  {pos: [42.5, 34.5], size: 2, kind: supply}
+      depot7:  {pos: [44.5, 34.5], size: 2, kind: supply}
+      depot8:  {pos: [46.5, 34.5], size: 2, kind: supply}
+      depot9:  {pos: [40.5, 36.5], size: 2, kind: supply}
+      depot10: {pos: [42.5, 36.5], size: 2, kind: supply}
+      depot11: {pos: [44.5, 36.5], size: 2, kind: supply}
+      depot12: {pos: [46.5, 36.5], size: 2, kind: supply}
+      depot13: {pos: [40.5, 38.5], size: 2, kind: supply}
+      depot14: {pos: [42.5, 38.5], size: 2, kind: supply}
+      depot15: {pos: [44.5, 38.5], size: 2, kind: supply}
+      depot16: {pos: [46.5, 38.5], size: 2, kind: supply}
+      rax1: {pos: [42.5, 42.5], size: 3, kind: production}
+      rax2: {pos: [45.5, 44.5], size: 3, kind: production}
+      rax3: {pos: [48.5, 41.5], size: 3, kind: production}
+      rax4: {pos: [51.5, 43.5], size: 3, kind: production}
+      rax1_addon: {pos: [44.5, 41.5], size: 2, kind: addon}
+      rax2_addon: {pos: [47.5, 43.5], size: 2, kind: addon}
+      rax3_addon: {pos: [50.5, 40.5], size: 2, kind: addon}
+      rax4_addon: {pos: [53.5, 42.5], size: 2, kind: addon}
   tr:
     origin: [127.5, 119.5]
     anchor: [127.5, 119.5]
     build_slots:
-      depot1:  {pos: [131.5, 107.5], size: 2}
-      depot2:  {pos: [133.5, 107.5], size: 2}
-      depot3:  {pos: [135.5, 107.5], size: 2}
-      depot4:  {pos: [137.5, 107.5], size: 2}
-      depot5:  {pos: [131.5, 109.5], size: 2}
-      depot6:  {pos: [133.5, 109.5], size: 2}
-      depot7:  {pos: [135.5, 109.5], size: 2}
-      depot8:  {pos: [137.5, 109.5], size: 2}
-      depot9:  {pos: [131.5, 111.5], size: 2}
-      depot10: {pos: [133.5, 111.5], size: 2}
-      depot11: {pos: [135.5, 111.5], size: 2}
-      depot12: {pos: [137.5, 111.5], size: 2}
-      depot13: {pos: [131.5, 113.5], size: 2}
-      depot14: {pos: [133.5, 113.5], size: 2}
-      depot15: {pos: [135.5, 113.5], size: 2}
-      depot16: {pos: [137.5, 113.5], size: 2}
-      barracks1: {pos: [123.5, 119.5], size: 3}
-      barracks2: {pos: [133.5, 117.5], size: 3}
+      depot1:  {pos: [131.5, 107.5], size: 2, kind: supply}
+      depot2:  {pos: [133.5, 107.5], size: 2, kind: supply}
+      depot3:  {pos: [135.5, 107.5], size: 2, kind: supply}
+      depot4:  {pos: [137.5, 107.5], size: 2, kind: supply}
+      depot5:  {pos: [131.5, 109.5], size: 2, kind: supply}
+      depot6:  {pos: [133.5, 109.5], size: 2, kind: supply}
+      depot7:  {pos: [135.5, 109.5], size: 2, kind: supply}
+      depot8:  {pos: [137.5, 109.5], size: 2, kind: supply}
+      depot9:  {pos: [131.5, 111.5], size: 2, kind: supply}
+      depot10: {pos: [133.5, 111.5], size: 2, kind: supply}
+      depot11: {pos: [135.5, 111.5], size: 2, kind: supply}
+      depot12: {pos: [137.5, 111.5], size: 2, kind: supply}
+      depot13: {pos: [131.5, 113.5], size: 2, kind: supply}
+      depot14: {pos: [133.5, 113.5], size: 2, kind: supply}
+      depot15: {pos: [135.5, 113.5], size: 2, kind: supply}
+      depot16: {pos: [137.5, 113.5], size: 2, kind: supply}
+      rax1: {pos: [117.5, 110.5], size: 3, kind: production}
+      rax2: {pos: [120.5, 112.5], size: 3, kind: production}
+      rax3: {pos: [123.5, 109.5], size: 3, kind: production}
+      rax4: {pos: [126.5, 111.5], size: 3, kind: production}
+      rax1_addon: {pos: [119.5, 109.5], size: 2, kind: addon}
+      rax2_addon: {pos: [122.5, 111.5], size: 2, kind: addon}
+      rax3_addon: {pos: [125.5, 108.5], size: 2, kind: addon}
+      rax4_addon: {pos: [128.5, 110.5], size: 2, kind: addon}

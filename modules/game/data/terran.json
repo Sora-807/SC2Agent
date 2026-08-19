@@ -3,8 +3,16 @@
     "burnysc2_name": "SCV",
     "display_name_zh": "工程兵",
     "role": "worker",
-    "capabilities": ["gather", "build", "repair"],
-    "cost": {"minerals": 50, "vespene": 0, "supply": 1},
+    "capabilities": [
+      "gather",
+      "build",
+      "repair"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 0,
+      "supply": 1
+    },
     "build_time": 12,
     "produced_by": "terran/commandcenter",
     "prerequisites": []
@@ -13,28 +21,54 @@
     "burnysc2_name": "MARINE",
     "display_name_zh": "机枪兵",
     "role": "combat",
-    "capabilities": ["attack", "move"],
-    "cost": {"minerals": 50, "vespene": 0, "supply": 1},
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 0,
+      "supply": 1
+    },
     "build_time": 18,
     "produced_by": "terran/barracks",
-    "prerequisites": ["terran/barracks"]
+    "prerequisites": [
+      "terran/barracks"
+    ]
   },
   "terran/medivac": {
     "burnysc2_name": "MEDIVAC",
     "display_name_zh": "医疗运输机",
     "role": "combat",
-    "capabilities": ["heal", "transport", "move"],
-    "cost": {"minerals": 100, "vespene": 100, "supply": 2},
+    "capabilities": [
+      "heal",
+      "transport",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 2
+    },
     "build_time": 30,
     "produced_by": "terran/starport",
-    "prerequisites": ["terran/starport"]
+    "prerequisites": [
+      "terran/starport"
+    ]
   },
   "terran/commandcenter": {
     "burnysc2_name": "COMMANDCENTER",
     "display_name_zh": "指挥中心",
     "role": "building",
-    "capabilities": ["train", "dropoff"],
-    "cost": {"minerals": 400, "vespene": 0, "supply": 0},
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 400,
+      "vespene": 0,
+      "supply": 0
+    },
     "build_time": 71,
     "size": 5,
     "produced_by": null,
@@ -44,22 +78,95 @@
     "burnysc2_name": "SUPPLYDEPOT",
     "display_name_zh": "补给站",
     "role": "building",
-    "capabilities": ["supply"],
-    "cost": {"minerals": 100, "vespene": 0, "supply": 0},
+    "capabilities": [
+      "supply"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
     "build_time": 21,
     "size": 2,
     "produced_by": null,
-    "prerequisites": ["terran/commandcenter"]
+    "prerequisites": [
+      "terran/commandcenter"
+    ]
   },
   "terran/barracks": {
     "burnysc2_name": "BARRACKS",
     "display_name_zh": "兵营",
     "role": "building",
-    "capabilities": ["train"],
-    "cost": {"minerals": 150, "vespene": 0, "supply": 0},
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
     "build_time": 46,
     "size": 3,
     "produced_by": null,
-    "prerequisites": ["terran/supplydepot"]
+    "prerequisites": [
+      "terran/supplydepot"
+    ]
+  },
+  "terran/reactor": {
+    "burnysc2_name": "REACTOR",
+    "display_name_zh": "反应堆（双倍挂件）",
+    "role": "building",
+    "capabilities": [
+      "addon"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 25,
+    "produced_by": "terran/barracks",
+    "prerequisites": [
+      "terran/barracks"
+    ],
+    "size": 2
+  },
+  "terran/techlab": {
+    "burnysc2_name": "TECHLAB",
+    "display_name_zh": "科技实验室",
+    "role": "building",
+    "capabilities": [
+      "addon"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 25,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": "terran/barracks",
+    "prerequisites": [
+      "terran/barracks"
+    ],
+    "size": 2
+  },
+  "terran/refinery": {
+    "burnysc2_name": "REFINERY",
+    "display_name_zh": "精炼厂",
+    "role": "building",
+    "capabilities": [
+      "gas"
+    ],
+    "cost": {
+      "minerals": 75,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 21,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/commandcenter"
+    ],
+    "size": 3
   }
 }

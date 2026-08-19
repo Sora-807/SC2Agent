@@ -19,7 +19,8 @@ from sc2.data import Difficulty, Race
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2 as SC2Point2
 
-LOG = Path(__file__).parent / "docs" / "slot_scan.log"
+OUT_SUFFIX = sys.argv[1] if len(sys.argv) > 1 else ""  # 输出文件名后缀（多次跑不互相覆盖）
+LOG = Path(__file__).parent / "docs" / f"slot_scan{OUT_SUFFIX}.log"
 
 
 def log(msg: object) -> None:
@@ -37,10 +38,10 @@ class ScanBot(SC2DriverBot):
             return
         cc = self.townhalls.first
         log(f"=== scan start === spawn CC={cc.position} map_size={self.game_info.map_size}")
-        # 宽范围双向扫描：任何出生点一次扫全主基台地可建造区
+        # 宽范围双向扫描（步长 1：错位布局需要奇数行偏移；任何出生点一次扫全）
         pts: list[tuple[float, float]] = []
-        for dx in range(-16, 17, 2):
-            for dy in range(-16, 27, 2):
+        for dx in range(-16, 17):
+            for dy in range(-16, 27):
                 pts.append((cc.position.x + dx, cc.position.y + dy))
         positions = [SC2Point2((x, y)) for x, y in pts]
         for unit_type, label in ((UnitTypeId.SUPPLYDEPOT, "depot"), (UnitTypeId.BARRACKS, "rax")):

@@ -48,7 +48,9 @@ def test_saturation_derived_from_existing_orders():
 
 
 def test_gas_saturation_three():
-    e = ALLOC.assign(_gs([_u(i) for i in range(1, 5)], [_res(20, "VESPENEGEYSER")]),
+    refinery = _u(99, "REFINERY")  # 气井需先建精炼厂
+    refinery.position = Point2(0, 0)
+    e = ALLOC.assign(_gs([_u(i) for i in range(1, 5)] + [refinery], [_res(20, "VESPENEGEYSER")]),
                      WorkerTask.GAS, 4)
     assert len(e) == 3  # 气井饱和 3，第 4 个不派
 
@@ -81,3 +83,14 @@ def test_enemy_workers_not_used():
     e = ALLOC.assign(_gs([_u(9, owner=Owner.ENEMY)], [_res(10, "MINERALFIELD")]),
                      WorkerTask.MINERAL, 1)
     assert e == []  # catalog role=worker 但只派己方
+
+def test_gas_requires_refinery_on_geyser():
+    """裸气井不能采：只有已建精炼厂的气井才派工。"""
+    geysers = [_res(20, "VESPENEGEYSER"), _res(21, "VESPENEGEYSER")]
+    refinery = _u(99, "REFINERY")
+    refinery.position = Point2(0, 0)  # 与气井同点 → 视为已建精炼厂
+    scvs = [_u(i) for i in range(1, 7)]
+    e = ALLOC.assign(_gs(scvs, [geysers[0]]), WorkerTask.GAS, 6)
+    assert e == []  # 无精炼厂的气井 → 不派
+    e2 = ALLOC.assign(_gs(scvs + [refinery], geysers), WorkerTask.GAS, 6)
+    assert len(e2) == 6  # 两个有精炼厂的气井 → 各饱和 3

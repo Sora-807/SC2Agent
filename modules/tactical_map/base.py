@@ -52,6 +52,7 @@ def load_base_template(path: str | Path) -> BaseTemplate:
                     Point2(float(s["pos"][0]), float(s["pos"][1])), int(s["size"])
                 ),
                 size=int(s["size"]),
+                kind=s.get("kind", "production"),
             )
             for sname, s in (data.get("build_slots") or {}).items()
         )
@@ -102,6 +103,7 @@ def instantiate_spawn(
             name=s.name,
             tl=GridPos(s.tl.x + int(round(dx)), s.tl.y + int(round(dy))),
             size=s.size,
+            kind=s.kind,
             pos=Point2(s.pos.x + dx, s.pos.y + dy) if s.pos is not None else None,
         )
         for s in layout.build_slots

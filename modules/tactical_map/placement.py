@@ -35,6 +35,7 @@ class BuildSlot:
     name: str  # "depot1"（声明顺序 = 建造顺序）
     tl: GridPos  # footprint 左下角格点（min corner；与 pos 的关系见模块 docstring）
     size: int  # 2（补给站）/ 3（兵营/工厂/星港）/ 5（基地）
+    kind: str = "production"  # 槽位类别：supply（补给）/ production（生产建筑）/ addon（挂件预留，不参与放置）
     pos: Point2 | None = None  # 校准过的世界建造点（权威；driver build 用它）
 
     @property

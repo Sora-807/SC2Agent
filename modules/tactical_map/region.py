@@ -327,6 +327,7 @@ def load_region_layer(yaml_str: str, base_dir: str | Path | None = None) -> Regi
             name=name,
             tl=GridPos(int(data["tl"][0]), int(data["tl"][1])),
             size=int(data["size"]),
+            kind=data.get("kind", "production"),
             pos=_point2(data["pos"]) if "pos" in data else None,
         )
 

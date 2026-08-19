@@ -37,10 +37,27 @@ class WorkerAllocator:
         return [u for u in gs.units if u.owner is Owner.SELF and u.type_name in names]
 
     def _nodes(self, gs: GameState, gas: bool) -> list:
-        """资源节点：gas=True 取气井，否则取矿脉（来自 world 拆出的 gs.resources）。"""
-        if gas:
-            return [u for u in gs.resources if "GEYSER" in u.type_name]
-        return [u for u in gs.resources if u.type_name.startswith("MINERALFIELD")]
+        """资源节点：gas=True 取气井，否则取矿脉（来自 world 拆出的 gs.resources）。
+
+        气井只取已建精炼厂的（裸气井不能采）；判定 = 气井 2.5 距离内有己方建筑。
+        """
+        if not gas:
+            return [u for u in gs.resources if u.type_name.startswith("MINERALFIELD")]
+        buildings = []
+        for u in gs.units:
+            if u.owner is not Owner.SELF:
+                continue
+            e = self._catalog.by_burnysc2_name(u.type_name)
+            if e is not None and e.size is not None:
+                buildings.append(u)
+
+        def _has_refinery(geyser) -> bool:
+            return any(
+                (b.position.x - geyser.position.x) ** 2 + (b.position.y - geyser.position.y) ** 2 < 6.25
+                for b in buildings
+            )
+
+        return [u for u in gs.resources if "GEYSER" in u.type_name and _has_refinery(u)]
 
     def _saturation(self, workers: list, nodes: list) -> dict[int, int]:
         """节点 tag -> 正在采集它的 SCV 数（从 orders 的 target_tag 派生，无内部状态）。"""

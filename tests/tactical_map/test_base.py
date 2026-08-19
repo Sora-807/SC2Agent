@@ -17,14 +17,14 @@ spawns:
     origin: [10.5, 10.5]
     anchor: [10.5, 10.5]
     build_slots:
-      depot1: {pos: [8.5, 12.5], size: 2}
-      depot2: {pos: [10.5, 12.5], size: 2}
-      barracks1: {pos: [8.5, 8.5], size: 3}
+      depot1: {pos: [8.5, 12.5], size: 2, kind: supply}
+      depot2: {pos: [10.5, 12.5], size: 2, kind: supply}
+      barracks1: {pos: [8.5, 8.5], size: 3, kind: production}
   tr:
     origin: [90.5, 90.5]
     anchor: [90.5, 90.5]
     build_slots:
-      depot1: {pos: [92.5, 88.5], size: 2}
+      depot1: {pos: [92.5, 88.5], size: 2, kind: supply}
 """
 
 

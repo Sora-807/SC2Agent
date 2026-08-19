@@ -116,6 +116,15 @@ def test_patrol_noop_when_empty_positions():
 # ---- build / train / research ----
 
 
+def test_build_gas_targets_geyser_unit():
+    """气矿建筑：position 参数换成气井 Unit（burnysc2 对 REFINERY 断言 target 是 Unit）。"""
+    from sc2.ids.unit_typeid import UnitTypeId
+    units = [FakeUnit(1), FakeUnit(2)]
+    cmds = translate_op(_op("build_gas", unit_tags=[1], type="REFINERY", target_unit=2), _find(units))
+    assert cmds == [("build", 1, UnitTypeId.REFINERY, units[1])]
+    assert translate_op(_op("build_gas", unit_tags=[1], type="REFINERY", target_unit=99), _find(units)) == []  # 气井缺失 no-op
+
+
 def test_build_train_research():
     """type 参数必须解析成 burnysc2 枚举（真机上字符串会静默失败——实测踩过）。"""
     from sc2.ids.unit_typeid import UnitTypeId

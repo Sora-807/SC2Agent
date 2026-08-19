@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from game import Cost, GameState, Owner, Point2
 from game.catalog import Catalog
+from tactical_map.placement import BuildSlot
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,17 +61,57 @@ def check_prerequisites(gs: GameState, catalog: Catalog, stable_id: str) -> list
     return reasons
 
 
-def check_build(gs: GameState, catalog: Catalog, stable_id: str, position: Point2) -> ConstraintResult:
-    """build 可行性：类型存在 + 资源 + 前置 + 放置格点空闲。"""
+def occupied_cells(gs: GameState, catalog: Catalog) -> set[tuple[int, int]]:
+    """己方建筑占据的格点（完整 footprint：catalog size + 报告位置反推 TL；非建筑不占位）。
+
+    换算公式见 tactical_map.placement（ADR-0027 §3，真机锁定）：TL = floor(R - size/2)。
+    """
+    cells: set[tuple[int, int]] = set()
+    for u in gs.units:
+        if u.owner is not Owner.SELF:
+            continue
+        entry = catalog.by_burnysc2_name(u.type_name)
+        size = entry.size if entry is not None else None
+        if size is None:
+            continue
+        tl = BuildSlot.tl_from_reported(u.position, size)
+        cells |= {(x, y) for x in range(tl.x, tl.x + size) for y in range(tl.y, tl.y + size)}
+    return cells
+
+
+def _check_type_and_resources(gs: GameState, catalog: Catalog, stable_id: str):
+    """公共门控：类型存在 + 资源 + 前置。返回 (entry | None, reasons)。"""
     e = _entry(catalog, stable_id)
     if e is None:
-        return ConstraintResult(False, (f"未知类型 {stable_id!r}",))
-    reasons = check_resources(gs, e.cost) + check_prerequisites(gs, catalog, stable_id)
-    cell = (int(position.x), int(position.y))
-    for u in gs.units:  # V1 单格近似；footprint 闭区间（ADR-0027）后补
-        if u.owner is Owner.SELF and (int(u.position.x), int(u.position.y)) == cell:
-            reasons.append(f"格点 {cell} 已被 {u.type_name} 占据（tag={u.tag}）")
-            break
+        return None, [f"未知类型 {stable_id!r}"]
+    return e, check_resources(gs, e.cost) + check_prerequisites(gs, catalog, stable_id)
+
+
+def check_build(gs: GameState, catalog: Catalog, stable_id: str, position: Point2) -> ConstraintResult:
+    """build 可行性：类型存在 + 资源 + 前置 + 放置 footprint 空闲（锁定公式）。"""
+    e, reasons = _check_type_and_resources(gs, catalog, stable_id)
+    if e is None:
+        return ConstraintResult(False, tuple(reasons))
+    size = e.size
+    if size is not None:
+        tl = BuildSlot.tl_from_pos(position, size)
+        placed = {(x, y) for x in range(tl.x, tl.x + size) for y in range(tl.y, tl.y + size)}
+        clash = placed & occupied_cells(gs, catalog)
+        if clash:
+            reasons.append(f"放置 footprint 与己方建筑重叠 {sorted(clash)[:4]}")
+    return ConstraintResult(not reasons, tuple(reasons))
+
+
+def check_addon(gs: GameState, catalog: Catalog, stable_id: str) -> ConstraintResult:
+    """挂件可行性：资源 + 前置（放置由母建筑吸附到右下 2×2，不走格点检查；
+    母建筑是否空闲由生产运行时选）。"""
+    e, reasons = _check_type_and_resources(gs, catalog, stable_id)
+    return ConstraintResult(not reasons, tuple(reasons))
+
+
+def check_gas(gs: GameState, catalog: Catalog, stable_id: str) -> ConstraintResult:
+    """气矿建筑可行性：资源 + 前置（气井占用由生产运行时选井时判）。"""
+    e, reasons = _check_type_and_resources(gs, catalog, stable_id)
     return ConstraintResult(not reasons, tuple(reasons))
 
 

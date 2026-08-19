@@ -219,6 +219,15 @@ def _t_build(op, find_unit, catalog=None):
     return [units[0].build(_resolve_type_id(op.params["type"], catalog), p)]
 
 
+def _t_build_gas(op, find_unit, catalog=None):
+    """气矿建筑（REFINERY 等）：burnysc2 要求 target 是气井 Unit 而非坐标。"""
+    tgt = find_unit(op.params["target_unit"]) if op.params.get("target_unit") else None
+    units = _units(op, find_unit)
+    if not units or tgt is None:
+        return []
+    return [units[0].build(_resolve_type_id(op.params["type"], catalog), tgt)]
+
+
 def _t_train(op, find_unit, catalog=None):
     units = _units(op, find_unit)
     return [units[0].train(_resolve_type_id(op.params["type"], catalog))] if units else []
@@ -266,6 +275,7 @@ TRANSLATORS: dict[str, object] = {
     "research": _t_research,
     "load": _t_load,
     "gather": _t_gather,
+    "build_gas": _t_build_gas,
 }
 
 # OP_CATALOG 中尚未翻译到 burnysc2 命令的 action → 原因。
