@@ -6,6 +6,12 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "burnysc2>=7.3.0",
     "pyyaml>=6.0.3",
+    # api 层（B2）：只在 modules/api 里用；核心模块仍是纯 dataclass，不引 pydantic 到引擎里
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    # uvicorn 不自带 WS 实现：缺了它 WS 升级会被拒（"No supported WebSocket library"）。
+    # 真机验过：pytest 的 TestClient 走 ASGI 直连不需要它，但真起服必须有。
+    "websockets>=14",
 ]
 
 # 不作为可安装包构建；modules/ 作为源根（pytest pythonpath=modules）
@@ -21,4 +27,5 @@ testpaths = ["tests"]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "httpx>=0.28",          # fastapi.testclient 需要
 ]

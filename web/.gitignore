@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# 夹具是确定性生成物（pnpm gen:fixtures），不入库；
+# B0 落地后改由后端 tools/make_fixtures.py 产出同 schema 的夹具。
+public/fixtures/

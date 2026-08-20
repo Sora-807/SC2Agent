@@ -24,17 +24,19 @@ MODULES_DIR = Path(__file__).resolve().parents[2] / "modules"
 
 # module -> 禁止 import 的顶层名（其余模块 + 第三方 sc2，driver 除外）
 PROHIBITED = {
-    "game":         {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2"},
-    "tactical_map": {"ports", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2"},
-    "mechanics":    {"ports", "tactical_map", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2"},
-    "constraint":   {"ports", "planner", "world", "flow", "production", "view", "driver", "sc2"},
-    "planner":      {"ports", "tactical_map", "world", "flow", "production", "view", "driver", "sc2"},
-    "world":        {"ports", "tactical_map", "mechanics", "constraint", "planner", "flow", "production", "view", "driver", "sc2"},
-    "flow":         {"ports", "mechanics", "constraint", "planner", "world", "production", "view", "driver", "sc2"},
-    "production":   {"ports", "mechanics", "planner", "world", "flow", "view", "driver", "sc2"},
-    "driver":       {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production", "view"},
+    "game":         {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2", "api"},
+    "tactical_map": {"ports", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2", "api"},
+    "mechanics":    {"ports", "tactical_map", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2", "api"},
+    "constraint":   {"ports", "planner", "world", "flow", "production", "view", "driver", "sc2", "api"},
+    "planner":      {"ports", "tactical_map", "world", "flow", "production", "view", "driver", "sc2", "api"},
+    "world":        {"ports", "tactical_map", "mechanics", "constraint", "planner", "flow", "production", "view", "driver", "sc2", "api"},
+    "flow":         {"ports", "mechanics", "constraint", "planner", "world", "production", "view", "driver", "sc2", "api"},
+    "production":   {"ports", "mechanics", "planner", "world", "flow", "view", "driver", "sc2", "api"},
+    "driver":       {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "api"},
     # view 是最上层的只读视图：可依赖所有引擎模块，但不认识 SC2，也不拥有游戏循环
-    "view":         {"ports", "driver", "sc2"},
+    "view":         {"ports", "driver", "sc2", "api"},
+    # api 是最外层传输：可依赖 view 与引擎,但同样不认识 SC2、不拥有游戏循环
+    "api":          {"ports", "driver", "sc2"},
 }
 
 _IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)")
@@ -88,16 +90,22 @@ def test_view_schema_depends_only_on_game():
     assert not bad, f"view/schema.py 只应依赖 game，却 import 了 {sorted(bad)}"
 
 
-def test_nobody_imports_view():
-    """没有任何下层模块 import view（否则视图层会反向污染引擎）。"""
+def test_nobody_imports_view_or_api():
+    """没有任何下层模块 import view / api（否则视图与传输层会反向污染引擎）。
+
+    `api` 可以 import `view`，但 `view` 不能 import `api` —— 传输方式（WS/REST/文件）
+    不该渗进视图定义里，否则换传输就要动帧。
+    """
     violations = []
     for module in PROHIBITED:
-        if module == "view":
-            continue
         for f in _module_files(module):
-            if "view" in _imports_in(f):
-                violations.append(str(f.relative_to(MODULES_DIR)))
-    assert not violations, "下列文件 import 了 view（禁止）:\n" + "\n".join(violations)
+            imports = _imports_in(f)
+            for upper in ("view", "api"):
+                if upper == module or (module == "api" and upper == "view"):
+                    continue
+                if upper in imports:
+                    violations.append(f"{f.relative_to(MODULES_DIR)}: imports {upper}")
+    assert not violations, "上层模块被下层 import（禁止）:\n" + "\n".join(violations)
 
 
 def test_sc2_importable():

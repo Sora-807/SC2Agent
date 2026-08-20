@@ -1,0 +1,3 @@
+# pnpm 10+ 的构建脚本白名单落点（package.json 的 pnpm 字段已不再被读取）
+allowBuilds:
+  esbuild: true
