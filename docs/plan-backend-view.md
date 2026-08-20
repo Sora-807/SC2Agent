@@ -78,7 +78,7 @@
 | **B4** | 地形静态面 `static/terrain` ✅**已完成**(真机未冒烟) | — | 零 | 地图页从纯色底变真地图 |
 | **B9** | D6 `ApplyResult.results` + D7 `GAME_EVENTS` 目录 ✅**已完成** | — | 零 | 命令流水的三态应用状态 |
 | **B10** | `ObservationPacket` + `/api/agent/tools` ✅**已完成** | B2 | 零 | agent 读面与 UI 同源 |
-| **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
+| **B11** | `frame/economy` ✅**已完成** | — | 零 | 采矿维持可观测 |
 
 执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 ✅ → B4 ✅ → B9 ✅`
 

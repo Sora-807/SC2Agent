@@ -443,8 +443,8 @@ interface Proposal {
 
 | 顺序 | 任务 | 前端依赖 | 后端依赖 | 产出 |
 |---|---|---|---|---|
-| F0 | 契约落地 + 夹具 + 骨架 | 无 | **无** | contract TS+zod、手写 fixtures、vite 骨架、FixtureFrameSource |
-| F1 | 外壳 + 时间线 + 帧源切换 | F0 | 无 | shell、JsonlFrameSource、RingBuffer、只读回看模式 |
+| F0 | 契约落地 + 夹具 + 骨架 ✅**已完成** | 无 | **无** | contract TS+zod、真引擎夹具、vite 骨架、帧源 |
+| F1 | 外壳 + 时间线 + 帧源切换 ✅**已完成** | F0 | 无 | shell、JsonlFrameSource、RingBuffer、只读回看模式 |
 | F2 | 地图渲染 ✅**已完成** | F0 | 无(terrain 降级) | 分层 canvas、footprint、区域标签网格、插值、选中检查器、摆放调试叠加 |
 | F3 | 生产页 + 投影图 ✅**已完成**(含写入面) | F0 | B6 已接通 | 队列(队首阻塞/掉项审计)、投影曲线+Gantt 泳道、经济维持器面板、目录选择器(按前置置灰) |
 | F4 | Flow 状态图(只读) ✅**已完成** | F0 | 无(需 `static/strategy`) | **手写 SVG + 分层布局**(改了选型,见下)、分支 AST 渲染、转移历史、回边可见 |
