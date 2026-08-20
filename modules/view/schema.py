@@ -609,7 +609,8 @@ class EconomyFrame:
 
 @dataclass(slots=True)
 class ApplyView:
-    ok: bool
+    #: ok=None = 已受理、待裁决（异步应用未回）—— 这是"Operation 下一 step 生效"的如实反映
+    ok: bool | None
     failed: bool
     detail: str | None
 

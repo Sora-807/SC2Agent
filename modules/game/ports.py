@@ -18,19 +18,48 @@ from game.raw import RawGameState
 
 
 @dataclass(slots=True)
+class OpApply:
+    """单条 op 的应用结果（D6 落地）。`ok=None` = 尚未裁决（异步应用未回）。"""
+
+    op_id: int
+    ok: bool | None
+    reason: str | None = None
+
+
+@dataclass(slots=True)
 class ApplyResult:
-    """submit_operations 返回。具体字段 D6 待定。"""
+    """submit_operations 返回。
+
+    `results` 是 D6 的正式逐 op 通道；`failed_op_ids` 是旧字段的兼容保留。
+    应用是**异步**的（下一 step 生效），所以同步返回时结果可能还是 `ok=None`
+    （"已受理，待裁决"）—— 这如实反映"Operation 下一 step 生效"的语义。
+    """
 
     ok: bool
     failed_op_ids: list[int] = field(default_factory=list)
+    results: list[OpApply] = field(default_factory=list)
+
+
+#: GameEvent 目录（D7 落地）。**只增不改**：新增条目走这里登记，不在代码里散写字符串。
+GAME_EVENTS: dict[str, str] = {
+    "session_started": "游戏进程启动、bot 就绪",
+    "session_ended": "游戏结束（正常到时 / 对局终止）",
+    "op_dispatched": "op 已翻译并下发（unit 命令发出）",
+    "op_apply_failed": "op 翻译/下发失败（含原因，进 ApplyResult.results）",
+    "build_confirmed": "建造实体出现（driver 侧观察到 footprint 实体）",
+    "build_timeout": "在途建造确认超时（SC2 静默拒单的一种表现）",
+    "user_takeover": "疑似用户接管（auto-order 白名单之外的命令出现在单位上）",
+    "unit_died": "己方单位死亡（tag + 类型）",
+}
 
 
 @dataclass(slots=True)
 class GameEvent:
-    """driver 推送的事件（目录 D7 待定）。"""
+    """driver 推送的事件。`kind` 必须登记在 `GAME_EVENTS` 目录里。"""
 
     kind: str
     payload: dict
+    game_time: float = 0.0
 
 
 @dataclass(slots=True)

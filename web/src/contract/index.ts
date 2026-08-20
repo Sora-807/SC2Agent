@@ -569,7 +569,8 @@ export const zOpsFrame = z.object({
       /** B9（D6）之前恒 null → 前端显示"未知"而不是空白 */
       apply: z
         .object({
-          ok: z.boolean(),
+          /** null = 已受理、待裁决（异步应用未回；「下一 step 生效」语义的如实反映） */
+          ok: z.boolean().nullable(),
           failed: z.boolean(),
           detail: z.string().nullable(),
         })

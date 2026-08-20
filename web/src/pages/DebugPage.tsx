@@ -105,9 +105,11 @@ export function DebugPage() {
                     </td>
                     <td>
                       {o.apply === null ? (
-                        <span className="text-neutral-600" title="需后端 B9（D6 ApplyResult）">未知</span>
+                        <span className="text-neutral-600" title="后端没有回报">未知</span>
                       ) : o.apply.failed ? (
-                        <span className="text-red-400">失败</span>
+                        <span className="text-red-400" title={o.apply.detail ?? ""}>失败</span>
+                      ) : o.apply.ok === null ? (
+                        <span className="text-sky-400" title="异步应用未回（下一 step 生效）">待裁决</span>
                       ) : (
                         <span className="text-emerald-400">已接受</span>
                       )}

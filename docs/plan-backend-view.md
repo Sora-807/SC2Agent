@@ -76,11 +76,30 @@
 | **B7** | 提案存储 + validate 网关 + **双投影预览** ✅**已完成** | B6 | 零 | 前端 F7 |
 | **B3** | 会话控制 + 进程分离 ✅**已完成**(sc2 驱动路径已接,待真机冒烟) | — | 零 | 前端 F8 的 live |
 | **B4** | 地形静态面 `static/terrain` ✅**已完成**(真机未冒烟) | — | 零 | 地图页从纯色底变真地图 |
-| **B9** | D6 `ApplyResult` 字段 + D7 `GameEvent` 目录 | **T6**,B3 | 零 | 命令流水的落地状态 |
+| **B9** | D6 `ApplyResult.results` + D7 `GAME_EVENTS` 目录 ✅**已完成** | — | 零 | 命令流水的三态应用状态 |
 | **B10** | `ObservationPacket` + `/api/agent/tools` ✅**已完成** | B2 | 零 | agent 读面与 UI 同源 |
 | **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
 
-执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 ✅ → B4 ✅ → B9`
+执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 ✅ → B4 ✅ → B9 ✅`
+
+### B9 落地要点
+
+**三态应用状态**（D6）：`ApplyResult.results: [OpApply{op_id, ok, reason}]`，
+`ok` 是三值 —— `True` 已接受 / `False` 失败（带原因）/ `None` **待裁决**。
+第三态不是矫情：应用是异步的（"Operation 下一 step 生效"），把"还没回"显示成
+"已接受"或"失败"都是骗人 —— 调试页因此显示"待裁决"。
+
+`RecordingPort` 回填优先级：`results`（新通道）> `failed_op_ids`（旧字段）> None。
+driver 侧 `SC2DriverBot._apply_op` 逐 op 裁决回填（失败带异常原因），
+失败的 op 同时发 `op_apply_failed` GameEvent。
+
+**事件目录**（D7）：`GAME_EVENTS` 集中登记 8 种（只增不改），事件带 `game_time`
+（复盘时间线对齐）。`SC2GamePort.events(cursor)` 现在是真切片游标而不是恒空。
+目录外的 kind 直接 KeyError —— 散写字符串会让目录漂移，那正是 D7 想消灭的。
+
+注：`landing`（SC2 是否真的执行了）的 driver 侧确认（build_confirmed/超时）目录已登记，
+但真机填充要在下一次真机冒烟时和 `run_addon_probe` 类证据一起校准 —— 这是真机范畴，
+不是离线能定的（红线：真机数值不信 wiki）。
 
 ### B4 落地要点
 

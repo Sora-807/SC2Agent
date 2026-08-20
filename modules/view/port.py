@@ -80,12 +80,21 @@ class RecordingPort:
         `detail` 一律 None —— 不编原因（不静默）。B9 补齐 ApplyResult 后 detail 才有内容。
         """
         if result is None:
+            for rec in recs:
+                # 什么都没回 = 已受理、待裁决：ok=None 如实反映"下一 step 生效"的异步语义
+                rec["apply"] = {"ok": None, "failed": False, "detail": None}
             return
-        ok = bool(getattr(result, "ok", True))
+        per_op = {r.op_id: r for r in getattr(result, "results", ()) or ()}
         failed_ids = set(getattr(result, "failed_op_ids", ()) or ())
         for rec in recs:
-            failed = rec["op_id"] in failed_ids
-            rec["apply"] = {"ok": ok and not failed, "failed": failed, "detail": None}
+            op_result = per_op.get(rec["op_id"])
+            if op_result is not None:
+                rec["apply"] = {"ok": op_result.ok, "failed": op_result.ok is False,
+                                "detail": op_result.reason}
+            elif rec["op_id"] in failed_ids:
+                rec["apply"] = {"ok": False, "failed": True, "detail": None}
+            else:
+                rec["apply"] = {"ok": None, "failed": False, "detail": None}
 
     # 透传 GamePort 其余方法（duck-typing：只有 submit_operations 需要拦）
     def __getattr__(self, name):

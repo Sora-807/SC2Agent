@@ -20,7 +20,15 @@ from game.catalog import (
 )
 from game.geometry import Grid, GridPos, Point2
 from game.operation import OP_CATALOG, Operation, ParamType, is_known_action, validate_op
-from game.ports import ApplyResult, GameEvent, GamePort, RuntimeSink, SessionEvent
+from game.ports import (
+    GAME_EVENTS,
+    ApplyResult,
+    GameEvent,
+    GamePort,
+    OpApply,
+    RuntimeSink,
+    SessionEvent,
+)
 from game.production import (
     PlacementExact,
     PlacementInRegion,
@@ -36,6 +44,8 @@ from game.state import GameState, Order, Owner, Unit
 __all__ = [
     "ApplyResult",
     "Catalog",
+    "GAME_EVENTS",
+    "OpApply",
     "CatalogEntry",
     "Cost",
     "GameEvent",

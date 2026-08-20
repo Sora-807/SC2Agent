@@ -367,6 +367,8 @@ class SC2DriverBot(BotAI):
     _catalog = None  # game.Catalog：stable ID → burnysc2 名（build/train/research 的 type 解析）
     _apply_failures: list | None = None  # V1 审计：翻译/下发失败记录（D6 正式 ApplyResult 通道前的降级）
     _apply_trace: list | None = None  # V1 调试：翻译结果追踪（runner 注入后记录每条 op 的翻译输出）
+    _pending_results: dict | None = None  # D6：op_id -> OpApply，driver 逐 op 裁决后回填
+    _events: list | None = None           # D7：事件收集器（SC2GamePort 注入）
 
     _map_info_sent = False
     _map_info_cb = None   # SC2GamePort 注入的静态地形回调（B4）
@@ -400,9 +402,24 @@ class SC2DriverBot(BotAI):
                 self._apply_trace.append((op.action, len(cmds), repr(cmds[0]) if cmds else ""))
             for cmd in cmds:
                 self.do(cmd)
+            self._settle(op, True, None)
         except Exception as e:  # D6：经 ApplyResult/events 回流；V1 记入审计清单，不崩游戏
             if self._apply_failures is not None:
                 self._apply_failures.append((op.action, repr(e)))
+            self._settle(op, False, f"{type(e).__name__}: {e}")
+
+    def _settle(self, op: Operation, ok: bool, reason: str | None) -> None:
+        """逐 op 裁决（D6）：回填 ApplyResult.results；失败发 GameEvent（D7 目录登记）。"""
+        if self._pending_results is not None:
+            self._pending_results[op.op_id] = OpApply(op_id=op.op_id, ok=ok, reason=reason)
+        if not ok:
+            self._emit_event(GameEvent(
+                kind="op_apply_failed",
+                payload={"op_id": op.op_id, "action": op.action, "reason": reason or ""}))
+
+    def _emit_event(self, event: GameEvent) -> None:
+        if self._events is not None:
+            self._events.append(event)
 
 
 class SC2GamePort:
@@ -428,6 +445,7 @@ class SC2GamePort:
         self._catalog = catalog if catalog is not None else load_terran()
         self._bot_cls = bot_cls
         self._op_queue: list[Operation] = []
+        self._pending_results: dict[int, OpApply] = {}
         self._bot: SC2DriverBot | None = None
         self._events: list[GameEvent] = []
         #: 地形抽取回调（B4）：game_info 就绪后一次性推送。给会话子进程用 ——
@@ -450,6 +468,8 @@ class SC2GamePort:
         bot._op_queue = self._op_queue
         bot._catalog = self._catalog
         bot._map_info_cb = self._map_info_sink
+        bot._pending_results = self._pending_results
+        bot._events = self._events
         self._bot = bot
         run_game(
             maps.get(self._map_name),
@@ -463,11 +483,18 @@ class SC2GamePort:
         pass
 
     def submit_operations(self, ops: list[Operation]) -> ApplyResult:
+        """受理后**异步**应用（下一 step 生效），所以同步返回时全是 `ok=None`（待裁决）。
+
+        裁决在 bot 的 `_apply_op` 里回填（`_pending_results`）；下一次读到
+        `ApplyResult.results` / `events()` 时拿到真结果。
+        """
+        for op in ops:
+            self._pending_results[op.op_id] = OpApply(op_id=op.op_id, ok=None)
         self._op_queue.extend(ops)
-        return ApplyResult(ok=True)
+        return ApplyResult(ok=True, results=[self._pending_results[op.op_id] for op in ops])
 
     def events(self, cursor: int) -> list[GameEvent]:
-        return list(self._events)
+        return list(self._events[cursor:])
 
     def read(self) -> RawGameState | None:
         """最近一帧 RawGameState（仅离线/单测用；未 start 时为 None）。"""
