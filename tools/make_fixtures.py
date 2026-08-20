@@ -1,11 +1,10 @@
 """tools/make_fixtures.py：用**真引擎**产出帧夹具。
 
-链路：`WorldSim` → `GameState` → 真 `FlowEngine` / `ProductionRuntime` → `snapshot()`
-→ `view.adapt` → JSONL。所以夹具里的 flow/production 帧是**真引擎对真反馈的反应**，
-不是手写的期望值 —— 手写会把"我以为引擎会这样"固化进前端。
+链路：`WorldSim` → `GameState` → 真 `FlowEngine`/`ProductionRuntime`/`EconomyKeeper`
+→ `snapshot()` → `view.producer.FrameProducer` → `view.recorder.ViewRecorder` → JSONL。
 
-同时这是整条链的第一次端到端验证：schema / encode / statics / adapt / 读模型 / 警报全部跑一遍，
-前端 zod 再逐行校验一次，两侧对不上就在这里炸。
+关键：产帧逻辑**不在这里**，在 `view.producer` —— live 推送、复盘录制、离线夹具共用同一条路径。
+夹具和 live 各写一套产帧逻辑的话，两边迟早不一致，而表现是"复盘看着对、live 看着不对"。
 
 用法：
     uv run python -X utf8 tools/make_fixtures.py [输出目录]
@@ -25,29 +24,24 @@ from game.catalog import load_terran  # noqa: E402
 from game.geometry import Point2  # noqa: E402
 from game.ports import ApplyResult  # noqa: E402
 from game.production import PlacementInRegion, QueueItem, QueueOp, WorkerTask  # noqa: E402
+from flow.allocator import Allocator  # noqa: E402
 from flow.engine import FlowEngine  # noqa: E402
 from flow.manifest import parse_assembly, parse_strategy  # noqa: E402
 from planner.build_order import ProductionModuleInstance  # noqa: E402
 from planner.planner import Planner  # noqa: E402
 from production.economy import EconomyKeeper, WorkerReservations  # noqa: E402
 from production.runtime import ProductionRuntime  # noqa: E402
-from flow.allocator import Allocator  # noqa: E402
 from tactical_map.base import instantiate_spawn, load_ladder_map  # noqa: E402
-from view import adapt  # noqa: E402
-from view.alerts import AlertService  # noqa: E402
-from view.encode import envelope  # noqa: E402
-from view.jsonl import write_frames  # noqa: E402
+from view.adapt import economy_frame  # noqa: E402
 from view.port import OpRing, RecordingPort  # noqa: E402
-from view.schema import AlertsFrame, HunkView, ProposalsFrame, ProposalView  # noqa: E402
-from view.statics import (  # noqa: E402
-    catalog_static, map_static, resource_nodes_from_state, schema_static, strategy_static,
-)
+from view.producer import FrameProducer  # noqa: E402
+from view.recorder import ViewRecorder  # noqa: E402
+from view.schema import HunkView, ProposalsFrame, ProposalView  # noqa: E402
 from worldsim import WorldSim  # noqa: E402
 
 CAT = load_terran()
-PROJECTION_EVERY = 3.0
-OPS_EVERY = 5.0
-HORIZON = 120.0
+BASIC_PLAN = [ProductionModuleInstance(
+    instance_id="m0", module_ref="basic_opening", version=1, params={})]
 
 
 class _Collect:
@@ -159,8 +153,7 @@ steps:
              action_atom: attack_move_to, params: {position: {ref: front}}}
   - step_id: inf_hop
     branches:
-      # 环的出口（ADR-0021 §4：每个环必须有出口，loop_limits 只是兜底）——
-      # 步兵抵达最终目标就结束策略
+      # 环的出口（ADR-0021 §4：每个环必须有出口，loop_limits 只是兜底）
       - branch_id: b_done
         when: {op: arrived, group: inf, target: {param: target}, radius: 5.0}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
@@ -196,26 +189,29 @@ strategy_instances:
 
 
 class SceneRunner:
-    """跑一个场景：每游戏秒驱动引擎、产帧、把 op 应用回世界。"""
+    """离线会话装配：一张 lease 表 + flow/production/economy 三方 + 帧生产器。
+
+    这套装配与 B3 的 live 会话**同构** —— 到时候只是把 WorldSim 换成真 driver。
+    """
 
     def __init__(self, name: str, world: WorldSim, layer, *, strategy: str, assembly: str,
-                 queue: list[QueueItem] | None = None, race_enemy: str = "protoss") -> None:
+                 queue: list[QueueItem] | None = None, race_enemy: str = "protoss",
+                 out_dir: Path | None = None) -> None:
         self.name = name
         self.world = world
         self.layer = layer
-        self.race_enemy = race_enemy
         self.sink = _Collect()
         self.ring = OpRing(maxlen=300)
         clock = lambda: self.world.t  # noqa: E731
         # ADR-0030 D3：**一张 lease 表**（Allocator + 共享 WorkerReservations），三方都从它取人。
         # 会话装配在这里构造并注入（D3.5），所以夹具跑的就是真的所有权模型：
-        # 战斗组租走的工兵、建造征用中的工兵，维持器都自动不碰。
+        # 战斗组租走的、建造征用中的工兵，维持器都自动不碰。
         self.reservations = WorkerReservations()
         self.allocator = Allocator(catalog=CAT, reservations=self.reservations)
-        self._manifest = parse_strategy(strategy)
-        self._assembly = parse_assembly(assembly)
+        self.manifest = parse_strategy(strategy)
+        self.assembly = parse_assembly(assembly)
         self.engine = FlowEngine(
-            self._manifest, self._assembly,
+            self.manifest, self.assembly,
             RecordingPort(self.sink, "flow", self.ring, clock=clock),
             region_layer=layer, catalog=CAT, allocator=self.allocator,
         )
@@ -229,79 +225,46 @@ class SceneRunner:
         )
         if queue:
             self.runtime.submit_queue("main", queue)
-        self.planner = Planner(CAT)
-        self.alerts = AlertService(catalog=CAT)
-        self.frames: list[dict] = []
-        self._seq = 0
-        self._proj_at = -1e9
-        self._ops_at = -1e9
+        self.producer = FrameProducer(
+            catalog=CAT, engine=self.engine, runtime=self.runtime, keeper=self.keeper,
+            ring=self.ring, planner=Planner(CAT), region_layer=layer,
+            manifest=self.manifest, assembly=self.assembly,
+            spawn="bl", frame_source="fixture", enemy_race=race_enemy,
+            projection_plan=BASIC_PLAN,
+        )
+        out = out_dir or (ROOT / "web" / "public" / "fixtures")
+        self.recorder = ViewRecorder(out / f"{name}.jsonl", self.producer)
 
-    # ---- 帧 ----
+    def tick(self) -> None:
+        """一个游戏秒：flow → production → economy → 把 op 作用回世界 → 录帧。
 
-    def _emit(self, topic: str, payload) -> None:
-        self._seq += 1
-        self.frames.append(envelope(
-            topic, seq=self._seq, game_time=self.world.t, payload=payload,
-            wall_ms=1_700_000_000_000 + int(self.world.t * 1000),
-        ))
-
-    def statics(self, gs) -> None:
-        self._emit("static/map", map_static(
-            self.layer, "bl", resource_nodes=resource_nodes_from_state(gs.resources)))
-        self._emit("static/catalog", catalog_static(CAT))
-        self._emit("static/schema", schema_static())
-        self._emit("static/strategy", strategy_static(self._manifest, self._assembly))
-        self._emit("frame/session", adapt.session_frame(
-            "对局中", frame_source="fixture", game_time=self.world.t,
-            map_name=self.layer.map_name, my_race="terran", enemy_race=self.race_enemy))
-
-    def run(self, seconds: int, *, projection_plan: list | None = None) -> None:
+        顺序有语义：建造征用要先落到 lease 表里，维持器才知道哪些工兵不能动（ADR-0030 D3.3）。
+        """
         gs = self.world.game_state()
-        self.statics(gs)
+        self.engine.on_game_state(gs)
+        self.runtime.on_game_state(gs)
+        self.keeper.on_game_state(gs)
+        self.world.apply(self.sink.drain())
+        self.recorder.on_game_state(gs)
+        self.world.tick(1.0)
+
+    def run(self, seconds: int) -> None:
         for _ in range(seconds + 1):
-            gs = self.world.game_state()
-            self.engine.on_game_state(gs)
-            self.runtime.on_game_state(gs)
-            # 维持器**最后**跑：建造征用要先落到 lease 表里，它才知道哪些工兵不能动
-            self.keeper.on_game_state(gs)
-            self.world.apply(self.sink.drain())
+            self.tick()
 
-            flow_snap = self.engine.snapshot()
-            prod_snap = self.runtime.snapshot()
-            self._emit("frame/world", adapt.world_frame(
-                gs, CAT, group_of=adapt.group_of_from_flow(flow_snap)))
-            self._emit("frame/flow", adapt.flow_frame(flow_snap, gs))
-            self._emit("frame/production", adapt.with_waited(
-                adapt.production_frame(prod_snap, CAT), gs.game_time))
-            self._emit("frame/economy", adapt.economy_frame(self.keeper.snapshot(gs)))
+    def emit_extra(self, topic: str, payload) -> None:
+        """补发一条非周期性的帧（如提案样本）。"""
+        gs = self.world.game_state()
+        self.recorder._write([self.producer._env(topic, gs, payload)])  # noqa: SLF001
 
-            curve = None
-            if projection_plan is not None and gs.game_time - self._proj_at >= PROJECTION_EVERY:
-                self._proj_at = gs.game_time
-                curve = self.planner.project(gs, projection_plan, until=gs.game_time + HORIZON)
-                self._emit("frame/projection", adapt.projection_frame(
-                    curve, based_on_seq=gs.seq, based_on_game_time=gs.game_time,
-                    horizon=HORIZON,
-                    # 诚实标注 draft：planner 吃 ProductionModuleInstance，运行时吃 QueueItem，
-                    # 两者 authoring 面还没统一（DSL 不做清单里的"生产 authoring 统一"）。
-                    # 所以这不是"当前队列的实时投影"，见 plan-backend-view 的缺口记录。
-                    plan_id="basic_opening"))
-
-            alerts = self.alerts.evaluate(gs, production=prod_snap, curve=curve)
-            if alerts:
-                self._emit("frame/alerts", AlertsFrame(alerts=alerts))
-
-            if gs.game_time - self._ops_at >= OPS_EVERY:
-                self._ops_at = gs.game_time
-                self._emit("frame/ops", adapt.ops_frame(self.ring))
-
-            self.world.tick(1.0)
+    def close(self) -> None:
+        self.recorder.close()
 
 
 # ---------------- 三个场景 ----------------
 
-def scene_opening() -> SceneRunner:
-    """开局 90 秒：真生产队列跑补给站→兵营→精炼厂→采气→出兵；flow 等兵成型后推进。"""
+def scene_opening(out: Path) -> SceneRunner:
+    """开局 90 秒：真生产队列跑补给站→兵营→精炼厂→维持 3 采气→出兵；flow 等兵成型后推进。"""
     world = WorldSim(catalog=CAT, cc_pos=Point2(30.5, 30.5))
     world.bootstrap(workers=12)
     layer = _layer(world.cc_pos)
@@ -316,19 +279,18 @@ def scene_opening() -> SceneRunner:
         QueueItem(op=QueueOp.ASSIGN_WORKERS, task=WorkerTask.GAS, count=3),
         QueueItem(op=QueueOp.TRAIN, type="terran/marine", count=6),
     ]
-    r = SceneRunner("opening", world, layer,
-                    strategy=FORMUP_STRATEGY, assembly=FORMUP_ASSEMBLY, queue=queue)
-    r.run(90, projection_plan=[ProductionModuleInstance(
-        instance_id="m0", module_ref="basic_opening", version=1, params={})])
+    r = SceneRunner("opening", world, layer, strategy=FORMUP_STRATEGY,
+                    assembly=FORMUP_ASSEMBLY, queue=queue, out_dir=out)
+    r.run(90)
     return r
 
 
-def scene_blocked() -> SceneRunner:
-    """生产阻塞 70 秒：队首重工厂缺气 → 队首门控冻结整队、矿越堆越多、超阈值后警报升级为 error。"""
+def scene_blocked(out: Path) -> SceneRunner:
+    """生产阻塞 70 秒：队首重工厂缺气 → 队首门控冻结整队、矿越堆越多、超阈值后警报升级。"""
     world = WorldSim(catalog=CAT, cc_pos=Point2(30.5, 30.5), minerals=700.0, gas=0.0)
     world.bootstrap(workers=16)
-    world._spawn("terran/supplydepot", Point2(24.0, 36.0), ready=True)
-    world._spawn("terran/barracks", Point2(36.5, 36.5), ready=True)   # 满足重工厂前置
+    world._spawn("terran/supplydepot", Point2(24.0, 36.0), ready=True)  # noqa: SLF001
+    world._spawn("terran/barracks", Point2(36.5, 36.5), ready=True)  # noqa: SLF001
     layer = _layer(world.cc_pos)
     queue = [
         # 不支持项放队首：队首门控下它必须先出队（否则会永久占住队首）→ 演示"掉项带原因"
@@ -337,12 +299,11 @@ def scene_blocked() -> SceneRunner:
                   placement=PlacementInRegion(region="home")),
         QueueItem(op=QueueOp.TRAIN, type="terran/marine", count=8),
     ]
-    r = SceneRunner("blocked", world, layer,
-                    strategy=FORMUP_STRATEGY, assembly=FORMUP_ASSEMBLY, queue=queue)
-    r.run(70, projection_plan=[ProductionModuleInstance(
-        instance_id="m0", module_ref="basic_opening", version=1, params={})])
-    # 一条待审批提案（B7 之前由夹具提供样本：提案内容天然是 agent 产出的，没有后端可生成）
-    r._emit("proposals", ProposalsFrame(proposals=[ProposalView(
+    r = SceneRunner("blocked", world, layer, strategy=FORMUP_STRATEGY,
+                    assembly=FORMUP_ASSEMBLY, queue=queue, out_dir=out)
+    r.run(70)
+    # 一条待审批提案（B7 之前由夹具提供样本：提案内容天然是 agent 产出的）
+    r.emit_extra("proposals", ProposalsFrame(proposals=[ProposalView(
         id="p-001", author="agent", created_at=r.world.t,
         anchor={"seq": r.world.seq, "game_time": r.world.t},
         kind="production_queue",
@@ -354,28 +315,28 @@ def scene_blocked() -> SceneRunner:
                         text_zh="把 #0 重工厂移到 #1 机枪兵×8 之后",
                         payload={"from": 0, "to": 1})],
         validation={"ok": True, "errors": []},
-        preview={"kind": "projection_pair", "current_ref": "proj:live", "proposed_ref": "proj:draft:p-001"},
+        preview={"kind": "projection_pair", "current_ref": "proj:live",
+                 "proposed_ref": "proj:draft:p-001"},
         status="待审批", decision=None,
     )]))
     return r
 
 
-def scene_leapfrog() -> SceneRunner:
+def scene_leapfrog(out: Path) -> SceneRunner:
     """蛙跳推进 90 秒：步坦交替前压，策略图在两个 step 间成环 → 转移历史累积。"""
     world = WorldSim(catalog=CAT, cc_pos=Point2(30.5, 30.5), minerals=900.0, gas=400.0)
     world.bootstrap(workers=14)
-    world._spawn("terran/barracks", Point2(36.5, 36.5), ready=True)
+    world._spawn("terran/barracks", Point2(36.5, 36.5), ready=True)  # noqa: SLF001
     for i in range(10):
-        world._spawn("terran/marine", Point2(34.0 + i * 0.7, 42.0), ready=True)
+        world._spawn("terran/marine", Point2(34.0 + i * 0.7, 42.0), ready=True)  # noqa: SLF001
     for i in range(3):
-        world._spawn("terran/siegetank", Point2(33.0 + i * 1.6, 40.0), ready=True)
+        world._spawn("terran/siegetank", Point2(33.0 + i * 1.6, 40.0), ready=True)  # noqa: SLF001
     world.spawn_enemy("ZEALOT", Point2(70.0, 70.0), count=6)
     layer = _layer(world.cc_pos)
     queue = [QueueItem(op=QueueOp.TRAIN, type="terran/marine", count=10)]
-    r = SceneRunner("leapfrog", world, layer,
-                    strategy=LEAPFROG_STRATEGY, assembly=LEAPFROG_ASSEMBLY, queue=queue)
-    r.run(90, projection_plan=[ProductionModuleInstance(
-        instance_id="m0", module_ref="basic_opening", version=1, params={})])
+    r = SceneRunner("leapfrog", world, layer, strategy=LEAPFROG_STRATEGY,
+                    assembly=LEAPFROG_ASSEMBLY, queue=queue, out_dir=out)
+    r.run(90)
     return r
 
 
@@ -390,20 +351,24 @@ def main() -> int:
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "web" / "public" / "fixtures"
     out_dir.mkdir(parents=True, exist_ok=True)
     index = []
-    for runner in (scene_opening(), scene_blocked(), scene_leapfrog()):
-        path = out_dir / f"{runner.name}.jsonl"
-        n = write_frames(path, runner.frames)
-        times = [f["game_time"] for f in runner.frames]
-        topics = sorted({f["topic"] for f in runner.frames})
+    for build in (scene_opening, scene_blocked, scene_leapfrog):
+        runner = build(out_dir)
+        runner.close()
+        frames = [json.loads(line) for line in
+                  runner.recorder.path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        times = [f["game_time"] for f in frames]
+        topics = sorted({f["topic"] for f in frames})
         index.append({
             "key": runner.name, "label": LABELS.get(runner.name, runner.name),
-            "file": path.name, "envelopes": n,
+            "file": runner.recorder.path.name, "envelopes": len(frames),
             "from": min(times), "to": max(times),
+            "snapshots": runner.recorder.snapshots,
         })
+        econ = economy_frame(runner.keeper.snapshot(runner.world.game_state()))
         unhandled = sorted(set(runner.world.unhandled))
-        print(f"{path.name}: 信封 {n} / topic {len(topics)} / 时间 {min(times)}→{max(times)}"
-              + (f" / 世界未实现的动作 {unhandled}" if unhandled else ""))
-        econ = adapt.economy_frame(runner.keeper.snapshot(runner.world.game_state()))
+        print(f"{runner.recorder.path.name}: 信封 {len(frames)} / topic {len(topics)}"
+              f" / 时间 {min(times)}→{max(times)} / 快照点 {len(runner.recorder.snapshots)}"
+              + (f" / 世界未实现 {unhandled}" if unhandled else ""))
         print(f"    队列剩余 {[len(q['items']) for q in runner.runtime.snapshot()['queues']]}"
               f" / 掉项 {len(runner.runtime.dropped)}"
               f" / 转移 {runner.engine.snapshot()['transition_count']}"
@@ -413,7 +378,7 @@ def main() -> int:
             for t in econ.tasks) + f" / 征用 {len(econ.reserved)}")
     (out_dir / "index.json").write_text(
         json.dumps(index, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    print(f"\n已写出 {out_dir}（帧由真引擎产出；前端会再逐行 zod 校验一次）")
+    print(f"\n已写出 {out_dir}（帧由 view.producer 产出 —— 与 live 推送同一条路径）")
     return 0
 
 

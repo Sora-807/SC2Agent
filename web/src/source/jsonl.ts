@@ -30,7 +30,7 @@ export class JsonlFrameSource implements FrameSource {
   private cursor = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(envelopes: AnyEnvelope[]) {
+  constructor(envelopes: AnyEnvelope[], snapshots: number[] = []) {
     for (const e of envelopes) {
       const list = this.byTopic.get(e.topic);
       if (list) list.push(e);
@@ -39,13 +39,17 @@ export class JsonlFrameSource implements FrameSource {
     for (const list of this.byTopic.values()) {
       list.sort((a, b) => a.game_time - b.game_time || a.seq - b.seq);
     }
-    this._markers = extractMarkers(envelopes);
+    // 快照锚点来自录制元数据（帧流里看不出来），与警报/转移/提案一起进时间线
+    this._markers = [
+      ...extractMarkers(envelopes),
+      ...snapshots.map((t) => ({ t, kind: "snapshot" as const, text: "快照点（可跳）" })),
+    ].sort((a, b) => a.t - b.t);
     this.cursor = this.range().from;
   }
 
   /** 从 JSONL 文本构造；每行都过契约校验（非法行直接抛，不静默跳过） */
-  static fromJsonl(text: string): JsonlFrameSource {
-    return new JsonlFrameSource(parseJsonl(text));
+  static fromJsonl(text: string, snapshots?: number[]): JsonlFrameSource {
+    return new JsonlFrameSource(parseJsonl(text), snapshots);
   }
 
   topics(): Topic[] {

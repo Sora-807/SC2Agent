@@ -9,6 +9,8 @@ export interface FixtureMeta {
   envelopes: number;
   from: number;
   to: number;
+  /** 快照锚点（ADR-0024 §6）：时间线上可跳的点。录制时写进 index.json */
+  snapshots?: number[];
 }
 
 const BASE = "/fixtures";

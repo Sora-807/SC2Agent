@@ -151,7 +151,7 @@ export const useFrames = create<FramesStore>((set, get) => {
           live.start();
           src = rev;
         } else {
-          src = JsonlFrameSource.fromJsonl(text);
+          src = JsonlFrameSource.fromJsonl(text, meta.snapshots);
         }
       } catch (err) {
         set({ loading: false, error: (err as Error).message });

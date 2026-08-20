@@ -24,15 +24,19 @@ class SourceInfo:
     from_time: float
     to_time: float
     topics: list[str]
+    #: 快照锚点（ADR-0024 §6）：时间线上可跳的点。来自录制时的 index.json
+    snapshots: list[float]
 
 
 class JsonlSource:
     """一份 JSONL 帧序列。"""
 
-    def __init__(self, source_id: str, path: Path, label: str | None = None) -> None:
+    def __init__(self, source_id: str, path: Path, label: str | None = None,
+                 snapshots: list[float] | None = None) -> None:
         self.id = source_id
         self.path = path
         self.label = label or source_id
+        self.snapshots = list(snapshots or [])
         self.frames: list[dict] = list(read_frames(path))
         if not self.frames:
             raise ValueError(f"{path} 里没有帧")
@@ -46,6 +50,7 @@ class JsonlSource:
             id=self.id, label=self.label, kind="replay",
             envelopes=len(self.frames), from_time=min(times), to_time=max(times),
             topics=sorted({f["topic"] for f in self.frames}),
+            snapshots=list(self.snapshots),
         )
 
     def statics(self) -> list[dict]:
@@ -95,6 +100,7 @@ class SourceRegistry:
     def __init__(self, root: Path, labels: dict[str, str] | None = None) -> None:
         self.root = Path(root)
         self._labels = labels or {}
+        self._snapshots: dict[str, list[float]] = {}
         self._cache: dict[str, JsonlSource] = {}
 
     def ids(self) -> list[str]:
@@ -108,7 +114,8 @@ class SourceRegistry:
         path = self.root / f"{source_id}.jsonl"
         if not path.is_file():
             return None
-        src = JsonlSource(source_id, path, label=self._labels.get(source_id))
+        src = JsonlSource(source_id, path, label=self._labels.get(source_id),
+                          snapshots=self._snapshots.get(source_id))
         self._cache[source_id] = src
         return src
 
@@ -135,3 +142,5 @@ class SourceRegistry:
             key, label = row.get("key"), row.get("label")
             if key and label:
                 self._labels[key] = label
+            if key and isinstance(row.get("snapshots"), list):
+                self._snapshots[key] = [float(x) for x in row["snapshots"]]

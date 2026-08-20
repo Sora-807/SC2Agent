@@ -21,16 +21,22 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 
+from game.catalog import load_terran
+
 from view.encode import to_json
 from view.schema import REV, TOPICS
 from view.statics import schema_static
 
+from api.commands import CommandResult, QueueCommand, WorkerCommand
+from api.session import OfflineSession, StaleObservation
 from api.sources import SourceRegistry
 
 #: WS 的推送节拍（真实秒）。0.2s 一次 × rate 决定推进多少游戏秒。
 TICK_SECONDS = 0.2
 #: 默认帧源目录（夹具与录制都落这里）
 DEFAULT_FRAME_DIR = Path("web/public/fixtures")
+#: 离线沙盒会话的推进节拍（真实秒）。live 源按它 tick，前端就像看真对局。
+SESSION_TICK = 0.25
 
 
 def create_app(frame_dir: Path | str | None = None) -> FastAPI:
@@ -39,12 +45,43 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
 
     app = FastAPI(title="sc2Agent view API", version=str(REV))
     app.state.registry = registry
+    #: 离线沙盒会话。惰性创建：没人访问 `source=live` 就不建，也就不烧 CPU。
+    app.state.session = None
+    app.state.session_task = None
+
+    def _session(create: bool = True) -> OfflineSession | None:
+        if app.state.session is None and create:
+            app.state.session = OfflineSession(load_terran())
+        return app.state.session
+
+    def _resolve(source_id: str):
+        """帧源解析：`live` = 离线沙盒会话，其余 = 目录里的 JSONL。两者接口同形。"""
+        if source_id == "live":
+            return _session()
+        return registry.get(source_id)
 
     def _source(source_id: str):
-        src = registry.get(source_id)
+        src = _resolve(source_id)
         if src is None:
             raise HTTPException(status_code=404, detail=f"没有帧源 {source_id!r}")
         return src
+
+    async def _pump_session() -> None:
+        """按 SESSION_TICK 推进沙盒会话。单线程 asyncio → 命令与 tick 天然互斥，不需要锁。"""
+        while True:
+            await asyncio.sleep(SESSION_TICK)
+            sess = app.state.session
+            if sess is not None:
+                try:
+                    sess.tick()
+                except Exception as exc:            # noqa: BLE001
+                    sess.state = "崩溃"
+                    sess.error = f"{type(exc).__name__}: {exc}"
+                    return
+
+    def _ensure_pump() -> None:
+        if app.state.session_task is None or app.state.session_task.done():
+            app.state.session_task = asyncio.create_task(_pump_session())
 
     # ---- REST ----
 
@@ -60,7 +97,92 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
 
     @app.get("/api/sources")
     def sources() -> list[dict]:
-        return [to_json(info) for info in registry.list()]
+        rows = [to_json(info) for info in registry.list()]
+        sess = app.state.session
+        if sess is not None:
+            rows.insert(0, to_json(sess.info()))
+        return rows
+
+    # ---- 会话（B6；B3 之后这里换成真 live）----
+
+    @app.get("/api/session")
+    def session_info() -> dict:
+        sess = app.state.session
+        if sess is None:
+            return {"state": "未连接", "detail": "沙盒会话未启动（POST /api/session/start）"}
+        return sess.describe()
+
+    @app.post("/api/session/start")
+    async def session_start(autotick: bool = Query(True)) -> dict:
+        """建会话。`autotick=false` 时不自动推进 —— 测试与"单步调试"需要手动 tick。
+
+        必须是 `async def`：`asyncio.create_task` 需要运行中的事件循环，
+        而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
+        """
+        sess = _session()
+        assert sess is not None
+        if autotick:
+            _ensure_pump()
+        return sess.describe()
+
+    @app.post("/api/session/tick")
+    async def session_tick(count: int = Query(1, ge=1, le=600)) -> dict:
+        """手动推进 N 个游戏秒（`autotick=false` 时用；也是"单步调试"的入口）。"""
+        sess = _live()
+        for _ in range(count):
+            sess.tick()
+        return sess.describe()
+
+    @app.post("/api/session/stop")
+    async def session_stop() -> dict:
+        task = app.state.session_task
+        if task is not None:
+            task.cancel()
+        app.state.session_task = None
+        sess = app.state.session
+        if sess is not None:
+            sess.state = "已结束"
+        app.state.session = None
+        return {"state": "未连接"}
+
+    # ---- 命令写入面（B6）：UI 与 agent 共用同一入口 ----
+
+    def _live() -> OfflineSession:
+        sess = app.state.session
+        if sess is None:
+            raise HTTPException(status_code=409, detail="没有运行中的会话（先 POST /api/session/start）")
+        return sess
+
+    def _guard(sess: OfflineSession, based_on_seq: int) -> None:
+        try:
+            sess.check_seq(based_on_seq)
+        except StaleObservation as exc:
+            # 409 而不是 400：这不是请求写错了，而是世界变了 —— 重取最新帧再试
+            raise HTTPException(status_code=409, detail={
+                "reason": str(exc), "based_on_seq": exc.based_on_seq,
+                "current_seq": exc.current_seq,
+            }) from None
+
+    @app.post("/api/commands/queue/{op}", response_model=CommandResult)
+    def queue_command(op: str, body: QueueCommand) -> CommandResult:
+        sess = _live()
+        _guard(sess, body.based_on_seq)
+        try:
+            detail = sess.queue_op(op, body.name, items=body.to_items(),
+                                   index=body.index, order=body.order)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return CommandResult(ok=True, detail=detail, accepted_seq=sess.seq)
+
+    @app.post("/api/commands/workers", response_model=CommandResult)
+    def worker_command(body: WorkerCommand) -> CommandResult:
+        sess = _live()
+        _guard(sess, body.based_on_seq)
+        try:
+            detail = sess.set_worker_target(body.task, body.count)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return CommandResult(ok=True, detail=detail, accepted_seq=sess.seq)
 
     @app.get("/api/sources/{source_id}/statics")
     def statics(source_id: str) -> list[dict]:
@@ -86,7 +208,10 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
         start: float | None = Query(None),
     ) -> None:
         await ws.accept()
-        src = registry.get(source)
+        if source == "live":
+            _session()
+            _ensure_pump()
+        src = _resolve(source)
         if src is None:
             await ws.send_text(json.dumps(
                 {"topic": "_error", "detail": f"没有帧源 {source!r}"}, ensure_ascii=False))
@@ -107,10 +232,19 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
         for frame in src.latest_at(cursor, wanted):
             await ws.send_text(json.dumps(frame, ensure_ascii=False))
 
+        live = info.kind == "live"
+
         async def pump() -> None:
-            nonlocal cursor, playing
+            nonlocal cursor, playing, info
             while True:
                 await asyncio.sleep(TICK_SECONDS)
+                if live:
+                    # live 源**跟随**：新帧一律转发，不受 rate 限制（rate 是回放语义）
+                    info = src.info()
+                    for frame in src.between(cursor, info.to_time, wanted):
+                        await ws.send_text(json.dumps(frame, ensure_ascii=False))
+                    cursor = max(cursor, info.to_time)
+                    continue
                 if not playing:
                     continue
                 nxt = min(info.to_time, cursor + rate * TICK_SECONDS)
