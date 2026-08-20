@@ -9,6 +9,10 @@ import { z } from "zod";
 
 /**
  * 契约版本。
+ * rev 9：新增 topic `static/terrain`（B4）。它是**事件式静态面**：
+ *   `static/map` 先到（terrain=null），game_info 就绪后地形帧补到 ——
+ *   前端把它的 payload **合并进 map.terrain**，而不是等一张完整的 static/map。
+ *   真机上 game_info 在 bot 第一个 on_step 才可用，static/map 等不起。
  * rev 8：`frame/projection` 增 `skipped`；`source.kind="live_queue"` 终于有真值。
  *   之前 `Planner` 与 `ProductionRuntime` 没有互转（一个吃 ProductionModuleInstance、
  *   一个执行 QueueItem），所以"当前队列的投影"产不出来，UI 只能诚实地写「参考计划」。
@@ -42,7 +46,7 @@ import { z } from "zod";
  *   `frame/production` 增队列级 `blocked`（后端 T4 已有 `runtime.blocked`：原因 + 起始时间 + 是否已告警）。
  * rev 1：初版（DSL v0.2 之前，签名表尚不存在，schema 降级为空参数表）。
  */
-export const REV = 8 as const;
+export const REV = 9 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -63,6 +67,7 @@ export const zTopic = z.enum([
   "static/catalog",
   "static/schema",
   "static/strategy",
+  "static/terrain",
   "frame/session",
   "frame/world",
   "frame/flow",
@@ -81,7 +86,7 @@ export type Topic = z.infer<typeof zTopic>;
  * 静态帧仍会把窗口左端钉在 t=0，时间线就会假装能拖回开局（拿到的却是窗口内最老的动态帧）。
  */
 export const STATIC_TOPICS = [
-  "static/map", "static/catalog", "static/schema", "static/strategy",
+  "static/map", "static/catalog", "static/schema", "static/strategy", "static/terrain",
 ] as const;
 export type StaticTopic = (typeof STATIC_TOPICS)[number];
 
@@ -100,7 +105,11 @@ export const zMapStatic = z.object({
   spawn: z.string(),
   /** B4 之前为 null：前端降级为纯色底 */
   terrain: z
-    .object({ height: zGridB64, pathable: zGridB64, placeable: zGridB64 })
+    .object({
+      height: zGridB64.nullable(),
+      pathable: zGridB64.nullable(),
+      placeable: zGridB64.nullable(),
+    })
     .nullable(),
   /**
    * 区域几何 = 一张标签网格 + 索引（不是每区一份 mask，见 REV 3 说明）。
@@ -247,6 +256,13 @@ export const zSchemaStatic = z.object({
  * 策略图结构（每个 flow 版本只变一次）。
  * 与 `frame/flow` 的分工：这里是**图**（不变的结构），那里是**状态**（每帧的位置）。
  */
+/** 地形三图（B4）。任一可为 null：game_info 里三张图的可用性不保证一致，缺哪张画哪张 */
+export const zTerrainFrame = z.object({
+  height: zGridB64.nullable(),
+  pathable: zGridB64.nullable(),
+  placeable: zGridB64.nullable(),
+});
+
 export const zStrategyStatic = z.object({
   id: z.string(),
   version: z.number().int(),
@@ -715,6 +731,7 @@ export const PAYLOADS = {
   "static/catalog": zCatalogStatic,
   "static/schema": zSchemaStatic,
   "static/strategy": zStrategyStatic,
+  "static/terrain": zTerrainFrame,
   "frame/session": zSessionFrame,
   "frame/world": zWorldFrame,
   "frame/flow": zFlowFrame,
@@ -731,6 +748,7 @@ export const ENVELOPES = {
   "static/catalog": envelope("static/catalog", zCatalogStatic),
   "static/schema": envelope("static/schema", zSchemaStatic),
   "static/strategy": envelope("static/strategy", zStrategyStatic),
+  "static/terrain": envelope("static/terrain", zTerrainFrame),
   "frame/session": envelope("frame/session", zSessionFrame),
   "frame/world": envelope("frame/world", zWorldFrame),
   "frame/flow": envelope("frame/flow", zFlowFrame),
@@ -747,6 +765,7 @@ export const zAnyEnvelope = z.discriminatedUnion("topic", [
   ENVELOPES["static/catalog"],
   ENVELOPES["static/schema"],
   ENVELOPES["static/strategy"],
+  ENVELOPES["static/terrain"],
   ENVELOPES["frame/session"],
   ENVELOPES["frame/world"],
   ENVELOPES["frame/flow"],
@@ -767,6 +786,7 @@ export type MapStatic = z.infer<typeof zMapStatic>;
 export type CatalogStatic = z.infer<typeof zCatalogStatic>;
 export type SchemaStatic = z.infer<typeof zSchemaStatic>;
 export type StrategyStatic = z.infer<typeof zStrategyStatic>;
+export type TerrainFrame = z.infer<typeof zTerrainFrame>;
 export type SessionFrame = z.infer<typeof zSessionFrame>;
 export type WorldFrame = z.infer<typeof zWorldFrame>;
 export type FlowFrame = z.infer<typeof zFlowFrame>;

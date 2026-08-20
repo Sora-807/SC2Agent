@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 #: 契约版本。改任何字段 = REV+1 + §2 修订 + 前端同步（红线 C8）。
+#: rev 9：新增 topic `static/terrain`（B4：driver 从 game_info 导出地形）。
+#:   它是**事件式静态面**：`static/map` 先到（地形为 null），game_info 就绪后地形帧补到。
+#:   不进 `static/map` 的原因是驱动顺序 —— 真机上 game_info 在 bot 第一个 on_step 才可用，
+#:   而 static/map 在那之前就得发出去。
 #: rev 8：`frame/projection` 增 `skipped`；`source.kind="live_queue"` 终于有真值。
 #:   缺口修好了：`Planner.project` 与 `ProductionRuntime` 之前没有互转（一个吃
 #:   ProductionModuleInstance、一个执行 QueueItem），所以"当前队列的投影"产不出来。
@@ -38,17 +42,19 @@ from typing import Any
 #:      改增 queue + attempted_slots（摆放调试叠加要画"试过哪几个槽位"）。
 #: rev 3：区域几何改为"一张标签网格 + 索引"（原 leaf[].cells 的 per-region mask 不可扩展）。
 #: rev 2：static/schema 逐字镜像 flow.vocab.dump_vocabulary()；production 队列增 blocked。
-REV = 8
+REV = 9
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
 
 TOPICS = (
     "static/map", "static/catalog", "static/schema", "static/strategy",
+    "static/terrain",
     "frame/session", "frame/world", "frame/flow", "frame/production",
     "frame/economy", "frame/ops", "frame/projection", "frame/alerts", "proposals",
 )
-STATIC_TOPICS = ("static/map", "static/catalog", "static/schema", "static/strategy")
+STATIC_TOPICS = ("static/map", "static/catalog", "static/schema", "static/strategy",
+                  "static/terrain")
 
 
 @dataclass(slots=True)
@@ -79,9 +85,12 @@ class GridB64:
 
 @dataclass(slots=True)
 class TerrainView:
-    height: GridB64
-    pathable: GridB64
-    placeable: GridB64
+    """地形三图。任一可为 None：game_info 里三张图的可用性不保证一致，
+    缺哪张画哪张（不伪造全 0 网格）。"""
+
+    height: GridB64 | None
+    pathable: GridB64 | None
+    placeable: GridB64 | None
 
 
 @dataclass(slots=True)
@@ -158,7 +167,8 @@ class MapStatic:
     map_name: str
     size: tuple[int, int]
     spawn: str
-    terrain: TerrainView | None      # B4 之前为 None → 前端降级纯色底
+    #: B4 之后真机有值；`static/terrain` 晚到时由**前端合并**（不是重发 static/map）
+    terrain: TerrainView | None
     regions: RegionsView
     build_slots: list[BuildSlotView]
     pos_marks: list[PosMarkView]

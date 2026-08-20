@@ -126,6 +126,10 @@ def test_producer_emits_all_static_faces_once():
     statics = producer.statics(gs)
     topics = [f["topic"] for f in statics]
     for t in STATIC_TOPICS:
+        if t == "static/terrain":
+            # 地形是**事件式**静态面：producer 不主动产它，driver 拿到 game_info 才推。
+            # 所以这里断言"不在"是合法状态，不是缺面（B4 起它是可选的）。
+            continue
         assert t in topics, f"缺静态面 {t}"
     assert "frame/session" in topics
     assert all(f["rev"] == REV for f in statics)
@@ -240,6 +244,9 @@ def test_recorder_output_is_playable_by_api(tmp_path: Path):
     rows = client.get("/api/sources").json()
     assert [r["id"] for r in rows] == ["myrun"]
     statics = client.get("/api/sources/myrun/statics").json()
-    assert [s["topic"] for s in statics] == list(STATIC_TOPICS)
+    # static/terrain 是事件式静态面（driver 拿到 game_info 才推），录制里可能没有 ——
+    # 没有它是合法状态，不是缺面。
+    assert [s["topic"] for s in statics] == [
+        t for t in STATIC_TOPICS if t != "static/terrain"]
     at = client.get("/api/sources/myrun/frames", params={"game_time": 6.0}).json()
     assert any(f["topic"] == "frame/world" for f in at)

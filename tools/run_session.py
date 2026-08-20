@@ -289,6 +289,12 @@ def _run_sc2(session: Session, *, map_name: str, seconds: int, realtime: bool) -
     port = SC2GamePort(map_name=map_name, race=Race.Terran, difficulty=Difficulty.Easy,
                        sink=_RawSink(), game_time_limit=seconds, realtime=realtime,
                        catalog=session.catalog)
+    # B4：game_info 就绪后把静态地形推出去（父进程合并进 static/terrain）
+    from view.encode import to_json
+    from view.statics import terrain_static
+
+    port.on_map_info(lambda info: _emit({
+        "_": "terrain", "terrain": to_json(terrain_static(info))}))
     # 引擎发的 op 要真的下发给 SC2：把三个 RecordingPort 的内层换成真 port
     for holder in (session.engine, session.runtime, session.keeper):
         inner = getattr(holder, "_port", None)

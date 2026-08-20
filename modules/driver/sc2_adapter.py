@@ -113,6 +113,32 @@ def _grid_from_pixelmap(pm) -> Grid:
     return Grid(w, h, data)
 
 
+def extract_map_info(bot) -> Grid | None:
+    """从 `game_info` 抽**静态地形**（B4：地图页从纯色底升级成真地图）。
+
+    只做"读 SC2"——高度/可走/可建三张网格的原始形态透传，由 view 侧决定怎么画
+    （driver 零业务规则，R2）。`game_info` 是 burnysc2 的 `GameInfo`，在游戏
+    启动后可用；不可用时返回 None（不伪造一张全 0 网格）。
+
+    返回 `Grid | None` 而不是三张：三张都来自同一个 game_info，拆三个返回值只会
+    让调用方多做三次 None 判断。数据形状：
+    `{"height": Grid|None, "pathable": Grid|None, "placeable": Grid|None}`
+    """
+    gi = getattr(bot, "game_info", None)
+    if gi is None:
+        return None
+    terrain_height = getattr(gi, "terrain_height", None)
+    pathing_grid = getattr(gi, "pathing_grid", None)
+    placement_grid = getattr(gi, "placement_grid", None)
+    if terrain_height is None and pathing_grid is None and placement_grid is None:
+        return None
+    return {
+        "height": _grid_from_pixelmap(terrain_height) if terrain_height is not None else None,
+        "pathable": _grid_from_pixelmap(pathing_grid) if pathing_grid is not None else None,
+        "placeable": _grid_from_pixelmap(placement_grid) if placement_grid is not None else None,
+    }
+
+
 def extract_raw_state(bot, seq: int) -> RawGameState:
     units = [extract_raw_unit(u) for u in getattr(bot, "all_units", ())]
     state = bot.state
@@ -342,7 +368,15 @@ class SC2DriverBot(BotAI):
     _apply_failures: list | None = None  # V1 审计：翻译/下发失败记录（D6 正式 ApplyResult 通道前的降级）
     _apply_trace: list | None = None  # V1 调试：翻译结果追踪（runner 注入后记录每条 op 的翻译输出）
 
+    _map_info_sent = False
+    _map_info_cb = None   # SC2GamePort 注入的静态地形回调（B4）
+
     async def on_step(self, iteration: int) -> None:
+        if not self._map_info_sent and self._map_info_cb is not None:
+            info = extract_map_info(self)
+            if info is not None:
+                self._map_info_sent = True
+                self._map_info_cb(info)
         raw = extract_raw_state(self, iteration)
         self._last_raw = raw
         if self._sink is not None:
@@ -396,9 +430,16 @@ class SC2GamePort:
         self._op_queue: list[Operation] = []
         self._bot: SC2DriverBot | None = None
         self._events: list[GameEvent] = []
+        #: 地形抽取回调（B4）：game_info 就绪后一次性推送。给会话子进程用 ——
+        #: 静态面不该进每帧 RawGameState（地形不变，塞进逐帧是纯浪费）。
+        self._map_info_sink = None
 
     def set_sink(self, sink: RuntimeSink) -> None:
         self._sink = sink
+
+    def on_map_info(self, callback) -> None:
+        """注册地形回调：bot 第一个 on_step 里 game_info 可用后调一次。"""
+        self._map_info_sink = callback
 
     def start(self, request_id: str) -> None:
         bot = self._bot_cls()
@@ -408,6 +449,7 @@ class SC2GamePort:
         bot._sink = self._sink
         bot._op_queue = self._op_queue
         bot._catalog = self._catalog
+        bot._map_info_cb = self._map_info_sink
         self._bot = bot
         run_game(
             maps.get(self._map_name),

@@ -73,6 +73,19 @@ export function MapCanvas(props: {
     setVp(fitViewport(size.w, size.h, props.map.size[0], props.map.size[1]));
   }, [size.w, size.h, props.map.size]);
 
+  // 静态位图：地形三图只烤一次（B4；缺哪张画哪张，terrain=null 时降级纯色底）
+  const terrainImages = useMemo(() => {
+    const t = props.map.terrain;
+    return {
+      height: t?.height ? bakeGrid(decodeGrid(t.height), (v) =>
+        [46, 72, 46 + Math.min(120, v * 3), 255] as [number, number, number, number]) : null,
+      pathable: t?.pathable ? bakeGrid(decodeGrid(t.pathable), (v) =>
+        v > 0 ? [24, 64, 30, 70] : [90, 20, 20, 70]) : null,
+      placeable: t?.placeable ? bakeGrid(decodeGrid(t.placeable), (v) =>
+        v > 0 ? [30, 80, 40, 46] : null) : null,
+    };
+  }, [props.map]);
+
   // 静态位图：区域标签网格只烤一次
   const regionImage = useMemo(() => {
     const grid = props.map.regions.leaf_grid ?? props.map.regions.big_grid;
@@ -117,7 +130,7 @@ export function MapCanvas(props: {
       if (canvas.height !== Math.floor(vp.ch * dpr)) canvas.height = Math.floor(vp.ch * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, vp.cw, vp.ch);
-      paint(ctx, vp, props, { regionImage, gridImages }, {
+      paint(ctx, vp, props, { regionImage, gridImages, terrainImages }, {
         prevWorld: prev.current?.world ?? null,
         alpha: lerpAlpha(prev.current, cur.current, props.smooth),
       });
@@ -196,6 +209,7 @@ function nearestUnit(world: WorldFrame, wx: number, wy: number, radius: number):
 interface Baked {
   regionImage: ImageData | null;
   gridImages: { visibility: ImageData | null; creep: ImageData | null };
+  terrainImages: { height: ImageData | null; pathable: ImageData | null; placeable: ImageData | null };
 }
 
 interface Motion {
@@ -219,6 +233,15 @@ function paint(
   ctx.fillStyle = "#111820";
   const [x0, y0] = worldToScreen(vp, 0, map.size[1]);
   ctx.fillRect(x0, y0, map.size[0] * vp.scale, map.size[1] * vp.scale);
+  if (baked.terrainImages.height) {
+    drawImage(ctx, vp, baked.terrainImages.height, map);
+  }
+  if (baked.terrainImages.pathable) {
+    drawImage(ctx, vp, baked.terrainImages.pathable, map);
+  }
+  if (baked.terrainImages.placeable) {
+    drawImage(ctx, vp, baked.terrainImages.placeable, map);
+  }
 
   if (layers.regions && baked.regionImage) drawImage(ctx, vp, baked.regionImage, map);
   if (layers.creep && baked.gridImages.creep) drawImage(ctx, vp, baked.gridImages.creep, map);

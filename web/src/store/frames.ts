@@ -183,6 +183,11 @@ export const useFrames = create<FramesStore>((set, get) => {
         src.subscribe("frame/alerts", (e) => set({ alerts: e.payload })),
         src.subscribe("proposals", (e) => set({ proposals: e.payload })),
         src.subscribe("static/map", (e) => set({ map: e.payload })),
+        // B4：地形晚到（真机上 game_info 在 bot 第一个 on_step 才可用）。
+        // 合并进 map.terrain —— 不是重发一张完整 static/map。
+        src.subscribe("static/terrain", (e) => set((s2) => ({
+          map: s2.map ? { ...s2.map, terrain: e.payload } : null,
+        }))),
         src.subscribe("static/catalog", (e) => set({ catalog: e.payload })),
         src.subscribe("static/schema", (e) => set({ schema: e.payload })),
         src.subscribe("static/strategy", (e) => set({ strategy: e.payload })),

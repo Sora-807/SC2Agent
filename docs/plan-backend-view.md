@@ -75,12 +75,24 @@
 | **B6** | 命令写入面 + `api.session.OfflineSession` ✅**已完成**(提案接受归 B7) | B2 | 零 | 前端可写;R8 的门落地 |
 | **B7** | 提案存储 + validate 网关 + **双投影预览** ✅**已完成** | B6 | 零 | 前端 F7 |
 | **B3** | 会话控制 + 进程分离 ✅**已完成**(sc2 驱动路径已接,待真机冒烟) | — | 零 | 前端 F8 的 live |
-| **B4** | `MapInfo` 地形静态面(driver 增量导出 game_info) | **T6** | 零 | 地图页从散点图变地图 |
+| **B4** | 地形静态面 `static/terrain` ✅**已完成**(真机未冒烟) | — | 零 | 地图页从纯色底变真地图 |
 | **B9** | D6 `ApplyResult` 字段 + D7 `GameEvent` 目录 | **T6**,B3 | 零 | 命令流水的落地状态 |
 | **B10** | `ObservationPacket` + `/api/agent/tools` ✅**已完成** | B2 | 零 | agent 读面与 UI 同源 |
 | **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
 
-执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 ✅ → B4 → B9`
+执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 ✅ → B4 ✅ → B9`
+
+### B4 落地要点
+
+地形做成**事件式静态面** `static/terrain`（契约 rev 9），而不是塞进 `static/map`：
+真机上 `game_info` 在 bot 第一个 `on_step` 才可用，而 `static/map` 在那之前就得发出去。
+所以 `static/map` 先到（`terrain=null`），地形帧晚到，前端把它**合并**进 `map.terrain`。
+
+driver 侧只加了一个纯抽取函数 `extract_map_info(bot)`（读 `game_info` 的
+`terrain_height`/`pathing_grid`/`placement_grid`，R2：零业务规则），
+bot 第一个 `on_step` 经 `SC2GamePort.on_map_info` 回调推一次。
+三张图**各自独立可 null**：缺哪张画哪张，不伪造全 0 网格。
+sim/离线没有 game_info → 地形为 null → 前端仍降级纯色底（不静默，图层面板明说原因）。
 
 ### B3 落地要点
 

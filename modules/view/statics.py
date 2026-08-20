@@ -144,6 +144,15 @@ def resource_nodes_from_state(resources) -> list[ResourceNodeView]:
     return sorted(out, key=lambda r: r.tag)
 
 
+def terrain_static(raw: dict) -> TerrainView:
+    """driver 抽出的地形 → static/terrain。缺哪张发 null（不伪造全 0 网格）。"""
+    return TerrainView(
+        height=grid_to_b64(raw.get("height")),
+        pathable=grid_to_b64(raw.get("pathable")),
+        placeable=grid_to_b64(raw.get("placeable")),
+    )
+
+
 def schema_static() -> SchemaStatic:
     """flow 词表逐字 + 生产/目标解析侧闭集。"""
     v = dump_vocabulary()

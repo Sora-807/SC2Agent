@@ -125,6 +125,8 @@ class LiveSession:
                 self._acks += 1
             elif kind == "error":
                 self._note_error(str(obj.get("detail") or "未知错误"), fatal=bool(obj.get("fatal")))
+            elif kind == "terrain":
+                self._meta["terrain"] = obj.get("terrain")
             elif kind == "projection":
                 slot = self._pending.get(int(obj.get("id") or -1))
                 if slot is not None:

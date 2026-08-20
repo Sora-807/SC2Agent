@@ -2,6 +2,7 @@
 import type { MapStatic, WorldFrame } from "../contract";
 
 export type LayerKey =
+  | "terrain"
   | "regions"
   | "slots"
   | "buildings"
@@ -26,6 +27,10 @@ export interface LayerDef {
 const always = () => ({ ok: true });
 
 export const LAYERS: LayerDef[] = [
+  { key: "terrain", label: "地形", on: true,
+    available: (m) => m?.terrain
+      ? { ok: true }
+      : { ok: false, why: "地形未下发（需真机 B4；sim/离线为纯色底）" } },
   { key: "regions", label: "区域", on: true,
     available: (m) => m?.regions.big_grid
       ? { ok: true }
