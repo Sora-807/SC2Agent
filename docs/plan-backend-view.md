@@ -77,10 +77,27 @@
 | **B3** | 会话控制 + 进程分离(解 `start()` 阻塞,`stop()` 真实现) | **T6** | 零 | 前端 F8 的 live |
 | **B4** | `MapInfo` 地形静态面(driver 增量导出 game_info) | **T6** | 零 | 地图页从散点图变地图 |
 | **B9** | D6 `ApplyResult` 字段 + D7 `GameEvent` 目录 | **T6**,B3 | 零 | 命令流水的落地状态 |
-| **B10** | `ObservationPacket`:给 agent 的帧投影(agent 接缝) | B2 | 零 | agent 读面与 UI 同源 |
+| **B10** | `ObservationPacket` + `/api/agent/tools` ✅**已完成** | B2 | 零 | agent 读面与 UI 同源 |
 | **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
 
-执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 → B3 → B4 → B9`
+执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 → B4 → B9`
+
+### B10 落地要点
+
+**读面**:`view.observe.observation_packet(frames, catalog)` —— 输入就是 `latest_at()` 的输出,
+也就是**UI 看到的同一批帧**。红线守住了:没有第二条从 GameState 直接摘要的路径。
+形态对齐 ADR-0009 §2(`seq`/`game_time`/`supersedes`/`sections`),规则是**替换**而非追加。
+`facts.based_on_seq` 让 R8 闭环:agent 拿它下命令,后端拒过期的。有测试直接验这个闭环。
+
+段落是**中文**的:catalog 里本来就是中文名,翻回英文是白丢信息。投影段只看未来 30s
+(ADR-0009 §1;更远的以后还会重算,写进 prompt 只是噪声)。
+
+**写面**:`GET /api/agent/tools` 把"能做什么"与"**为什么不能做**"放在一起下发
+(不支持的队列 op、forbidden 的 flow 词表)。理由:agent 最容易犯的错是试一个不存在的动作,
+然后在错误里反复打转 —— 把禁止清单连原因一起给它,比只给白名单有效。
+
+实样(阻塞场景 t=50s)见 `runtime/observation-sample.txt`:agent 一眼能看到
+"缺气卡了 50 秒、浮矿 1260、兵 0/6、可走的边只有 formup→advance"。
 
 ### B7 的落地要点
 

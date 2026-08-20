@@ -27,6 +27,7 @@ from view.encode import to_json
 from view.schema import REV, TOPICS
 from view.statics import schema_static
 
+from view.observe import frames_by_topic, observation_packet
 from view.proposals import ProposalStore
 
 from api.commands import CommandResult, QueueCommand, WorkerCommand
@@ -54,6 +55,8 @@ def create_app(frame_dir: Path | str | None = None,
     #: 离线沙盒会话。惰性创建：没人访问 `source=live` 就不建，也就不烧 CPU。
     app.state.session = None
     app.state.session_task = None
+    #: 上一份观察包的 seq —— ADR-0009 的"替换而非追加"：新包 supersedes 旧包
+    app.state.last_observation_seq = None
     #: 提案存储（B7）。落盘在帧源目录旁边 —— 提案的价值一半在历史，追加日志天然保留。
     app.state.proposals = ProposalStore(
         load_terran(), path=Path(proposal_log) if proposal_log else DEFAULT_PROPOSAL_LOG)
@@ -212,6 +215,75 @@ def create_app(frame_dir: Path | str | None = None,
     @app.get("/api/sources/{source_id}/jsonl", response_class=PlainTextResponse)
     def jsonl(source_id: str) -> str:
         return _source(source_id).path.read_text(encoding="utf-8")
+
+    # ---- agent 读面（B10）：ObservationPacket = 帧的投影，不是第二条摘要路径 ----
+
+    @app.get("/api/observation")
+    def observation(source: str = Query("live"), text: bool = Query(False)) -> dict:
+        """当前观察包（ADR-0009）。`text=true` 额外给可直接进 prompt 的渲染文本。
+
+        规则是**替换**而不是追加：每次取都是一份新的"当前事实"，旧的靠 `supersedes` 指向。
+        `facts.based_on_seq` 是下命令时必须回填的东西（R8 的闭环）。
+        """
+        src = _source(source)
+        info = src.info()
+        frames = frames_by_topic(src.latest_at(info.to_time))
+        prev = app.state.last_observation_seq
+        packet = observation_packet(frames, catalog=load_terran(), supersedes=prev)
+        app.state.last_observation_seq = packet.seq
+        body = {
+            "seq": packet.seq, "game_time": packet.game_time,
+            "supersedes": packet.supersedes,
+            "sections": packet.sections, "facts": packet.facts,
+        }
+        if text:
+            body["text"] = packet.render()
+        return body
+
+    @app.get("/api/agent/tools")
+    def agent_tools() -> dict:
+        """agent 的**写面**清单：与 UI 完全同一套入口（决策 U7 / §6 P4）。
+
+        刻意把"能做什么"和"为什么不能做"放在一起 —— agent 最容易犯的错是
+        试一个不存在的动作，然后在错误里反复打转。
+        """
+        schema = to_json(schema_static())
+        return {
+            "commands": [
+                {"method": "POST", "path": "/api/commands/queue/{op}",
+                 "ops": ["submit", "append", "prepend", "clear", "remove", "reorder"],
+                 "body": {"based_on_seq": "必填（取自观察包 facts.based_on_seq）",
+                          "name": "队列名，默认 main",
+                          "items": "submit/append/prepend 用",
+                          "index": "remove 用", "order": "reorder 用（0..n-1 的排列）"},
+                 "note": "队列 op 轻量、不走 validate/compile；执行时按 constraint 门控（S11）"},
+                {"method": "POST", "path": "/api/commands/workers",
+                 "body": {"based_on_seq": "必填", "task": "mineral|gas|idle",
+                          "count": "**维持** N 个（目标值、幂等），不是再派 N 个"}},
+                {"method": "POST", "path": "/api/proposals",
+                 "body": {"kind": "production_queue（V1 只有这个能应用）",
+                          "title_zh": "一句话", "rationale_zh": "**必填**：没有理由的提案不可接受",
+                          "target": {"queue": "main"},
+                          "hunks": "[{id, kind: insert|delete|modify|reorder, text_zh, payload}]"},
+                 "note": "改变别人计划的事走提案通道，由用户审批；直接下命令只适合明确授权的操作"},
+            ],
+            "rules": [
+                "所有命令必带 based_on_seq；落后超过阈值会返 409 并回报当前 seq —— 重取观察再试（R8）",
+                "live 中不能创建/编辑模块与 Strategy（R5）",
+                "flow 提交必须 validate + compile（R6）；生产队列 op 不需要",
+                "不支持的东西会返 400 并带原因，别重试同一个动作",
+            ],
+            "unsupported": {
+                "queue_ops": schema["queue"]["unsupported_ops"],
+                "flow": schema["forbidden"],
+            },
+            "max_stale_seq": _live_max_stale(),
+        }
+
+    def _live_max_stale() -> int:
+        from api.session import MAX_STALE_SEQ
+
+        return MAX_STALE_SEQ
 
     # ---- 提案（B7）：agent 的唯一产出面 ----
 

@@ -120,6 +120,7 @@ def test_line_idle_detects_ready_producers_without_orders():
     assert len(got) == 1
     assert got[0].payload["tags"] == [1]
     assert "兵营" in got[0].text_zh
+    assert "兵营 " not in got[0].text_zh, "join 时不该留下悬空空格"
 
 
 def test_cooldown_suppresses_repeats_but_lets_it_through_later():

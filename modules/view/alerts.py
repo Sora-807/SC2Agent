@@ -139,7 +139,8 @@ class AlertService:
             ))
         idle = self._idle_producers(gs)
         if idle:
-            names = "、".join(sorted({_zh(self.catalog, s) for _, s in idle}))
+            # `_zh` 末尾带空格（拼在原因前更自然），join 的时候要去掉
+            names = "、".join(sorted({_zh(self.catalog, s).strip() for _, s in idle}))
             out.append(AlertView(
                 id="line_idle", kind="line_idle", severity="info",
                 at=gs.game_time, eta=None,
