@@ -21,10 +21,8 @@ from game import is_known_action
 from game.operation import OP_CATALOG
 
 from flow.predicates import (
-    COMPARISON_OPS,
-    KNOWN_PREDICATE_OPS,
-    KNOWN_SPATIAL_OPS,
-    LOGIC_OPS,
+    OPERATOR_ARITY,
+    PREDICATE_SIGNATURES,
     UNIMPLEMENTED_PREDICATE_OPS,
     UNIMPLEMENTED_SPATIAL_OPS,
 )
@@ -35,13 +33,14 @@ class StrategyManifest:
     id: str
     version: int
     group_slots: list[str]
-    params: dict  # name -> {type, default, live_editable}
+    params: dict  # name -> {type, default}（键白名单见 PARAM_KEYS）
     variables: dict
     initial_step: str
     steps: dict[str, dict]  # step_id -> {branches: [...], locals?: [...]}
     edges: list[dict]
     on_exit: str
     loop_limits: dict
+    definitions: dict = field(default_factory=dict)  # 别名节（T2b）：name -> 值树；when/params 用 {ref: name}
 
 
 @dataclass
@@ -81,19 +80,34 @@ LOOP_LIMIT_KEYS = frozenset({"max_step_transitions"})
 
 # do 操作词表（spec-003 §5 可写操作 + group_action）
 DO_OPS = frozenset({
-    "group_action", "exit_step", "exit_strategy",
-    "set_variable", "set_local", "start_timer", "stop_timer",
+    "group_action", "exit_step", "exit_strategy", "set_variable", "set_local",
 })
+
+# 词表里有、V1 未实现的 do 操作 → 原因（D8：写被允许而读被拒 = 静默无效，两边一起拒）
+UNIMPLEMENTED_DO_OPS: dict[str, str] = {
+    "start_timer": "计时器运行时（deadline 存储）待建 —— 与 timer_elapsed 谓词对称拒绝（T8 一起放回）",
+    "stop_timer": "计时器运行时（deadline 存储）待建 —— 与 timer_elapsed 谓词对称拒绝（T8 一起放回）",
+}
+
+# params 声明允许的键与类型白名单（live_editable 等无消费方的键先不收）
+PARAM_KEYS = frozenset({"type", "default"})
+PARAM_TYPES = frozenset({"int", "float", "point", "bool", "str"})
 
 
 def parse_strategy(yaml_str: str) -> StrategyManifest:
     d = yaml.safe_load(yaml_str)
-    steps = {s["step_id"]: s for s in d["steps"]}
+    raw_steps = d["steps"]
+    steps = {s["step_id"]: s for s in raw_steps}
+    if len(steps) != len(raw_steps):  # dict 覆盖会静默丢 step（T2c #5）
+        seen: set = set()
+        dupes = sorted({s["step_id"] for s in raw_steps if s["step_id"] in seen or seen.add(s["step_id"])})
+        raise AssertionError(f"strategy 编译校验失败:\n- 重复的 step_id {dupes}（后一份会静默覆盖前一份）")
     m = StrategyManifest(
         id=d["id"], version=d.get("version", 1), group_slots=d["group_slots"],
         params=d.get("params", {}), variables=d.get("variables", {}),
         initial_step=d["initial_step"], steps=steps, edges=d.get("edges", []),
         on_exit=d.get("on_exit", "keep_idle"), loop_limits=d.get("loop_limits", {}),
+        definitions=d.get("definitions", {}) or {},
     )
     validate_strategy(m)
     return m
@@ -109,34 +123,104 @@ def parse_assembly(yaml_str: str) -> FlowAssembly:
     return FlowAssembly(d["id"], groups, insts, d.get("production_sequence", []))
 
 
-def _validate_when_node(node, where: str, m: StrategyManifest, err) -> None:
-    """递归校验 when AST：节点词表 + param/var 引用存在性。"""
+def _check_identifier(value, where: str, field: str, err) -> bool:
+    """标识符字段必须是字符串（H3）。返回 True = 合法。
+
+    YAML 陷阱实测：on/off/yes/no/true/false → bool；~ → None；12:30 → 750（六十进制）；
+    1_000 → 1000。这些会变成"看着像名字、其实不是字符串"的值，
+    最典型的是 reason: NO → False 与 edges 侧的 "NO" 不相等 → 报"无匹配 edge"，把人指向错误方向。
+    """
+    if isinstance(value, str):
+        return True
+    if isinstance(value, bool):
+        err(f"{where}: {field} 的值 {value!r} 被 YAML 解析成布尔（on/off/yes/no/true/false），请加引号")
+    else:
+        err(f"{where}: {field} 必须是字符串，当前 {value!r}（{type(value).__name__}）")
+    return False
+
+
+def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: tuple = ()) -> None:
+    """递归校验值树（when 条件 / 动作参数 / definitions / set_variable 的 value 共用一套）。
+
+    查：节点词表、谓词命名参数（缺失/多余/改用 args）、运算符 arity、param/var/ref 引用存在性、
+    definitions 自引用与环。
+    """
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            _validate_value_node(item, where, m, err, seen_refs)
+        return
     if not isinstance(node, dict):
-        return  # 字面量（数字/坐标列表/字符串）
+        return  # 字面量（数字/字符串/布尔）
     if "const" in node:
         return
     if "param" in node:
         if node["param"] not in m.params:
-            err(f"{where}: 引用未声明的参数 {node['param']!r}")
+            err(f"{where}: 引用未声明的参数 {node['param']!r}（已声明：{sorted(m.params)}）")
         return
     if "var" in node:
         if node["var"] not in m.variables:
-            err(f"{where}: 引用未声明的变量 {node['var']!r}")
+            err(f"{where}: 引用未声明的变量 {node['var']!r}（已声明：{sorted(m.variables)}）")
+        return
+    if "ref" in node:
+        name = node["ref"]
+        if name not in m.definitions:
+            err(f"{where}: 引用未声明的 definitions 别名 {name!r}（已声明：{sorted(m.definitions)}）")
+            return
+        if name in seen_refs:
+            err(f"{where}: definitions 自引用/环 {list(seen_refs) + [name]}（ref 是纯替换，环会无限展开）")
+            return
+        _validate_value_node(m.definitions[name], f"definitions[{name!r}]", m, err,
+                             seen_refs + (name,))
         return
     op = node.get("op")
     if op is None:
-        err(f"{where}: 条件节点缺 op: {node!r}")
+        err(f"{where}: 节点缺 op: {node!r}")
+        return
+    if not _check_identifier(op, where, "op", err):
         return
     if op in UNIMPLEMENTED_PREDICATE_OPS:
         err(f"{where}: 谓词 {op!r} 未实现（{UNIMPLEMENTED_PREDICATE_OPS[op]}）")
-    elif op in UNIMPLEMENTED_SPATIAL_OPS:
+        return
+    if op in UNIMPLEMENTED_SPATIAL_OPS:
         err(f"{where}: 空间工具 {op!r} 未实现（{UNIMPLEMENTED_SPATIAL_OPS[op]}）")
-    elif op in KNOWN_SPATIAL_OPS:
-        pass  # 已实现空间值工具（point_toward）：args 递归校验（下方 for 循环）
-    elif op not in KNOWN_PREDICATE_OPS | COMPARISON_OPS | LOGIC_OPS:
-        err(f"{where}: 未知谓词 {op!r}")
-    for a in node.get("args", []):
-        _validate_when_node(a, where, m, err)
+        return
+    if op in OPERATOR_ARITY:
+        lo, hi = OPERATOR_ARITY[op]
+        args = node.get("args")
+        if not isinstance(args, list):
+            err(f"{where}: 运算符 {op!r} 需要 args 列表（运算符是前缀序，保留 args）")
+            return
+        if len(args) < lo or (hi is not None and len(args) > hi):
+            want = f"{lo}" if hi == lo else (f"≥{lo}" if hi is None else f"{lo}~{hi}")
+            err(f"{where}: 运算符 {op!r} 需要 {want} 个操作数，当前 {len(args)} 个")
+        extra = sorted(k for k in node if k not in ("op", "args"))
+        if extra:
+            err(f"{where}: 运算符 {op!r} 只接受 args，多了 {extra}")
+        for a in args:
+            _validate_value_node(a, where, m, err, seen_refs)
+        return
+    if op in PREDICATE_SIGNATURES:
+        sig = PREDICATE_SIGNATURES[op]
+        names = [n for n, _ in sig]
+        shown = ", ".join(f"{n}{'' if req else '?'}" for n, req in sig) or "(无参数)"
+        if "args" in node:
+            # 只报这一条（不再叠加"缺参数/多参数"噪声）：这是迁移写法错误，不是参数错误
+            err(f"{where}: {op!r} 改用命名参数（{shown}），不再接受 args"
+                "（T2/D2：位置参数写错顺序编译期抓不到）")
+            for a in node.get("args") or []:
+                _validate_value_node(a, where, m, err, seen_refs)
+            return
+        missing = [n for n, req in sig if req and n not in node]
+        if missing:
+            err(f"{where}: {op!r} 缺必需参数 {missing}（签名：{shown}）")
+        unknown = sorted(k for k in node if k != "op" and k not in names)
+        if unknown:
+            err(f"{where}: {op!r} 不认识参数 {unknown}（签名：{shown}）")
+        for n in names:
+            if n in node:
+                _validate_value_node(node[n], f"{where}/{op}.{n}", m, err, seen_refs)
+        return
+    err(f"{where}: 未知谓词 {op!r}（词表：{sorted(PREDICATE_SIGNATURES)}）")
 
 
 def _step_successors(m: StrategyManifest) -> dict[str, set[str]]:
@@ -220,11 +304,33 @@ def validate_strategy(m: StrategyManifest) -> None:
     if m.initial_step not in m.steps:
         err(f"initial_step {m.initial_step!r} 不在 steps")
 
+    for sid in m.steps:
+        _check_identifier(sid, "steps", "step_id", err)
+
+    # params 声明（T2c #9）：键白名单 + type 白名单（live_editable 等无消费方的键先不收）
+    for pname, spec in (m.params or {}).items():
+        if not isinstance(spec, dict):
+            err(f"params.{pname}: 声明必须是 mapping（如 {{type: int, default: 1}}），当前 {spec!r}")
+            continue
+        unknown = sorted(set(spec) - PARAM_KEYS)
+        if unknown:
+            err(f"params.{pname}: 未知键 {unknown}（只允许 {sorted(PARAM_KEYS)}）")
+        ptype = spec.get("type")
+        if ptype is not None and ptype not in PARAM_TYPES:
+            err(f"params.{pname}: 未知 type {ptype!r}（白名单 {sorted(PARAM_TYPES)}）")
+
+    # definitions 别名节（T2b）：值树同 when 词表，且不得自引用/成环
+    for dname, dnode in (m.definitions or {}).items():
+        _check_identifier(dname, "definitions", "别名名字", err)
+        _validate_value_node(dnode, f"definitions[{dname!r}]", m, err, (dname,))
+
     seen_edges: set[tuple] = set()
     for e in m.edges:
         for endpoint in ("from", "to"):
             if e[endpoint] not in m.steps:
                 err(f"edge {e['from']}→{e['to']} 的 {endpoint} {e[endpoint]!r} 不是 step")
+        for field_name in ("kind", "reason"):
+            _check_identifier(e.get(field_name), f"edge {e['from']}→{e['to']}", field_name, err)
         key = (e["from"], e.get("kind"), e.get("reason"))
         if key in seen_edges:
             err(f"重复 edge {key}（同 (from,kind,reason) 路由歧义）")
@@ -253,10 +359,13 @@ def validate_strategy(m: StrategyManifest) -> None:
             if "when" not in b and i != len(branches) - 1:
                 err(f"{where}: else（无 when）分支必须且只能放在最后（spec-003 §2）")
             if "when" in b:
-                _validate_when_node(b["when"], where, m, err)
+                _validate_value_node(b["when"], where, m, err)
             exited = False
             for a in b.get("do", []):
                 op = a.get("op")
+                if op in UNIMPLEMENTED_DO_OPS:
+                    err(f"{where}: do 操作 {op!r} 未实现（{UNIMPLEMENTED_DO_OPS[op]}）")
+                    continue
                 if op not in DO_OPS:
                     err(f"{where}: 未知 do 操作 {op!r}（词表：{sorted(DO_OPS)}）")
                     continue
@@ -265,16 +374,27 @@ def validate_strategy(m: StrategyManifest) -> None:
                 if op == "exit_step":
                     exited = True
                     k, r = a.get("kind"), a.get("reason")
+                    _check_identifier(k, where, "exit_step.kind", err)
+                    _check_identifier(r, where, "exit_step.reason", err)
                     if not any(
                         e["from"] == sid and e["kind"] == k and e["reason"] == r for e in m.edges
                     ):
                         err(f"{where}: exit_step {k}/{r} 无匹配 edge（spec-003 验收 #3）")
                 if op == "exit_strategy":
                     exited = True
+                    _check_identifier(a.get("kind"), where, "exit_strategy.kind", err)
+                    _check_identifier(a.get("reason"), where, "exit_strategy.reason", err)
                 if op == "group_action":
                     slot = a.get("group_slot")
                     if slot not in m.group_slots:
                         err(f"{where}: 未声明的 group_slot {slot!r}（声明：{m.group_slots}）")
+                    stable_type = a.get("type")
+                    if stable_type is None:
+                        err(f"{where}: group_action 缺 type（stable id，如 terran/marine）")
+                    elif _check_identifier(stable_type, where, "group_action.type", err):
+                        if stable_type.count("/") != 1:
+                            err(f"{where}: group_action.type {stable_type!r} 不是两段式 stable id"
+                                "（race/name，如 terran/marine；T1 起 burnysc2 名不再接受）")
                     atom = a.get("action_atom")
                     if not is_known_action(atom):
                         err(f"{where}: 未知 action_atom {atom!r}")
@@ -282,10 +402,17 @@ def validate_strategy(m: StrategyManifest) -> None:
                         for pname, _ptype, required in OP_CATALOG[atom]:
                             if required and pname not in (a.get("params") or {}):
                                 err(f"{where}: {atom} 缺必需参数 {pname!r}（OP_CATALOG）")
-                if op == "set_variable" and a.get("name") not in m.variables:
-                    err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
-                if op == "set_local" and a.get("name") not in locals_declared:
-                    err(f"{where}: set_local 写未声明的 local {a.get('name')!r}（本 step 声明：{sorted(locals_declared)}）")
+                    # 动作参数值树：此前只查 when，param/var/ref 写错在运行期才炸（T2c #3）
+                    for pname, pval in (a.get("params") or {}).items():
+                        _validate_value_node(pval, f"{where}/{atom}.params.{pname}", m, err)
+                if op == "set_variable":
+                    if a.get("name") not in m.variables:
+                        err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
+                    _validate_value_node(a.get("value"), f"{where}/set_variable.value", m, err)
+                if op == "set_local":
+                    if a.get("name") not in locals_declared:
+                        err(f"{where}: set_local 写未声明的 local {a.get('name')!r}（本 step 声明：{sorted(locals_declared)}）")
+                    _validate_value_node(a.get("value"), f"{where}/set_local.value", m, err)
 
     for lk, lv in (m.loop_limits or {}).items():
         if lk not in LOOP_LIMIT_KEYS:
@@ -304,7 +431,36 @@ def validate_assembly(m: StrategyManifest, a: FlowAssembly) -> None:
     errors: list[str] = []
     if not a.strategy_instances:
         errors.append("assembly 缺 strategy_instances")
+    if len(a.strategy_instances) > 1:
+        # V1 单实例：引擎只取 instances[0]，多写的会被静默忽略（T2c #6）
+        errors.append(
+            f"assembly 有 {len(a.strategy_instances)} 个 strategy_instances，V1 只支持 1 个"
+            "（引擎只取第一个，其余会被静默忽略）"
+        )
     group_ids = {g.group_id for g in a.groups}
+    for g in a.groups:
+        for stable_id, spec in (g.composition or {}).items():
+            if not isinstance(stable_id, str) or stable_id.count("/") != 1:
+                errors.append(
+                    f"group {g.group_id}: composition 键 {stable_id!r} 不是两段式 stable id（race/name）"
+                )
+            if not isinstance(spec, dict):
+                errors.append(f"group {g.group_id}/{stable_id}: composition 值必须是 {{min,target,max}}")
+                continue
+            nums = {}
+            for key in ("min", "target", "max"):
+                v = spec.get(key)
+                if v is None:
+                    continue
+                if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                    errors.append(f"group {g.group_id}/{stable_id}: {key} 必须是非负整数，当前 {v!r}")
+                else:
+                    nums[key] = v
+            lo, tgt, hi = nums.get("min"), nums.get("target"), nums.get("max")
+            if lo is not None and tgt is not None and lo > tgt:
+                errors.append(f"group {g.group_id}/{stable_id}: 要求 min ≤ target（当前 {lo} > {tgt}）")
+            if tgt is not None and hi is not None and tgt > hi:
+                errors.append(f"group {g.group_id}/{stable_id}: 要求 target ≤ max（当前 {tgt} > {hi}）")
     for si in a.strategy_instances:
         if si.strategy_ref != m.id:
             errors.append(

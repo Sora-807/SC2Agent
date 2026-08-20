@@ -16,13 +16,13 @@ id: simple_push
 version: 1
 group_slots: [main]
 params:
-  min_units: {type: int, default: 4, live_editable: true}
+  min_units: {type: int, default: 4}
 variables: {}
 initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main]}, {param: min_units}]}
+      - when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance
@@ -132,12 +132,12 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main]}, {param: min_units}]}
+      - when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance
     branches:
-      - when: {op: arrived, args: [main, [10.0, 10.0], 3.0]}
+      - when: {op: arrived, group: main, target: [10.0, 10.0], radius: 3.0}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
       - do:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [10.0, 10.0]}}
@@ -278,7 +278,7 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [20.0, 0.0], 5.0]}}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: {op: point_toward, origin: {op: group_center, group: main}, toward: [20.0, 0.0], dist: 5.0}}}
 """
     assembly = """
 id: a
@@ -317,7 +317,7 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [100.0, 0.0], 10.0]}}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: {op: point_toward, origin: {op: group_center, group: main}, toward: [100.0, 0.0], dist: 10.0}}}
 """
     assembly = """
 id: a
@@ -569,7 +569,7 @@ initial_step: watch
 steps:
   - step_id: watch
     branches:
-      - when: {op: enemy_visible_in, args: [main_base]}
+      - when: {op: enemy_visible_in, region: main_base}
         do: [{op: exit_strategy, kind: done, reason: SAFE}]
       - do: []
 """

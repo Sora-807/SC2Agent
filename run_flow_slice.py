@@ -42,7 +42,7 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main]}, {param: min_units}]}
+      - when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance

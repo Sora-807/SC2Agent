@@ -37,12 +37,12 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main]}, {param: min_units}]}
+      - when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance
     branches:
-      - when: {op: arrived, args: [main, [50.0, 50.0], 8.0]}
+      - when: {op: arrived, group: main, target: [50.0, 50.0], radius: 8.0}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
       - do:
           - {op: group_action, group_slot: main, type: terran/scv, action_atom: move_to, params: {position: [50.0, 50.0]}}

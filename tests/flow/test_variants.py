@@ -15,13 +15,13 @@ FORMUP_STRATEGY = """
 id: tank_formup
 group_slots: [armor]
 params:
-  min_tanks: {type: int, default: 4, live_editable: true}
+  min_tanks: {type: int, default: 4}
 variables: {}
 initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [armor, terran/siegetank]}, {param: min_tanks}]}
+      - when: {op: ">=", args: [{op: group_count, group: armor, type: terran/siegetank}, {param: min_tanks}]}
         do: [{op: exit_strategy, kind: done, reason: FORMED}]
       - do: []
 """
@@ -106,12 +106,12 @@ def test_group_action_targets_sieged_tanks_with_catalog():
 
 
 def test_unknown_stable_id_in_composition_rejected_at_construction():
-    """composition 误写 burnysc2 名（旧词汇）→ 构造期报错，不再静默漏 lease（T1/D1）。"""
+    """composition 误写 burnysc2 名（旧词汇）→ 构造期 validate_assembly 拒绝（R6），不再静默漏 lease。"""
     import pytest
     port = FakeGamePort(script=[])
     bad = _ARMOR_ASSEMBLY.replace("__REF__", "tank_advance").replace(
         "terran/siegetank: {min: 4", "SIEGETANK: {min: 4")
-    with pytest.raises(ValueError, match="stable id"):
+    with pytest.raises(AssertionError, match="stable id"):
         FlowEngine(parse_strategy(ADVANCE_STRATEGY), parse_assembly(bad), port, catalog=CAT)
 
 

@@ -17,7 +17,7 @@ from game.operation import OP_CATALOG, ParamType
 
 from flow.allocator import Allocator
 from flow.manifest import FlowAssembly, StrategyManifest, validate_assembly
-from flow.predicates import EvalCtx, eval_when, group_center, point_toward
+from flow.predicates import EvalCtx, eval_when
 from tactical_map.resolver import resolve_action_params
 
 # 全局转移上限（ADR-0021 §4 第 3 条）：strategy 未声明 loop_limits.max_step_transitions 时兜底，
@@ -56,6 +56,9 @@ class FlowEngine:
         self._last_emitted: dict[tuple, str] = {}  # (slot, type, atom) -> params_key
         self._done = False
         self.exit_record: dict | None = None  # 结束原因（exit_strategy 的 kind/reason，或 LOOP_LIMIT）
+        # 求值期诊断（H6）：(step, kind, detail) -> 次数。None 比较等"降级为 False"的路径留痕，
+        # 不静默；UI/agent/真机日志读它就知道"条件其实没求出来"。
+        self.eval_diagnostics: dict[tuple, int] = {}
         self._op_seq = 0
 
     # ---- RuntimeSink ----
@@ -69,7 +72,8 @@ class FlowEngine:
         self._alloc.refresh(gs)
         ctx = EvalCtx(gs, self._alloc, self._bindings, self._params, self._variables,
                       self._strategy_start, self._step_entered, self._region_layer,
-                      catalog=self._catalog)
+                      catalog=self._catalog, definitions=self._m.definitions,
+                      step_id=self._active_step, diagnostics=self.eval_diagnostics)
         step = self._m.steps[self._active_step]
         for b in step.get("branches", []):
             when = b.get("when")
@@ -94,9 +98,9 @@ class FlowEngine:
                 self.exit_record = {"kind": a.get("kind"), "reason": a.get("reason")}
                 return
             elif op == "set_variable":
-                self._variables[a["name"]] = _eval_value(a.get("value"), ctx)
+                self._variables[a["name"]] = eval_when(a.get("value"), ctx)
             elif op == "set_local":
-                self._locals[a["name"]] = _eval_value(a.get("value"), ctx)
+                self._locals[a["name"]] = eval_when(a.get("value"), ctx)
             elif op in ("start_timer", "stop_timer"):
                 pass  # V1 stub：timer_elapsed 谓词未实现前，计时器写操作无害空转
             else:
@@ -143,32 +147,9 @@ class FlowEngine:
         # 本帧结束（不本帧求值新 step；下帧求值）
 
 
-def _eval_value(v, ctx: EvalCtx):
-    """动作参数值求值：const/param/静态空间工具（group_center/region_center）。
-
-    动态目标（nearest_enemy 等）后续按 spec-003 §4.4 补。
-    """
-    if isinstance(v, dict):
-        if "const" in v:
-            return v["const"]
-        if "param" in v:
-            return ctx.params.get(v["param"])
-        op = v.get("op")
-        if op == "group_center":
-            return group_center(ctx, v["args"][0])
-        if op == "point_toward":
-            a = v.get("args", [])
-            if len(a) < 3:
-                return None
-            return point_toward(_eval_value(a[0], ctx), _eval_value(a[1], ctx),
-                                _eval_value(a[2], ctx), ctx.region_layer)
-        if op == "region_center":
-            return ctx.region_layer.anchor(v["args"][0]) if ctx.region_layer is not None else None
-    return v
-
-
 def _resolve_params(params: dict, ctx: EvalCtx) -> dict:
-    return {k: _eval_value(v, ctx) for k, v in params.items()}
+    """动作参数求值：与 when 共用 eval_when（T2 起只有一个求值器 —— 同词表、同 None 语义、同诊断）。"""
+    return {k: eval_when(v, ctx) for k, v in params.items()}
 
 
 def _quantize_for_dedup(action: str, params: dict) -> dict:

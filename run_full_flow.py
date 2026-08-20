@@ -50,12 +50,12 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main, terran/marine]}, {param: min_marines}]}
+      - when: {op: ">=", args: [{op: group_count, group: main, type: terran/marine}, {param: min_marines}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance
     branches:
-      - when: {op: arrived, args: [main, {param: target}, 8.0]}
+      - when: {op: arrived, group: main, target: {param: target}, radius: 8.0}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
       - do:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: attack_move_to,

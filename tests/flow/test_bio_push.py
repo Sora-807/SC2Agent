@@ -21,28 +21,28 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main]}, {param: min_units}]}
+      - when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance
     branches:
-      - when: {op: ">", args: [{op: enemy_count_near, args: [{op: group_center, args: [main]}, 15]}, 8]}
+      - when: {op: ">", args: [{op: enemy_count_near, anchor: {op: group_center, group: main}, radius: 15}, 8]}
         do: [{op: exit_step, kind: interrupted, reason: AMBUSHED}]
-      - when: {op: "<", args: [{op: group_hp_ratio, args: [main]}, 0.4]}
+      - when: {op: "<", args: [{op: group_hp_ratio, group: main}, 0.4]}
         do: [{op: exit_step, kind: failed, reason: UNITS_LOST}]
       - do:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: attack_move_to, params: {position: [50.0, 50.0]}}
   - step_id: combat
     branches:
-      - when: {op: "==", args: [{op: enemy_count_near, args: [{op: group_center, args: [main]}, 12]}, 0]}
+      - when: {op: "==", args: [{op: enemy_count_near, anchor: {op: group_center, group: main}, radius: 12}, 0]}
         do: [{op: exit_step, kind: done, reason: ENEMY_CLEARED}]
-      - when: {op: "<", args: [{op: group_count, args: [main, terran/marine]}, 6]}
+      - when: {op: "<", args: [{op: group_count, group: main, type: terran/marine}, 6]}
         do: [{op: exit_step, kind: failed, reason: UNITS_LOST}]
       - do:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: focus_fire, params: {target_unit: 200}}
   - step_id: retreat
     branches:
-      - when: {op: arrived, args: [main, {op: region_center, args: [main_base]}, 8]}
+      - when: {op: arrived, group: main, target: {op: region_center, name: main_base}, radius: 8}
         do: [{op: exit_step, kind: done, reason: SAFE}]
       - do:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [50.0, 50.0]}}
