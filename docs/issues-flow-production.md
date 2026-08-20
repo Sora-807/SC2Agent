@@ -80,21 +80,21 @@ ADR-0021 的 attempt 语义倾向"重入 = 新一次尝试 → 重新下令"。�
 
 ## 2. 生产运行时
 
-### P1（高）`check_train` 不查前置 → 订单永久蒸发
+### ✅ P1（已修 `7964a0f`）`check_train` 不查前置 → 订单永久蒸发
 `constraint/checks.py` 的 `check_train` 只查"类型存在 + 资源 + 供给 + 就绪产出建筑"，**没查 prerequisites**。
 工厂就绪但无 techlab 时 `check_train("terran/siegetank") → ok=True` → 发单 → SC2 静默拒 → 队首被消费 →
 坦克订单永久消失。修法：`check_train` 调 `check_prerequisites`；配合 P5（ApplyResult 回流）才能真正闭环。
 
-### P2（高）队列工具操作不清在途 flights
+### ✅ P2（已修 `b701473`）队列工具操作不清在途 flights
 `clear()`/`remove()` 只动 `_queues`，`_build_flights` 里的在途建造照常 retry 并重新发令（实测清队后 91 帧仍在重试）。
 对 agent 来说"取消"是假的。修法：队列工具同时按 queue_name 撤掉 flights，并记一条结构化事件。
 
-### P3（高）资源账本是 per-queue 的，且 TRAIN 完全不入账
+### ✅ P3（已修 `b701473`）资源账本是 per-queue 的，且 TRAIN 完全不入账（并补了供给入账）
 `pending_min/pending_gas` 是 `_drain` 的局部变量（每条队列各自一份），且只有 BUILD 分支记账。
 实测 60 矿 + 两台兵营同帧发出两条 50 矿 train，第二条靠 SC2 静默拒单兜底。
 修法：把本帧账本提到 `on_game_state` 级（跨队列共享）+ TRAIN/挂件/气矿一起记账。
 
-### P4（高）气矿重试路径是坏的
+### ✅ P4（已修 `b701473`）气矿重试路径是坏的
 第一次 `build_gas` 失败后，`_retry_build` 走 `_resolve_placement`，而气矿没有 placement → 直接 drop 精炼厂订单
 （即使还有空闲气井）。修法：重试按 `capabilities` 分派到 `_try_build_gas` 的选井逻辑（与 addon 已有的分支对称）。
 
@@ -106,25 +106,25 @@ P1/P3 的"SC2 静默拒"就永远看不见。修法：接住返回值 → `faile
 flight 永久 `waiting` 时无原因、无失速告警（H1 的 `stalls` 只覆盖队首门控，不覆盖在途建造）。
 修法：flight 也接入 `stalls`（超时/重试次数/原因）。
 
-### P9（中）`assign_workers` 零产出时意图静默蒸发
+### ✅ P9（已修 `80b3508`）`assign_workers` 零产出时意图静默蒸发（改成目标值语义，意图持久）
 复现：`assign_workers(gas, 3)` 而场上无精炼厂 → 无 op、直接出队、`dropped`/`blocked`/`stalls` 全空。
 `run_tank_marine_push.py` 的 macro 队列正是 `build refinery → assign_workers(gas,3)`，而 build 在**发出命令时**
 就出队（不是建完），所以 assign 会在精炼厂还在施工时执行 → 意图消失。目前靠 `steward` 队列每隔几秒重分配兜住。
 修法：0 分配且 count>0 → 走 `_block("无可用气矿槽")` 而不是出队（符合作者把 assign 排在 refinery 之后的意图，
 卡住也会被失速告警照出来）。
 
-### P7 / P8 / P10 / P12 / P13（中）
-- P7：`WorkerAllocator._idle` 忽略 `skip`（同帧可能与其他队列命令同一 SCV → burnysc2 去重丢单）。
+### P7 ✅ / P8 / P10 / P12 ✅ / P13（中）
+- ✅ P7（`80b3508`）：`WorkerAllocator._idle` 忽略 `skip` —— 会 stop 掉本帧刚派去建造的 SCV。
 - P8：addon 重试不排除已试过的母建筑 → 可能反复撞同一台。
 - P10：气井预留把挂件 flight 当精炼厂（`expect_pos` 不区分类型）→ 可能误占。
-- P12：队列工具无 `count ≥ 1` / `reorder` 不变量校验（reorder 可以塞进不属于该队列的项）。
+- 🟡 P12（`b701473`）：`count ≥ 1` 已校验；`reorder` 的置换不变量仍未校验。
 - P13：`stalls`/`dropped` 没有队列归属与"已解决"事件 → UI/agent 只能看到累积列表，看不出当前状态。
 
 ### P11（中，三族红线）`WorkerAllocator` 硬编码 `REFINERY` / `MINERALFIELD`
 `_nodes` 直接写死 burnysc2 名，与"catalog 是词汇唯一权威源"冲突（虫族 extractor / 神族 assimilator 会失效）。
 修法：走 catalog `capability="gas"` / 资源节点类型表。
 
-### P14（高，架构）SCV 采矿没有常驻维持器
+### ✅ P14（已修 `0247495` + `80b3508`）SCV 采矿没有常驻维持器 → EconomyKeeper + 征用（ADR-0030）
 `WorkerAllocator.assign` 是**一次性 delta**：算完当时的差额就返回，没有维持循环。后果：
 - 新造的 SCV 不会自动去采矿（没人再下 `assign_workers` 就一直空闲）；
 - 矿采空后（节点从 `gs.resources` 消失）它的工兵永久闲置；
