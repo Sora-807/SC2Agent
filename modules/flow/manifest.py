@@ -21,6 +21,7 @@ from game.operation import OP_CATALOG
 from flow.predicates import (
     COMPARISON_OPS,
     KNOWN_PREDICATE_OPS,
+    KNOWN_SPATIAL_OPS,
     LOGIC_OPS,
     UNIMPLEMENTED_PREDICATE_OPS,
     UNIMPLEMENTED_SPATIAL_OPS,
@@ -125,6 +126,8 @@ def _validate_when_node(node, where: str, m: StrategyManifest, err) -> None:
         err(f"{where}: 谓词 {op!r} 未实现（{UNIMPLEMENTED_PREDICATE_OPS[op]}）")
     elif op in UNIMPLEMENTED_SPATIAL_OPS:
         err(f"{where}: 空间工具 {op!r} 未实现（{UNIMPLEMENTED_SPATIAL_OPS[op]}）")
+    elif op in KNOWN_SPATIAL_OPS:
+        pass  # 已实现空间值工具（point_toward）：args 递归校验（下方 for 循环）
     elif op not in KNOWN_PREDICATE_OPS | COMPARISON_OPS | LOGIC_OPS:
         err(f"{where}: 未知谓词 {op!r}")
     for a in node.get("args", []):

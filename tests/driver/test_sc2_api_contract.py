@@ -23,6 +23,8 @@ EXPECTED_UNIT_METHODS: dict[str, tuple[str, int]] = {
     "follow": ("move", 1),          # V1 近似：move(target_unit)
     "patrol": ("patrol", 1),
     "focus_fire": ("attack", 1),
+    "siege": ("__call__", 1),        # 通用能力路径：siege 无具名 Unit 方法（走 __call__(AbilityId)，同挂件 BUILD_REACTOR）
+    "unsiege": ("__call__", 1),     # 同上（UNSIEGE_UNSIEGE）
     "build": ("build", 1),          # build(unit, position=None)：必需 1（unit）
     "train": ("train", 1),
     "research": ("research", 1),

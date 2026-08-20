@@ -1,13 +1,13 @@
-"""步坦协同（蛙跳推进）离线确定性验证：现有 flow 词表表达复杂协同节奏。
+"""步坦协同（循环蛙跳推进）离线确定性验证：T5 循环版。
 
-节奏（3 跳 + 总攻，与 docs/tank_marine_push.yaml 同源）：
-- formup：20 步兵 + 4 坦克就绪 → 第 1 跳
-- hopX_tank：坦克推进到枪兵上一位（R：先让坦克推进到枪兵身边驻扎）
-- hopX_siege：距下一目标 ≤ 架起射程 80%（tank_cover=10.4）才驻扎（hold 占位，真机换 siege）
-- hopX_inf：步兵 attack_move 到坦克覆盖内的下一点；距坦克 > inf_hold_dist → STRAGGLED →
-  hopX_wait 停 hold_secs（step_elapsed 计时）再续进（R：脱队停等）
-- hopX_clear：enemy_count_near < threat_limit 且 group_hp_ratio > 0.6 → 下一跳（R：威胁小才推进）
-- final_assault：总攻敌方主矿 → arrived → exit_strategy ARRIVED
+循环 4 步（tank_hop→siege_gate→inf_hop→threat_gate→回 tank_hop），用 T1 siege +
+T4 point_toward 动态点 + 去重量化。脚本化帧序列走 2 轮完整循环，断言：
+- 组心每轮逼近 target（前沿点 10.4 → 20.8，≈ tank_cover 前进量）
+- siege 仅在坦克入 target 10.4 内那一轮发（轮 1 SKIP 不发、轮 2 发）
+- 脱队停等出现（inf_wait）
+- 威胁大时卡 threat_gate、威胁解除继续
+- 最终 arrived → done
+- op 含 siege + 同前沿点 attack_move 不重发（去重量化；微移去重见 test_engine.T4）
 """
 from pathlib import Path
 
@@ -17,28 +17,15 @@ from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
 from game import GameState, Grid, Owner, Point2, Unit
-from tactical_map import BigRegion, RegionLayer
-from tactical_map.placement import PosMark
 
 _DOC = Path(__file__).resolve().parent.parent.parent / "docs" / "tank_marine_push.yaml"
 _DATA = yaml.safe_load(_DOC.read_text(encoding="utf-8"))
+# 测试用近目标（2 轮可达：0 → 10.4 → 20.8，距 [20,0] 0.8 < 8）；yaml 默认 [127.5,119.5] 留真机
+_DATA["assembly"]["strategy_instances"][0]["params"]["target"] = [20.0, 0.0]
 STRATEGY = yaml.safe_dump(_DATA["strategy"], sort_keys=False, allow_unicode=True)
 ASSEMBLY = yaml.safe_dump(_DATA["assembly"], sort_keys=False, allow_unicode=True)
 
-P = {"p1": Point2(70, 50), "p2": Point2(77, 57), "p3": Point2(84, 64), "p4": Point2(91, 71)}
-TARGET = Point2(127.5, 119.5)
-INF0, TANK0 = Point2(60, 40), Point2(62, 42)
-
-
-def _layer():
-    return RegionLayer(
-        map_name="push_test",
-        size=(176, 160),
-        big_grid=Grid(176, 160, [[1] * 176 for _ in range(160)]),
-        big_index={1: "field"},
-        big_regions={"field": BigRegion(stable_id="field", anchor=Point2(88, 80))},
-        pos_marks={name: PosMark(name, pos) for name, pos in P.items()},
-    )
+TARGET = Point2(20.0, 0.0)  # tank_cover=10.4；前沿点轮1=(10.4,0)，轮2=(20.8,0)
 
 
 def _unit(tag, type_name, pos, owner=Owner.SELF):
@@ -47,6 +34,7 @@ def _unit(tag, type_name, pos, owner=Owner.SELF):
 
 
 def _gs(seq, inf_pos, tank_pos, enemies=()):
+    # 20 步兵同位 → group_center(inf)=inf_pos；4 坦克同位 → group_center(armor)=tank_pos
     units = [_unit(100 + i, "MARINE", inf_pos) for i in range(20)]
     units += [_unit(200 + i, "SIEGETANK", tank_pos) for i in range(4)]
     for i, p in enumerate(enemies):
@@ -57,78 +45,69 @@ def _gs(seq, inf_pos, tank_pos, enemies=()):
                      map_size=(176, 160), creep=g, visibility=g)
 
 
-def test_tank_marine_leapfrog_full_chain():
+def _ops(port, action):
+    return [o for o in port.submitted if o.action == action]
+
+
+def test_tank_marine_loop_two_rounds_then_arrived():
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port, region_layer=_layer())
+    eng = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port)
 
-    # formup：20 步兵 + 4 坦克就绪 → FORMED → hop1_tank
-    eng.on_game_state(_gs(0, INF0, TANK0))
-    assert eng._active_step == "hop1_tank"
-    # 坦克推进到 p1（R：先坦克）
-    eng.on_game_state(_gs(1, INF0, TANK0))
-    assert eng._active_step == "hop1_tank"
-    eng.on_game_state(_gs(2, INF0, P["p1"]))  # 坦克到 p1 → IN_PLACE
-    assert eng._active_step == "hop1_siege"
-    # 驻扎：距 p2 9.9 ≤ 架起射程 80%（10.4）→ SIEGED
-    eng.on_game_state(_gs(3, INF0, P["p1"]))
-    assert eng._active_step == "hop1_inf"
-    # 步兵脱队（距坦克 14.1 > 12）→ STRAGGLED → 停 3 秒（step_elapsed 计时）
-    eng.on_game_state(_gs(4, INF0, P["p1"]))
-    assert eng._active_step == "hop1_wait"
-    for s in (5, 6, 7):
-        eng.on_game_state(_gs(s, INF0, P["p1"]))
-    assert eng._active_step == "hop1_inf"  # RESUME
-    # 步兵跟上（距坦克 5.7 ≤ 12）→ attack_move 到 p2 → 到位 → 清理评估
-    eng.on_game_state(_gs(8, Point2(74, 54), P["p1"]))
-    assert eng._active_step == "hop1_inf"
-    eng.on_game_state(_gs(9, P["p2"], P["p1"]))
-    assert eng._active_step == "hop1_clear"
-    # 威胁大（5 敌近）→ 不推进，留在清理
-    near5 = [Point2(78 + i * 0.3, 58) for i in range(5)]
-    eng.on_game_state(_gs(10, P["p2"], P["p1"], near5))
-    assert eng._active_step == "hop1_clear"
-    # 威胁小 → 下一跳（R：威胁小才推进）
-    eng.on_game_state(_gs(11, P["p2"], P["p1"], [Point2(90, 90)]))
-    assert eng._active_step == "hop2_tank"
+    # formup：20 步兵 + 4 坦克就绪 → FORMED → tank_hop
+    eng.on_game_state(_gs(0, Point2(0, 0), Point2(0, 0)))
+    assert eng._active_step == "tank_hop"
 
-    # 第 2 跳：坦克推进到枪兵身边 p2 驻扎，枪兵 → p3
-    eng.on_game_state(_gs(12, P["p2"], P["p1"]))
-    eng.on_game_state(_gs(13, P["p2"], P["p2"]))
-    eng.on_game_state(_gs(14, P["p2"], P["p2"]))
-    assert eng._active_step == "hop2_inf"
-    eng.on_game_state(_gs(15, P["p2"], P["p2"]))
-    eng.on_game_state(_gs(16, P["p3"], P["p2"]))
-    assert eng._active_step == "hop2_clear"
-    eng.on_game_state(_gs(17, P["p3"], P["p2"]))
-    assert eng._active_step == "hop3_tank"
+    # ===== 轮 1（离目标远，无 siege）=====
+    eng.on_game_state(_gs(1, Point2(0, 0), Point2(0, 0)))      # tank_hop：坦克已在步兵组心 → IN_PLACE
+    assert eng._active_step == "siege_gate"
+    eng.on_game_state(_gs(2, Point2(0, 0), Point2(0, 0)))      # siege_gate：距目标 20 > 10.4 → SKIP
+    assert eng._active_step == "inf_hop"
+    assert len(_ops(port, "siege")) == 0                        # 轮 1 不架起（未入 10.4）
+    eng.on_game_state(_gs(3, Point2(0, 0), Point2(0, 0)))      # inf_hop：前沿点 (10.4,0)，未到 → attack_move
+    assert eng._active_step == "inf_hop"
+    assert len(_ops(port, "attack_move_to")) == 1
+    # 脱队：步兵跑到 (0,13)（距坦克 13>12）→ STRAGGLED → inf_wait
+    eng.on_game_state(_gs(4, Point2(0, 13), Point2(0, 0)))
+    assert eng._active_step == "inf_wait"
+    # 停等 hold_secs=3：step_elapsed 1/2 停、3 续（hold 同参去重，只发 1 条）
+    eng.on_game_state(_gs(5, Point2(0, 13), Point2(0, 0)))
+    assert eng._active_step == "inf_wait"
+    eng.on_game_state(_gs(6, Point2(0, 13), Point2(0, 0)))
+    assert eng._active_step == "inf_wait"
+    eng.on_game_state(_gs(7, Point2(0, 13), Point2(0, 0)))
+    assert eng._active_step == "inf_hop"                        # RESUME
+    # 步兵到前沿点 (10.4,0) → IN_PLACE → threat_gate
+    eng.on_game_state(_gs(8, Point2(10.4, 0), Point2(0, 0)))
+    assert eng._active_step == "threat_gate"
+    # 威胁大（5 敌近前沿点）→ 卡 threat_gate；attack_move 同前沿点被去重（仍 1 条）
+    near5 = [Point2(11 + i, 0) for i in range(5)]
+    eng.on_game_state(_gs(9, Point2(10.4, 0), Point2(0, 0), near5))
+    assert eng._active_step == "threat_gate"                   # 威胁大不推进
+    assert len(_ops(port, "attack_move_to")) == 1              # 同前沿点 (10.4,0) 去重，不重发
+    # 威胁解除（无近敌）→ CLEARED → tank_hop（轮 2）
+    eng.on_game_state(_gs(10, Point2(10.4, 0), Point2(0, 0)))
+    assert eng._active_step == "tank_hop"
 
-    # 第 3 跳：坦克 → p3，枪兵 → p4
-    eng.on_game_state(_gs(18, P["p3"], P["p2"]))
-    eng.on_game_state(_gs(19, P["p3"], P["p3"]))
-    eng.on_game_state(_gs(20, P["p3"], P["p3"]))
-    assert eng._active_step == "hop3_inf"
-    eng.on_game_state(_gs(21, P["p3"], P["p3"]))
-    eng.on_game_state(_gs(22, P["p4"], P["p3"]))
-    assert eng._active_step == "hop3_clear"
-    eng.on_game_state(_gs(23, P["p4"], P["p3"]))
-    assert eng._active_step == "final_assault"
-
-    # 总攻：坦克最后在 p4 掩护（arrived 优先于脱队判定——完整部署里点位链铺到目标，
-    # 总攻全程覆盖；示例在 p4 收尾）→ arrived → done
-    eng.on_game_state(_gs(24, P["p4"], P["p4"]))
-    assert eng._active_step == "final_assault" and eng._done is False
-    eng.on_game_state(_gs(25, Point2(124, 116), P["p4"]))
+    # ===== 轮 2（坦克入 10.4 内，发 siege）=====
+    eng.on_game_state(_gs(11, Point2(10.4, 0), Point2(10.4, 0)))  # tank_hop：坦克→步兵组心 → IN_PLACE
+    assert eng._active_step == "siege_gate"
+    eng.on_game_state(_gs(12, Point2(10.4, 0), Point2(10.4, 0)))  # siege_gate：距目标 9.6 ≤ 10.4 → SIEGE
+    assert eng._active_step == "inf_hop"
+    assert len(_ops(port, "siege")) == 1                          # siege 仅此轮发（入 10.4 内）
+    eng.on_game_state(_gs(13, Point2(10.4, 0), Point2(10.4, 0)))  # inf_hop：前沿点 (20.8,0)，未到 → attack_move
+    assert eng._active_step == "inf_hop"
+    assert len(_ops(port, "attack_move_to")) == 2                 # 第二个前沿点 (20.8,0)
+    # 步兵到 (20.8,0)：距目标 0.8 < 8 → ARRIVED → done
+    eng.on_game_state(_gs(14, Point2(20.8, 0), Point2(10.4, 0)))
     assert eng._done is True
 
-    # op 汇总：3 次坦克 move（p1/p2/p3）+ 4 次步兵 attack_move（p2/p3/p4/敌方主矿）
-    # + 2 次 hold（坦克驻扎、步兵停等；同类同参被去重）
-    moves = [o for o in port.submitted if o.action == "move_to"]
-    attacks = [o for o in port.submitted if o.action == "attack_move_to"]
-    holds = [o for o in port.submitted if o.action == "hold_position"]
-    assert len(moves) == 3
-    assert len(attacks) == 4
-    assert len(holds) == 2
-    # 坦克 move 只作用于坦克组（4 个 tag），步兵 attack 只作用于步兵组（20 个 tag）
-    assert all(len(o.unit_tags) == 4 for o in moves)
-    assert all(len(o.unit_tags) == 20 for o in attacks)
-
+    # ===== op 汇总断言 =====
+    attacks = _ops(port, "attack_move_to")
+    sieges = _ops(port, "siege")
+    holds = _ops(port, "hold_position")
+    # 组心每轮逼近：前沿点 (10.4,0) → (20.8,0)，每轮 ≈ tank_cover(10.4)
+    assert [a.params["position"] for a in attacks] == [[10.4, 0.0], [20.8, 0.0]]
+    assert len(sieges) == 1                                  # siege 仅轮 2（入 10.4 内才发）
+    assert all(len(o.unit_tags) == 4 for o in sieges)        # siege 作用于 4 坦克
+    assert len(holds) == 1                                  # 脱队停等 hold（同参去重）
+    assert all(len(o.unit_tags) == 20 for o in attacks)      # attack 作用于 20 步兵

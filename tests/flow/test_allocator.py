@@ -75,3 +75,24 @@ def test_expand_all_across_types():
     assert alloc.count("G1", "MARINE") == 1
     assert alloc.count("G1", "SCV") == 1
 
+
+def test_sieged_tank_still_leased_and_counted():
+    """形态变体归一（T3）：坦克架起后 type_name 变 SIEGETANKSIEGED，传 catalog 时
+    仍被 lease/计数为 SIEGETANK 组成员；不传 catalog 时漏 lease（回归对照）。"""
+    from game.catalog import load_terran
+    cat = load_terran()
+    # 4 坦克：2 未架起 + 2 已架起（type_name=SIEGETANKSIEGED）
+    units = [_u(1, "SIEGETANK"), _u(2, "SIEGETANK"),
+             _u(3, "SIEGETANKSIEGED"), _u(4, "SIEGETANKSIEGED")]
+    alloc = Allocator(catalog=cat)
+    alloc.create_group("G1", {"SIEGETANK": {"target": 4}})
+    alloc.refresh(_gs(units))
+    assert alloc.count("G1", "SIEGETANK") == 4              # 4 辆全 lease（架起态归一到主名）
+    assert sorted(alloc.expand("G1", "SIEGETANK")) == [1, 2, 3, 4]
+    assert sorted(alloc.expand("G1", "SIEGETANKSIEGED")) == [1, 2, 3, 4]  # 变体名查询也归一
+    # 回归对照：不传 catalog → 架起态漏 lease（只 lease 2 辆未架起的）
+    alloc2 = Allocator()
+    alloc2.create_group("G1", {"SIEGETANK": {"target": 4}})
+    alloc2.refresh(_gs(units))
+    assert alloc2.count("G1", "SIEGETANK") == 2
+

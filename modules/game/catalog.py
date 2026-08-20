@@ -80,6 +80,9 @@ class CatalogEntry:
     # Unit.build() 也因 creation_ability 为 None 静默返回 False）。driver 按 build_ability 发命令。
     build_ability: str | None = None    # 通用建造能力 burnysc2 名（仅挂件条目填；如 "BUILD_REACTOR"）
     build_order_name: str | None = None  # 母建筑执行建造时的订单按钮名（如 "Reactor"；在途确认用）
+    attack_range: float | None = None    # 常规射程（坦克未架起 5；None=无攻击/不参与射程门；T6 真机锁定）
+    siege_range: float | None = None      # 架起射程（坦克 13；架起门用 0.8×siege_range=10.4）
+    variants: tuple[str, ...] = ()        # 形态变体 burnysc2 名（SIEGETANK → ("SIEGETANKSIEGED",)；T3 反查归一化主名）
 
 
 class Catalog:
@@ -88,6 +91,7 @@ class Catalog:
     def __init__(self) -> None:
         self._by_stable: dict[str, CatalogEntry] = {}
         self._by_burnysc2: dict[str, CatalogEntry] = {}
+        self._variant_index: dict[str, str] = {}  # 变体 burnysc2 名 → 主名（T3 归一化反查）
 
     def register(self, stable_id: str, data: dict) -> None:
         """登记一条（加载边界校验：非法数据当场 ValueError，R7 上层降级告警）。"""
@@ -128,6 +132,17 @@ class Catalog:
         # 用实体名拼 BUILD_* 不存在；缺 build_ability 的挂件条目 = 无法下发的坏数据）
         if "addon" in capabilities and not build_ability:
             raise ValueError(f"{stable_id}: addon 挂件条目必须提供 build_ability（通用建造能力名）")
+        attack_range = data.get("attack_range")
+        if attack_range is not None:
+            attack_range = float(attack_range)
+            if attack_range < 0:
+                raise ValueError(f"{stable_id}: attack_range 不能为负数")
+        siege_range = data.get("siege_range")
+        if siege_range is not None:
+            siege_range = float(siege_range)
+            if siege_range < 0:
+                raise ValueError(f"{stable_id}: siege_range 不能为负数")
+        variants = tuple(data.get("variants") or [])
         e = CatalogEntry(
             stable_id=stable_id,
             burnysc2_name=burnysc2_name,
@@ -141,11 +156,20 @@ class Catalog:
             prerequisites=list(data.get("prerequisites") or []),
             build_ability=build_ability,
             build_order_name=build_order_name,
+            attack_range=attack_range,
+            siege_range=siege_range,
+            variants=variants,
         )
         if e.burnysc2_name in self._by_burnysc2:
             raise ValueError(f"{stable_id}: burnysc2_name {e.burnysc2_name!r} 已被占用")
         self._by_stable[stable_id] = e
         self._by_burnysc2[e.burnysc2_name] = e
+        # 变体归一反向索引（T3）：变体名 → 主名；同变体被两个主名声明 = 坏数据
+        for v in e.variants:
+            prior = self._variant_index.get(v)
+            if prior is not None and prior != e.burnysc2_name:
+                raise ValueError(f"变体 {v!r} 同时被 {prior!r} 与 {e.burnysc2_name!r} 声明为主名")
+            self._variant_index[v] = e.burnysc2_name
 
     def by_stable_id(self, stable_id: str) -> CatalogEntry | None:
         """按稳定 ID 查条目（如 "terran/marine" → CatalogEntry）。"""
@@ -174,6 +198,11 @@ class Catalog:
         """稳定 ID → burnysc2 枚举名（driver 翻译层用；未知 ID → None）。"""
         e = self._by_stable.get(stable_id)
         return e.burnysc2_name if e else None
+
+    def normalize_burnysc2_name(self, name: str) -> str:
+        """burnysc2 名归一（T3）：变体名（如 SIEGETANKSIEGED）→ 主名（SIEGETANK）；
+        主名/未知名原样返回。无 catalog 场景由调用方 None 透传处理（见 flow._normalize_type）。"""
+        return self._variant_index.get(name, name)
 
 
 def load_terran() -> Catalog:

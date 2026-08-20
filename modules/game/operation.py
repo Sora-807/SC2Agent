@@ -33,6 +33,8 @@ OP_CATALOG: dict[str, list[tuple[str, ParamType, bool]]] = {
     "follow":         [("target_unit", ParamType.TAG, True)],
     "patrol":         [("positions", ParamType.POINTS, True)],
     "focus_fire":     [("target_unit", ParamType.TAG, True)],
+    "siege":          [],   # 组级架起（无参数；SIEGEMODE_SIEGEMODE 能力）
+    "unsiege":        [],   # 组级收起（无参数；UNSIEGE_UNSIEGE 能力）
     "build":          [("type", ParamType.STABLE_ID, True), ("position", ParamType.POINT, True)],
     "build_gas":       [("type", ParamType.STABLE_ID, True), ("target_unit", ParamType.TAG, True)],
     "train":          [("type", ParamType.STABLE_ID, True)],

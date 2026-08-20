@@ -47,6 +47,9 @@ UNIMPLEMENTED_SPATIAL_OPS: dict[str, str] = {
     "cluster_centers": "需要聚类算法，待建",
 }
 
+# 已实现的空间值工具（消费方是 when AST 的 args / 动作参数；T4 起逐个加）
+KNOWN_SPATIAL_OPS = frozenset({"point_toward"})
+
 
 @dataclass
 class EvalCtx:
@@ -58,6 +61,16 @@ class EvalCtx:
     strategy_start: float
     step_entered: float
     region_layer: RegionLayer | None = None  # 区域模型（名字→锚点/归属，ADR-0029）
+    catalog: object = None  # game.Catalog（形态变体归一化；None 透传，T3）
+
+
+def _normalize_type(catalog, type_name: str) -> str:
+    """形态变体归一化（T3）：catalog 为 None 时原样返回（离线/单测兼容）；
+    有 catalog 时把变体名（如 SIEGETANKSIEGED）归一到主名（SIEGETANK），
+    使架起后实体仍算作原组成员。主名/未知名原样返回（宽容，不报错）。"""
+    if catalog is None:
+        return type_name
+    return catalog.normalize_burnysc2_name(type_name)
 
 
 def eval_when(node, ctx: EvalCtx):
@@ -107,6 +120,8 @@ def eval_when(node, ctx: EvalCtx):
             return _p_arrived(ctx, *args)
         if op == "group_center":
             return _p_group_center(ctx, args[0])
+        if op == "point_toward":
+            return point_toward(args[0], args[1], args[2], ctx.region_layer)
         if op == "distance_between":
             return _p_distance_between(ctx, args[0], args[1])
         if op == "enemy_count_near":
@@ -146,6 +161,30 @@ def _group_units(ctx: EvalCtx, slot) -> list:
 def group_center(ctx: EvalCtx, slot) -> Point2 | None:
     """slot group 的单位质心（公开版：谓词与 engine 的动作参数求值共用）。"""
     return center_of_units(_group_units(ctx, slot))
+
+
+def point_toward(from_val, toward_val, dist, layer=None) -> Point2 | None:
+    """从 from 朝 toward 方向延伸 dist 距离的点（T4）。
+
+    from/toward 接受 Point2/(x,y)序列/点位名（经 resolve_target 解析）；dist 为数值。
+    from==toward 或 dist<=0 → 返回 from；任一端为 None（含未知名）→ None（arrived 判 false，不崩）。
+    layer=None 时点位名解析返回 None；eval_when/_eval_value 从 ctx.region_layer 注入。
+    """
+    f = resolve_target(from_val, layer)
+    t = resolve_target(toward_val, layer)
+    if f is None or t is None:
+        return None
+    try:
+        d = float(dist)
+    except (TypeError, ValueError):
+        return None
+    if d <= 0:
+        return f
+    dx, dy = t.x - f.x, t.y - f.y
+    mag = (dx * dx + dy * dy) ** 0.5
+    if mag == 0:
+        return f  # from==toward
+    return Point2(f.x + dx / mag * d, f.y + dy / mag * d)
 
 
 def _resolve_target(val, ctx: EvalCtx) -> Point2 | None:
@@ -198,7 +237,9 @@ def _p_region_center(ctx: EvalCtx, name) -> Point2 | None:
 
 
 def _p_unit_count(ctx: EvalCtx, type_name) -> int:
-    return sum(1 for u in ctx.gs.units if u.type_name == type_name and u.owner is Owner.SELF)
+    want = _normalize_type(ctx.catalog, type_name)  # 双侧归一：架起态仍计为主名（T3）
+    return sum(1 for u in ctx.gs.units
+               if _normalize_type(ctx.catalog, u.type_name) == want and u.owner is Owner.SELF)
 
 
 def _p_group_center_in_region(ctx: EvalCtx, slot, region) -> bool:
@@ -218,8 +259,9 @@ def _p_enemy_visible_in(ctx: EvalCtx, region) -> bool:
 
 def _p_has_building(ctx: EvalCtx, type_name, region=None, ready=False) -> bool:
     layer = ctx.region_layer
+    want = _normalize_type(ctx.catalog, type_name)  # 双侧归一（T3）
     for u in ctx.gs.units:
-        if u.owner is not Owner.SELF or u.type_name != type_name:
+        if u.owner is not Owner.SELF or _normalize_type(ctx.catalog, u.type_name) != want:
             continue
         if ready and u.build_progress < 1.0:
             continue

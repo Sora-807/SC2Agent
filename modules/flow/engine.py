@@ -11,20 +11,23 @@ from __future__ import annotations
 import json
 
 from game import GameState, Operation
+from game.operation import OP_CATALOG, ParamType
 
 from flow.allocator import Allocator
 from flow.manifest import FlowAssembly, StrategyManifest, validate_assembly
-from flow.predicates import EvalCtx, eval_when, group_center
+from flow.predicates import EvalCtx, eval_when, group_center, point_toward
 from tactical_map.resolver import resolve_action_params
 
 
 class FlowEngine:
-    def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port, region_layer=None) -> None:
+    def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port,
+                 region_layer=None, catalog=None) -> None:
         validate_assembly(manifest, assembly)  # R6：绑定/引用错误在构造期拒绝
         self._m = manifest
         self._port = port
-        self._alloc = Allocator()
+        self._alloc = Allocator(catalog=catalog)  # catalog 透传给 Allocator（形态变体归一化，T3）
         self._region_layer = region_layer  # 区域模型（map 名→坐标，ADR-0029）
+        self._catalog = catalog  # 透传给 EvalCtx（谓词层归一化，T3）
         for g in assembly.groups:
             self._alloc.create_group(g.group_id, g.composition)
         si = assembly.strategy_instances[0]
@@ -52,7 +55,8 @@ class FlowEngine:
             self._step_entered = gs.game_time
         self._alloc.refresh(gs)
         ctx = EvalCtx(gs, self._alloc, self._bindings, self._params, self._variables,
-                      self._strategy_start, self._step_entered, self._region_layer)
+                      self._strategy_start, self._step_entered, self._region_layer,
+                      catalog=self._catalog)
         step = self._m.steps[self._active_step]
         for b in step.get("branches", []):
             when = b.get("when")
@@ -91,7 +95,9 @@ class FlowEngine:
         params = _resolve_params(a.get("params", {}), ctx)
         # ADR-0029 D1：emit 前把 map 名解析成数值（去重也在解析后，spec-003 §2.1）
         params = resolve_action_params(atom, params, self._region_layer)
-        pkey = json.dumps(params, sort_keys=True, default=str)
+        # T4 去重量化：POINT/POINTS 参数 round 到整格进键（动态点微移 <0.5 不重发、≥1 才重发）；
+        # 实际下发的 params 保留精确值（仅 pkey 量化）。
+        pkey = json.dumps(_quantize_for_dedup(atom, params), sort_keys=True, default=str)
         if self._last_emitted.get((slot, type_name, atom)) == pkey:
             return  # 去重：同 (slot,type,action,params) 不重发
         self._last_emitted[(slot, type_name, atom)] = pkey
@@ -134,6 +140,12 @@ def _eval_value(v, ctx: EvalCtx):
         op = v.get("op")
         if op == "group_center":
             return group_center(ctx, v["args"][0])
+        if op == "point_toward":
+            a = v.get("args", [])
+            if len(a) < 3:
+                return None
+            return point_toward(_eval_value(a[0], ctx), _eval_value(a[1], ctx),
+                                _eval_value(a[2], ctx), ctx.region_layer)
         if op == "region_center":
             return ctx.region_layer.anchor(v["args"][0]) if ctx.region_layer is not None else None
     return v
@@ -141,3 +153,29 @@ def _eval_value(v, ctx: EvalCtx):
 
 def _resolve_params(params: dict, ctx: EvalCtx) -> dict:
     return {k: _eval_value(v, ctx) for k, v in params.items()}
+
+
+def _quantize_for_dedup(action: str, params: dict) -> dict:
+    """去重键用的参数量化（T4）：POINT/POINTS 坐标 round 到整格，使动态点（如组心）微移
+    <0.5 格不触发重发、跨整格才重发。只服务于去重键；下发的 Operation.params 保留精确值。"""
+    point_params = {n for n, t, _ in OP_CATALOG.get(action, [])
+                    if t in (ParamType.POINT, ParamType.POINTS)}
+    if not point_params:
+        return params
+    out = dict(params)
+    for name in point_params:
+        if name in out:
+            out[name] = _round_coords(out[name])
+    return out
+
+
+def _round_coords(v):
+    """POINT/POINTS 值的坐标量化：[x,y]→[round,round]；[[x,y],...]→逐点；Point2→[round,round]；
+    非点值（字符串/None/解析失败残留）原样返回（json default=str 兜底）。"""
+    if isinstance(v, (list, tuple)):
+        if len(v) >= 2 and isinstance(v[0], (int, float)) and isinstance(v[1], (int, float)):
+            return [round(float(v[0])), round(float(v[1]))]  # POINT [x, y]
+        return [_round_coords(p) for p in v]  # POINTS [[x,y], ...]（或混合）
+    if hasattr(v, "x") and hasattr(v, "y"):
+        return [round(float(v.x)), round(float(v.y))]  # Point2 兜底
+    return v

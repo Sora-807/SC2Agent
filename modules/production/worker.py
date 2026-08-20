@@ -80,10 +80,15 @@ class WorkerAllocator:
                     sat[o.target_tag] += 1
         return sat
 
-    def _pick_worker(self, workers: list) -> object | None:
-        """优先空闲工兵（orders 空），否则取第一个。"""
-        idle = [w for w in workers if not w.orders]
-        return (idle or workers or [None])[0]
+    def _pick_worker(self, workers: list, exclude: set[int] | None = None) -> object | None:
+        """优先空闲工兵（orders 空），否则取第一个；排除已选（同帧不重复派同一 SCV——
+        真机踩坑：无 idle 时旧实现每次都返回 workers[0]，N 条 gather 打同一 SCV 被去重→只 1 个真采）。"""
+        ex = exclude or set()
+        idle = [w for w in workers if w.tag not in ex and not w.orders]
+        if idle:
+            return idle[0]
+        rest = [w for w in workers if w.tag not in ex]
+        return rest[0] if rest else None
 
     def assign(self, gs: GameState, task: WorkerTask, count: int, base_pos=None,
                skip: frozenset[int] = frozenset()) -> list[Emission]:
@@ -99,6 +104,7 @@ class WorkerAllocator:
         cap = GAS_SATURATION if task is WorkerTask.GAS else MINERAL_SATURATION
         out: list[Emission] = []
         remaining = count
+        picked: set[int] = set()  # 本帧已派令的 SCV（不重复派同一单位——见 _pick_worker）
         # 轮询补位：每轮给未饱和节点各派一个（SC2 采集习惯：矿脉间分摊）
         while remaining > 0:
             progressed = False
@@ -107,9 +113,10 @@ class WorkerAllocator:
                     break
                 if sat.get(node.tag, 0) >= cap:
                     continue
-                w = self._pick_worker(workers)
+                w = self._pick_worker(workers, exclude=picked)
                 if w is None:
                     return out
+                picked.add(w.tag)
                 out.append(Emission(
                     action="gather",
                     unit_tags=[w.tag],

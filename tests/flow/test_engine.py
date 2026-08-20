@@ -262,6 +262,91 @@ strategy_instances:
     assert moves[1].params == {"position": [20.0, 20.0]}
 
 
+def test_point_toward_in_action_param():
+    """动作参数含 point_toward（T4）：position = point_toward(group_center, target, dist) 求值成 [x,y]。
+    2 marines 在 (0,0) → group_center=(0,0)；朝 [20,0] 延伸 5 → (5,0)。"""
+    strategy = """
+id: pt
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [20.0, 0.0], 5.0]}}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: pt
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    units = [Unit(tag=100 + i, type_name="MARINE", position=Point2(0.0, 0.0), owner=Owner.SELF,
+                  hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0) for i in range(2)]
+    g = Grid(1, 1, [[0]])
+    eng.on_game_state(GameState(seq=0, game_time=0.0, minerals=50, vespene=0, supply_used=2,
+                                supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g))
+    assert len(port.submitted) == 1
+    assert port.submitted[0].params["position"] == [5.0, 0.0]
+
+
+def test_dedup_quantization_suppresses_micro_move():
+    """去重量化（T4）：动态点（组心）微移 0.4 不重发，跨整格（≥1）才重发。
+    position = point_toward(group_center, [100,0], 10) ≈ group_center.x + 10；
+    组心 0→0.4 量化同 [10,0] 不重发；0.4→1.4 量化跨 [10]→[11] 重发。实际下发保留精确值。"""
+    strategy = """
+id: q
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [100.0, 0.0], 10.0]}}}
+"""
+    assembly = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      MARINE: {min: 2, target: 2, max: 2}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: q
+    bindings: {main: G1}
+    params: {}
+"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+
+    def gs(cx):
+        units = [Unit(tag=100 + i, type_name="MARINE", position=Point2(cx, 0.0), owner=Owner.SELF,
+                      hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0) for i in range(2)]
+        g = Grid(1, 1, [[0]])
+        return GameState(seq=0, game_time=0.0, minerals=50, vespene=0, supply_used=2,
+                         supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g)
+
+    eng.on_game_state(gs(0.0))    # point (10.0,0) → 首次 emit
+    eng.on_game_state(gs(0.4))    # point (10.4,0) → 量化 [10,0] 同键 → 不重发
+    eng.on_game_state(gs(1.4))    # point (11.4,0) → 量化 [11,0] 异键 → 重发
+    moves = [o for o in port.submitted if o.action == "move_to"]
+    assert len(moves) == 2, f"微移不重发、跨格才重发，期望 2 条，got {len(moves)}"
+    assert moves[0].params["position"] == [10.0, 0.0]      # 精确值（非量化）
+    assert moves[1].params["position"] == [11.4, 0.0]
+
+
 def test_dedup_key_separates_by_type():
     """同 slot 同 atom 不同 type → 各自独立去重键（同组多兵种协同）。"""
     strategy = """

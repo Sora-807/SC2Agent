@@ -172,5 +172,69 @@
       "terran/commandcenter"
     ],
     "size": 3
+  },
+  "terran/factory": {
+    "burnysc2_name": "FACTORY",
+    "display_name_zh": "工厂",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 43,
+    "size": 3,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/barracks"
+    ]
+  },
+  "terran/factorytechlab": {
+    "burnysc2_name": "FACTORYTECHLAB",
+    "display_name_zh": "工厂科技实验室",
+    "role": "building",
+    "capabilities": [
+      "addon"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 25,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factory"
+    ],
+    "size": 2,
+    "build_ability": "BUILD_TECHLAB",
+    "build_order_name": "Techlab"
+  },
+  "terran/siegetank": {
+    "burnysc2_name": "SIEGETANK",
+    "display_name_zh": "攻城坦克",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 125,
+      "supply": 2
+    },
+    "build_time": 32,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factorytechlab"
+    ],
+    "attack_range": 5,
+    "siege_range": 13,
+    "variants": [
+      "SIEGETANKSIEGED"
+    ]
   }
 }

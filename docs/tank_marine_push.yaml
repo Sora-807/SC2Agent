@@ -1,26 +1,15 @@
-# 步坦协同（坦克掩护步兵的蛙跳推进）—— 现有 flow 词表可编译参考版
+# 步坦协同（坦克掩护步兵的循环蛙跳推进）—— T5 循环版（真机可跑）
 #
-# 用户规则 → flow 表达映射：
-#   R1 进攻中步兵距坦克 > inf_hold_dist → 步兵停 hold_secs 再续进
-#      （hopX_inf 的 STRAGGLED 分支 → hopX_wait：hold_position + step_elapsed 计时）
-#   R2 坦克推进到枪兵身边驻扎，架起条件 = 距下一目标 ≤ 架起射程 80%（13×0.8=10.4）
-#      （hopX_tank move_to 上一位 → hopX_siege 的 arrived(armor, 下一点, tank_cover) 覆盖门）
-#   R3 步兵不得超出坦克攻击范围进攻
-#      （推进点链按 ≤ tank_cover 间距 author + hopX_siege 覆盖门校验；点位见 push_points）
-#   R4 清理 → 威胁评估（enemy_count_near < threat_limit 且 group_hp_ratio > 0.6）→ 下一跳
-#      （hopX_clear）
-#   R5 总攻：坦克最后一跳架起掩护，步兵攻向敌方主矿；脱队同样进 final_wait
+# 用 T1 siege 动作 + T4 point_toward 动态点 + 去重量化；T3 归一化（run 侧传 catalog=load_terran）。
 #
-# 完全体缺口（已列入 docs/test-plan.md 待建清单）：
-#   - siege/unsiege 动作（现用 hold_position 占位；driver 需加 SIEGEMODE/UNSIEGE 能力翻译）
-#   - 动态点计算（坦克组心→目标方向×0.8射程：现需人工 author 推进点链；
-#     拟加空间函数 point_toward(from_group, toward_point, distance) 作为 action 参数节点）
-#   - 射程/武器属性数据目录（catalog range 字段；现用 tank_cover 参数写死 10.4）
-#   - timer_elapsed（现用 step_elapsed 近似）；engaged/under_attack（威胁评估精细版）
-#   - nearest_units/cluster_centers（前沿单位判定；现用组心近似）
-
-# ---- 点位 authoring（真机时由 run_slot_scan/标图流程产出；示例：主矿→敌矿直线，间距 9.9 ≤ 10.4）
-# push_points: {p1: [70, 50], p2: [77, 57], p3: [84, 64], p4: [91, 71]}
+# 循环 4 步（自动蛙跳到 target）：
+#   formup ─▶ tank_hop ─▶ siege_gate ─▶ inf_hop ─▶ threat_gate ─┐
+#              坦克 move       距目标≤tank_cover    步兵 attack_move    └─(CLEARED)─回到 tank_hop
+#              到步兵组心(3内)  才 siege(否则 SKIP)   到前沿 point_toward
+#   tank_hop/inf_hop 内 arrived(inf, target, 8) → exit_strategy ARRIVED（任意时刻近似）
+#
+# 前沿点 = point_toward(group_center(armor), target, tank_cover)：坦克覆盖内、朝敌方向。
+# 坦克离目标远时 siege_gate 跳过架起（SKIP→inf_hop）；仅坦克入 target 10.4 内那一轮才 siege。
 
 strategy:
   id: tank_marine_push
@@ -28,11 +17,11 @@ strategy:
   group_slots: [inf, armor]
   params:
     target: {type: point, default: [127.5, 119.5]}   # 敌方主矿
-    inf_hold_dist: {type: float, default: 12.0}      # R1：步兵脱队判定距离
-    tank_cover: {type: float, default: 10.4}         # R2/R3：架起射程 13 × 80%
-    hold_secs: {type: float, default: 3.0}           # R1：步兵停顿时长
-    threat_radius: {type: float, default: 12.0}      # R4：威胁半径
-    threat_limit: {type: int, default: 3}            # R4：威胁阈值（近敌 < 此值才推进）
+    inf_hold_dist: {type: float, default: 12.0}       # R1：步兵脱队判定距离（> tank_cover，正常蛙跳不触发）
+    tank_cover: {type: float, default: 10.4}          # R2/R3：架起射程 13 × 80%
+    hold_secs: {type: float, default: 3.0}            # R1：步兵停顿时长
+    threat_radius: {type: float, default: 12.0}       # R4：威胁半径
+    threat_limit: {type: int, default: 3}            # R4：近敌 < 此值且血线健康才推进
     min_inf: {type: int, default: 20}
     min_tank: {type: int, default: 4}
   variables: {}
@@ -44,156 +33,64 @@ strategy:
           do: [{op: exit_step, kind: done, reason: FORMED}]
         - do: []
 
-    # ---- 第 1 跳：坦克推进到 p1，步兵推进到 p2（p2 在坦克覆盖内） ----
-    - step_id: hop1_tank
+    # 坦克推进到步兵组心；到位（3 内）→ siege_gate
+    - step_id: tank_hop
       branches:
-        - when: {op: arrived, args: [armor, p1, 2.0]}
+        - when: {op: arrived, args: [inf, {param: target}, 8.0]}
+          do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
+        - when: {op: arrived, args: [armor, {op: group_center, args: [inf]}, 3.0]}
           do: [{op: exit_step, kind: done, reason: IN_PLACE}]
         - do:
-            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: move_to, params: {position: p1}}
-    - step_id: hop1_siege
-      branches:
-        # R2：距下一目标 ≤ 80% 架起射程才驻扎（否则留在原地等，作者间距保证此门恒真）
-        - when: {op: arrived, args: [armor, p2, {param: tank_cover}]}
-          do:
-            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: hold_position}  # 架起占位：真机换 siege
-            - {op: exit_step, kind: done, reason: SIEGED}
-        - do: []
-    - step_id: hop1_inf
-      branches:
-        # R1：步兵脱队 → 停下等 hold_secs（hop1_wait 计时）
-        - when: {op: ">", args: [{op: distance_between, args: [inf, armor]}, {param: inf_hold_dist}]}
-          do: [{op: exit_step, kind: interrupted, reason: STRAGGLED}]
-        - when: {op: arrived, args: [inf, p2, 3.0]}
-          do: [{op: exit_step, kind: done, reason: IN_PLACE}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: p2}}
-    - step_id: hop1_wait
-      branches:
-        - when: {op: ">=", args: [{op: step_elapsed}, {param: hold_secs}]}
-          do: [{op: exit_step, kind: done, reason: RESUME}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: hold_position}
-    - step_id: hop1_clear
-      branches:
-        # R4：威胁小（近敌 < 阈值 且 血线健康）→ 下一跳
-        - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, args: [p2, {param: threat_radius}]}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, args: [inf]}, 0.6]}]}
-          do: [{op: exit_step, kind: done, reason: CLEARED}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: p2}}
+            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: move_to, params: {position: {op: group_center, args: [inf]}}}
 
-    # ---- 第 2 跳：坦克推进到枪兵身边（p2）驻扎，枪兵 → p3 ----
-    - step_id: hop2_tank
+    # 距目标 ≤ tank_cover 才架起（T1 siege）；否则 SKIP 跳过（坦克未架起跟进）
+    - step_id: siege_gate
       branches:
-        - when: {op: arrived, args: [armor, p2, 2.0]}
-          do: [{op: exit_step, kind: done, reason: IN_PLACE}]
-        - do:
-            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: move_to, params: {position: p2}}
-    - step_id: hop2_siege
-      branches:
-        - when: {op: arrived, args: [armor, p3, {param: tank_cover}]}
+        - when: {op: arrived, args: [armor, {param: target}, {param: tank_cover}]}
           do:
-            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: hold_position}
+            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: siege}
             - {op: exit_step, kind: done, reason: SIEGED}
-        - do: []
-    - step_id: hop2_inf
-      branches:
-        - when: {op: ">", args: [{op: distance_between, args: [inf, armor]}, {param: inf_hold_dist}]}
-          do: [{op: exit_step, kind: interrupted, reason: STRAGGLED}]
-        - when: {op: arrived, args: [inf, p3, 3.0]}
-          do: [{op: exit_step, kind: done, reason: IN_PLACE}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: p3}}
-    - step_id: hop2_wait
-      branches:
-        - when: {op: ">=", args: [{op: step_elapsed}, {param: hold_secs}]}
-          do: [{op: exit_step, kind: done, reason: RESUME}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: hold_position}
-    - step_id: hop2_clear
-      branches:
-        - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, args: [p3, {param: threat_radius}]}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, args: [inf]}, 0.6]}]}
-          do: [{op: exit_step, kind: done, reason: CLEARED}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: p3}}
+        - do: [{op: exit_step, kind: done, reason: SKIP}]
 
-    # ---- 第 3 跳：坦克 → p3 驻扎，枪兵 → p4 ----
-    - step_id: hop3_tank
-      branches:
-        - when: {op: arrived, args: [armor, p3, 2.0]}
-          do: [{op: exit_step, kind: done, reason: IN_PLACE}]
-        - do:
-            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: move_to, params: {position: p3}}
-    - step_id: hop3_siege
-      branches:
-        - when: {op: arrived, args: [armor, p4, {param: tank_cover}]}
-          do:
-            - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: hold_position}
-            - {op: exit_step, kind: done, reason: SIEGED}
-        - do: []
-    - step_id: hop3_inf
-      branches:
-        - when: {op: ">", args: [{op: distance_between, args: [inf, armor]}, {param: inf_hold_dist}]}
-          do: [{op: exit_step, kind: interrupted, reason: STRAGGLED}]
-        - when: {op: arrived, args: [inf, p4, 3.0]}
-          do: [{op: exit_step, kind: done, reason: IN_PLACE}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: p4}}
-    - step_id: hop3_wait
-      branches:
-        - when: {op: ">=", args: [{op: step_elapsed}, {param: hold_secs}]}
-          do: [{op: exit_step, kind: done, reason: RESUME}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: hold_position}
-    - step_id: hop3_clear
-      branches:
-        - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, args: [p4, {param: threat_radius}]}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, args: [inf]}, 0.6]}]}
-          do: [{op: exit_step, kind: done, reason: CLEARED}]
-        - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: p4}}
-
-    # ---- 总攻：坦克最后在 p4 掩护，步兵攻向敌方主矿 ----
-    # 完整部署：点位链一路铺到目标（最后一跳目标在架起覆盖内），总攻也全程覆盖；
-    # 示例为简洁在 p4 收尾，故 arrived 优先于脱队判定（到达即完成，不再等坦克跟上）
-    - step_id: final_assault
+    # 步兵推进到前沿点（坦克覆盖内、朝敌方向）；脱队→停等；到位→threat_gate
+    - step_id: inf_hop
       branches:
         - when: {op: arrived, args: [inf, {param: target}, 8.0]}
           do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
         - when: {op: ">", args: [{op: distance_between, args: [inf, armor]}, {param: inf_hold_dist}]}
           do: [{op: exit_step, kind: interrupted, reason: STRAGGLED}]
+        - when: {op: arrived, args: [inf, {op: point_toward, args: [{op: group_center, args: [armor]}, {param: target}, {param: tank_cover}]}, 3.0]}
+          do: [{op: exit_step, kind: done, reason: IN_PLACE}]
         - do:
-            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: {param: target}}}
-    - step_id: final_wait
+            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [armor]}, {param: target}, {param: tank_cover}]}}}
+
+    # 脱队停等：hold + step_elapsed ≥ hold_secs → RESUME
+    - step_id: inf_wait
       branches:
         - when: {op: ">=", args: [{op: step_elapsed}, {param: hold_secs}]}
           do: [{op: exit_step, kind: done, reason: RESUME}]
         - do:
             - {op: group_action, group_slot: inf, type: MARINE, action_atom: hold_position}
 
+    # 威胁评估：前沿点近敌 < threat_limit 且血线 > 0.6 → CLEARED → 下一轮 tank_hop；否则继续清理
+    - step_id: threat_gate
+      branches:
+        - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, args: [{op: point_toward, args: [{op: group_center, args: [armor]}, {param: target}, {param: tank_cover}]}, {param: threat_radius}]}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, args: [inf]}, 0.6]}]}
+          do: [{op: exit_step, kind: done, reason: CLEARED}]
+        - do:
+            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [armor]}, {param: target}, {param: tank_cover}]}}}
+
   edges:
-    - {from: formup, to: hop1_tank, kind: done, reason: FORMED}
-    - {from: hop1_tank, to: hop1_siege, kind: done, reason: IN_PLACE}
-    - {from: hop1_siege, to: hop1_inf, kind: done, reason: SIEGED}
-    - {from: hop1_inf, to: hop1_wait, kind: interrupted, reason: STRAGGLED}
-    - {from: hop1_wait, to: hop1_inf, kind: done, reason: RESUME}
-    - {from: hop1_inf, to: hop1_clear, kind: done, reason: IN_PLACE}
-    - {from: hop1_clear, to: hop2_tank, kind: done, reason: CLEARED}
-    - {from: hop2_tank, to: hop2_siege, kind: done, reason: IN_PLACE}
-    - {from: hop2_siege, to: hop2_inf, kind: done, reason: SIEGED}
-    - {from: hop2_inf, to: hop2_wait, kind: interrupted, reason: STRAGGLED}
-    - {from: hop2_wait, to: hop2_inf, kind: done, reason: RESUME}
-    - {from: hop2_inf, to: hop2_clear, kind: done, reason: IN_PLACE}
-    - {from: hop2_clear, to: hop3_tank, kind: done, reason: CLEARED}
-    - {from: hop3_tank, to: hop3_siege, kind: done, reason: IN_PLACE}
-    - {from: hop3_siege, to: hop3_inf, kind: done, reason: SIEGED}
-    - {from: hop3_inf, to: hop3_wait, kind: interrupted, reason: STRAGGLED}
-    - {from: hop3_wait, to: hop3_inf, kind: done, reason: RESUME}
-    - {from: hop3_inf, to: hop3_clear, kind: done, reason: IN_PLACE}
-    - {from: hop3_clear, to: final_assault, kind: done, reason: CLEARED}
-    - {from: final_assault, to: final_wait, kind: interrupted, reason: STRAGGLED}
-    - {from: final_wait, to: final_assault, kind: done, reason: RESUME}
+    - {from: formup, to: tank_hop, kind: done, reason: FORMED}
+    - {from: tank_hop, to: siege_gate, kind: done, reason: IN_PLACE}
+    - {from: siege_gate, to: inf_hop, kind: done, reason: SIEGED}
+    - {from: siege_gate, to: inf_hop, kind: done, reason: SKIP}
+    - {from: inf_hop, to: inf_wait, kind: interrupted, reason: STRAGGLED}
+    - {from: inf_wait, to: inf_hop, kind: done, reason: RESUME}
+    - {from: inf_hop, to: threat_gate, kind: done, reason: IN_PLACE}
+    - {from: threat_gate, to: tank_hop, kind: done, reason: CLEARED}
   on_exit: release
-  loop_limits: {max_step_transitions: 200}
+  loop_limits: {max_step_transitions: 80}
 
 assembly:
   id: tank_marine_assembly
@@ -209,4 +106,3 @@ assembly:
       strategy_ref: tank_marine_push
       bindings: {inf: G_INF, armor: G_TANK}
       params: {target: [127.5, 119.5]}
-

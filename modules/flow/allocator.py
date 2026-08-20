@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 
 from game import GameState, Owner
 
+from flow.predicates import _normalize_type
+
 
 @dataclass
 class GroupState:
@@ -18,8 +20,9 @@ class GroupState:
 
 
 class Allocator:
-    def __init__(self) -> None:
+    def __init__(self, catalog=None) -> None:
         self._groups: dict[str, GroupState] = {}
+        self._catalog = catalog  # 形态变体归一化（None 时 _normalize_type 透传；T3）
 
     def create_group(self, group_id: str, composition: dict) -> None:
         self._groups[group_id] = GroupState(group_id, composition, {})
@@ -40,8 +43,10 @@ class Allocator:
                 need = target - len(cur)
                 if need <= 0:
                     continue
+                # 单位侧归一：架起后 type_name 变 SIEGETANKSIEGED 仍匹配主名 SIEGETANK（T3）
                 cands = [u.tag for u in gs.units
-                         if u.type_name == type_name and u.owner == Owner.SELF and u.tag in free]
+                         if _normalize_type(self._catalog, u.type_name) == type_name
+                         and u.owner == Owner.SELF and u.tag in free]
                 take = set(cands[:need])
                 cur |= take
                 free -= take
@@ -52,13 +57,14 @@ class Allocator:
             return 0
         if type_name is None:
             return sum(len(s) for s in g.leased_by_type.values())
-        return len(g.leased_by_type.get(type_name, set()))
+        # 输入归一：调用方传变体名时也归一到主名键（leased_by_type 按主名键存；T3）
+        return len(g.leased_by_type.get(_normalize_type(self._catalog, type_name), set()))
 
     def expand(self, group_id: str, type_name: str) -> list[int]:
         g = self._groups.get(group_id)
         if g is None:
             return []
-        return sorted(g.leased_by_type.get(type_name, set()))
+        return sorted(g.leased_by_type.get(_normalize_type(self._catalog, type_name), set()))
 
     def expand_all(self, group_id: str) -> list[int]:
         """group 内所有类型已 lease 的 unit_tag（供 group_center 等空间谓词用）。"""

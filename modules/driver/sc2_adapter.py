@@ -191,6 +191,17 @@ def _t_focus_fire(op, find_unit, catalog=None):
     return [u.attack(tgt) for u in units] if tgt is not None else []
 
 
+def _t_siege(op, find_unit, catalog=None):
+    # 架起后实体 type_id 由 SIEGETANK 变 SIEGETANKSIEGED（真机观测，见 docs/siege_probe.log）：
+    # flow 计数需经 T3 形态变体归一化（catalog variants 反查）才能仍算作 SIEGETANK 组。
+    # 无具名 Unit 方法 → 走 __call__(AbilityId)，与挂件 BUILD_REACTOR 同路径。
+    return [u(AbilityId.SIEGEMODE_SIEGEMODE) for u in _units(op, find_unit)]
+
+
+def _t_unsiege(op, find_unit, catalog=None):
+    return [u(AbilityId.UNSIEGE_UNSIEGE) for u in _units(op, find_unit)]
+
+
 def _t_gather(op, find_unit, catalog=None):
     """采集：assign_workers 经生产运行时 WorkerAllocator 展开后的落地原子（P0）。"""
     tgt = find_unit(op.params["target_unit"]) if op.params.get("target_unit") else None
@@ -285,6 +296,8 @@ TRANSLATORS: dict[str, object] = {
     "follow": _t_follow,
     "patrol": _t_patrol,
     "focus_fire": _t_focus_fire,
+    "siege": _t_siege,
+    "unsiege": _t_unsiege,
     "build": _t_build,
     "train": _t_train,
     "research": _t_research,

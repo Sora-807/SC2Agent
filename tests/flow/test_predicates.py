@@ -55,11 +55,11 @@ def _gs(units, game_time=10.0):
 
 
 def _ctx(gs=None, alloc=None, bindings=None, params=None, variables=None, layer=None,
-         start=0.0, entered=5.0):
+         start=0.0, entered=5.0, catalog=None):
     return EvalCtx(
         gs=gs or _gs([]), allocator=alloc or FakeAllocator(), bindings=bindings or {},
         params=params or {}, variables=variables or {}, strategy_start=start,
-        step_entered=entered, region_layer=layer,
+        step_entered=entered, region_layer=layer, catalog=catalog,
     )
 
 
@@ -190,11 +190,50 @@ def test_region_center():
     assert eval_when({"op": "region_center", "args": ["main_base"]}, _ctx()) is None
 
 
+# ---- point_toward（空间值工具，T4）----
+
+
+def test_point_toward_direction_ratio_boundary():
+    """point_toward：from 朝 toward 延伸 dist（单位向量×dist + from）；dist=0/重合/负→from。"""
+    def pt(frm, twd, d):
+        return eval_when({"op": "point_toward", "args": [frm, twd, d]}, _ctx())
+    assert pt([0, 0], [10, 0], 3) == Point2(3.0, 0.0)    # 正东 3
+    assert pt([0, 0], [0, 10], 5) == Point2(0.0, 5.0)    # 正北 5
+    assert pt([1, 1], [4, 5], 5) == Point2(4.0, 5.0)     # (3,4) 归一×5=(3,4)+from=(4,5)
+    assert pt([0, 0], [10, 0], 0) == Point2(0.0, 0.0)    # dist=0 → from
+    assert pt([5, 5], [5, 5], 10) == Point2(5.0, 5.0)    # 重合 → from
+    assert pt([0, 0], [10, 0], -3) == Point2(0.0, 0.0)   # 负 dist → from
+
+
+def test_point_toward_none_and_point_name_via_layer():
+    """None 输入 → None（arrived 判 false，不崩）；点位名经 layer 解析（T4 layer 尾参）。
+    main_base anchor=[1,1]，from=[0,0] 朝它 dist=√2 → (1,1)；无 layer 时点位名→None。"""
+    import math
+    ctx = _ctx(layer=_layer())
+    assert eval_when({"op": "point_toward", "args": [None, [10, 0], 3]}, ctx) is None
+    assert eval_when({"op": "point_toward", "args": [[0, 0], None, 3]}, ctx) is None
+    r = eval_when({"op": "point_toward", "args": [[0, 0], "main_base", math.sqrt(2)]}, ctx)
+    assert r is not None
+    assert r.x == pytest.approx(1.0) and r.y == pytest.approx(1.0)
+    assert eval_when({"op": "point_toward", "args": [[0, 0], "main_base", 2]}, _ctx()) is None
+
+
 def test_unit_count():
     gs = _gs([_u(1, 0, 0), _u(2, 0, 0), _u(3, 0, 0, owner=Owner.ENEMY), _u(4, 0, 0, type_name="SCV")])
     ctx = _ctx(gs=gs)
     assert eval_when({"op": "unit_count", "args": ["MARINE"]}, ctx) == 2  # 只数 SELF
     assert eval_when({"op": "unit_count", "args": ["SCV"]}, ctx) == 1
+
+
+def test_unit_count_normalizes_variants():
+    """形态变体归一（T3）：unit_count 传 catalog 时把架起态（SIEGETANKSIEGED）计为主名 SIEGETANK；
+    不传 catalog 时架起态漏计（回归对照）。"""
+    from game.catalog import load_terran
+    cat = load_terran()
+    gs = _gs([_u(1, 0, 0, type_name="SIEGETANK"), _u(2, 0, 0, type_name="SIEGETANKSIEGED")])
+    assert eval_when({"op": "unit_count", "args": ["SIEGETANK"]}, _ctx(gs=gs, catalog=cat)) == 2
+    assert eval_when({"op": "unit_count", "args": ["SIEGETANKSIEGED"]}, _ctx(gs=gs, catalog=cat)) == 2
+    assert eval_when({"op": "unit_count", "args": ["SIEGETANK"]}, _ctx(gs=gs)) == 1  # 无 catalog 漏计
 
 
 # ---- 区域归属谓词（ADR-0029 消费方）----
@@ -236,6 +275,19 @@ def test_has_building():
     assert eval_when({"op": "has_building", "args": ["BARRACKS"]}, ctx) is False
     only_partial = _ctx(gs=_gs([depot]))
     assert eval_when({"op": "has_building", "args": ["SUPPLYDEPOT", None, True]}, only_partial) is False
+
+
+def test_has_building_normalizes_variants():
+    """形态变体归一（T3）：has_building 走同一归一路径，架起态实体按主名匹配。
+    借 SIEGETANK 变体验证通路（建筑一般无变体，但逻辑一致）。"""
+    from game.catalog import load_terran
+    cat = load_terran()
+    sieged = _u(1, 0, 0, type_name="SIEGETANKSIEGED", progress=1.0)
+    ctx = _ctx(gs=_gs([sieged]), catalog=cat)
+    assert eval_when({"op": "has_building", "args": ["SIEGETANK"]}, ctx) is True
+    assert eval_when({"op": "has_building", "args": ["SIEGETANK", None, True]}, ctx) is True
+    # 无 catalog：SIEGETANKSIEGED != SIEGETANK → 不匹配
+    assert eval_when({"op": "has_building", "args": ["SIEGETANK"]}, _ctx(gs=_gs([sieged]))) is False
 
 
 # ---- 词表边界 ----
