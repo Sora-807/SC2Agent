@@ -2,7 +2,7 @@
 from game import GameState, Grid, Owner, Point2, QueueItem, QueueOp, Unit, WorkerTask
 from game.catalog import load_terran
 from game.production import PlacementExact, PlacementInRegion
-from production.runtime import ProductionRuntime
+from production.runtime import STALL_WARN_SECS, ProductionRuntime
 from tactical_map import load_region_layer
 
 CAT = load_terran()
@@ -60,9 +60,10 @@ def _u(tag, type_name, owner=Owner.SELF, x=0.0, y=0.0, progress=1.0):
                 hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=progress)
 
 
-def _gs(units=(), resources=(), minerals=200, vespene=0, supply_used=8, supply_cap=15):
+def _gs(units=(), resources=(), minerals=200, vespene=0, supply_used=8, supply_cap=15,
+        game_time=0.0):
     g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=0.0, minerals=minerals, vespene=vespene,
+    return GameState(seq=0, game_time=game_time, minerals=minerals, vespene=vespene,
                      supply_used=supply_used, supply_cap=supply_cap, units=list(units),
                      map_size=(176, 160), creep=g, visibility=g, resources=list(resources))
 
@@ -228,18 +229,92 @@ def test_train_skips_barracks_building_addon():
 
 
 def test_head_blocking_holds_back_later_items():
-    """贪心并行：build 阻塞不卡后续项（train 可以先出——不同生产槽并行）。"""
+    """队首门控（D7）：队首 build 缺矿阻塞 → 后续 train 本帧不执行（保 build order 顺序）。
+
+    旧行为是贪心跳过（train 先出），会让后置项抢走队首要攒的矿、破坏 build order，
+    且跨帧累计超支（模块 docstring 第 3 条一直写的是队首门控，代码此前与文档相反）。
+    """
     port = _Port()
     rt = _runtime(port)
     rt.submit_queue("open", [
         QueueItem(op="build", type="terran/supplydepot", placement=PlacementExact("spot")),
         QueueItem(op="train", type="terran/scv"),
     ])
-    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=50))
-    # 新行为：贪心并行 → build 阻塞(50<100) 但 train 不被阻塞(50>=50) → train 先出
-    assert len(port.submitted) == 1
-    assert port.submitted[0].action == "train"
-    assert len(rt.queue("open").items) == 1  # build 仍在队列
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=50))
+    assert port.submitted == []  # build 阻塞(50<100) → train(50>=50) 也不越队
+    assert len(rt.queue("open").items) == 2  # 两项都还在
+    rec = rt.blocked["open"]  # H1：阻塞不静默，能看见卡在哪
+    assert rec["item"] is rt.queue("open").items[0]
+    assert "晶体矿不足" in rec["reason"]
+
+
+def test_head_unblocks_then_later_items_run_same_frame():
+    """队首可行后立刻恢复：同帧发 build + 其后 train（资源够则并行不被削弱），阻塞记录清除。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="build", type="terran/supplydepot", placement=PlacementExact("spot")),
+        QueueItem(op="train", type="terran/scv"),
+    ])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=50))
+    assert "open" in rt.blocked
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=300))
+    assert [op.action for op in port.submitted] == ["build", "train"]  # 队首先发，后续项跟上
+    assert "open" not in rt.blocked  # 通畅 → 记录清除
+
+
+def test_persistent_block_raises_stall_warning_once():
+    """H1：同一队首持续阻塞超 STALL_WARN_SECS → 记一条 stalls 告警（只报一次，不自动丢弃）。
+
+    队首门控会冻结整条队列，永久阻塞（区域满/前置永不满足）必须能被看见 ——
+    否则就是静默失速（违背需求文档 R7 与"不静默"红线）。
+    """
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/barracks",
+                                      placement=PlacementExact("spot"))])
+    units = [_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")]
+    for t in (0.0, 10.0, STALL_WARN_SECS, STALL_WARN_SECS + 10.0):
+        rt.on_game_state(_gs(units, minerals=50, game_time=t))
+    assert port.submitted == []
+    assert len(rt.stalls) == 1  # 只报一次，不刷屏
+    item, msg = rt.stalls[0]
+    assert item is rt.queue("open").items[0]
+    assert "队首阻塞" in msg and "晶体矿不足" in msg
+    assert rt.dropped == []  # 不自动丢弃队首（那会破坏 build order）
+
+
+def test_assign_workers_does_not_jump_blocked_build():
+    """顺序语义（反例守卫）：assign_workers(gas) 排在 refinery 之后是有意的 ——
+
+    refinery 还没建好就把 SCV 派去采气，WorkerAllocator 找不到气矿槽，意图会静默蒸发。
+    所以 assign_workers 也不能越过阻塞的队首（真机脚本 run_tank_marine_push 的 macro 队列形状）。
+    """
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("macro", [
+        QueueItem(op="build", type="terran/refinery"),
+        QueueItem(op="assign_workers", task="gas", count=3),
+    ])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=25))  # 精炼厂 75
+    assert port.submitted == []
+    assert len(rt.queue("macro").items) == 2
+
+
+def test_unknown_queue_op_dropped_not_silently_skipped():
+    """D7：未知 op 出队并记 dropped（旧行为是 i+=1 静默跳过 → 永久占住队首）。
+
+    QueueOp 在 QueueItem 构造期已校验，这里绕过构造直接改字段模拟脏数据（R7 兜底路径）。
+    """
+    port = _Port()
+    rt = _runtime(port)
+    bad = QueueItem(op="train", type="terran/scv")
+    bad.op = "fly"  # 绕过 __post_init__ 的枚举归一
+    rt.submit_queue("open", [bad, QueueItem(op="train", type="terran/scv")])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER")], minerals=200))
+    assert len(rt.dropped) == 1 and "未知 QueueOp" in rt.dropped[0][1]
+    assert len(port.submitted) == 1 and port.submitted[0].action == "train"  # 后续项继续
+    assert rt.queue("open").items == []
 
 
 def test_assign_workers_immediate_and_expanded():

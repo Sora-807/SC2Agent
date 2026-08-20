@@ -186,10 +186,11 @@ class FullFlowSink:
         depots = self._count(gs, "SUPPLYDEPOT")
         supply_q = self._runtime.queue("supply")
         depot_pending = bool(supply_q and supply_q.items) or any(
-            f.get("type") == "terran/supplydepot" for f in self._runtime._build_flight.values()
+            f.get("type") == "terran/supplydepot"
+            for flights in self._runtime._build_flights.values() for f in flights
         )
         if (macro_q0 is not None and not macro_q0.items
-                and not self._runtime._build_flight
+                and not any(self._runtime._build_flights.values())
                 and depots < 8 and not depot_pending):
             self._runtime.submit_queue("supply", [
                 QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),
@@ -202,7 +203,7 @@ class FullFlowSink:
         # 枪兵维持条件：每台现存兵营都挂上反应堆（自适应：兵营被敌军摧毁时
         # 不再死等 4 台——真机教训 full_flow.log：死等 → 无兵守家被推平）
         if (macro_q is not None and not macro_q.items
-                and not self._runtime._build_flight
+                and not any(self._runtime._build_flights.values())
                 and self._count(gs, "BARRACKSREACTOR") >= max(1, rax)
                 and self._engine._active_step == "formup"):
             # 只在 formup 补训：advance 后新兵蛋子从家里出发会拖拽 group 中心，
@@ -255,9 +256,14 @@ class FullFlowSink:
                                  if u.owner is Owner.SELF and u.type_name == "BARRACKS"
                                  for o in u.orders})
             fails = getattr(self._bot, "_apply_failures", []) if self._bot else []
-            flight = {k: (v["type"], v["frames"]) for k, v in
-                      self._runtime._build_flight.items()}
+            flight = {k: [(f["type"], f["frames"]) for f in v] for k, v in
+                      self._runtime._build_flights.items()}  # 并行建造后是 list（原 _build_flight 已改名）
             dropped = [(i.type, r) for i, r in self._runtime.dropped][-3:]
+            # 队首门控可观测性（H1）：卡在哪个项、卡多久、为什么
+            blocked = {k: (v["item"].type or v["item"].op.value,
+                           f"{gs.game_time - v['since']:.0f}s", v["reason"])
+                       for k, v in self._runtime.blocked.items()}
+            stalls = [m for _, m in self._runtime.stalls][-2:]
             group_dist = ""
             if step == "advance" and self._enemy is not None:
                 ms = [u for u in gs.units if u.owner is Owner.SELF and u.type_name == "MARINE"]
@@ -269,7 +275,8 @@ class FullFlowSink:
                 f"supply={gs.supply_used}/{gs.supply_cap} depot={depots} rax={rax} reactor={reactors} "
                 f"scv={scvs} marine={marines}(峰值{self._max_marines}) 敌方近={enemy_near} "
                 f"{group_dist}step={step} done={self._engine._done} rax_orders={rax_orders} "
-                f"apply_failures={fails[-3:]} flight={flight} dropped={dropped}")
+                f"apply_failures={fails[-3:]} flight={flight} dropped={dropped} "
+                f"blocked={blocked} stalls={stalls}")
             if step == "advance":
                 attacks = [o for o in self._port._op_queue if o.action == "attack_move_to"]
                 if attacks:

@@ -2,8 +2,10 @@
 
 每帧 on_game_state(gs) 触发（与 flow engine 并列消费 GameState，都经同一个 port 出 op）：
 1. 队首 resolve（选建造 SCV/产出建筑/放置坐标）→ constraint 校验
-2. 可行 → emit Operation；count 递减，归零出队，继续下一项（train count>1 逐帧排队）
-3. 不可行 → 队首阻塞等待（如攒矿/等前置），本帧不再处理后续项（P0：队首按 constraint 门控）
+2. 可行 → emit Operation；count 递减，归零出队，继续下一项（资源够就同帧并行发多条）
+3. 不可行 → 队首阻塞等待（如攒矿/等前置），本帧不再处理后续项（P0/S11：队首按 constraint 门控）
+   阻塞不静默：原因+起始时间进 self.blocked[queue]；同一队首阻塞超 STALL_WARN_SECS 记一条
+   self.stalls 告警（R7 降级告警，供 UI/agent 看"卡在哪"；不自动丢弃队首——那会破坏 build order）
 assign_workers 立即发（无资源门控）：WorkerAllocator 展开成 gather/stop。
 research/cancel：V1 不支持（缺 upgrade 数据目录）→ 出队记入 dropped（R7 降级，不静默）。
 build 缺 placement 直接丢（ADR-0027 反例：placement 为 null 的 build 不通过）。
@@ -33,6 +35,10 @@ from tactical_map.placement import BuildSlot
 
 from production.worker import Emission, WorkerAllocator
 
+# 队首阻塞多久算失速 → 记一条 stalls 告警（游戏秒）。
+# 纯诊断阈值：只影响是否报告，不影响任何执行决策（攒 150 矿约 15-20s，故取 30s 不误报）。
+STALL_WARN_SECS = 30.0
+
 # V1 不支持的生产队列项 → 原因（drain 时出队并记入 dropped，R7 降级告警）
 UNSUPPORTED_QUEUE_OPS: dict[QueueOp, str] = {
     QueueOp.RESEARCH: "upgrade 数据目录（cost/time/前置/科技挂件）待建",
@@ -51,6 +57,11 @@ class ProductionRuntime:
         self._workers = WorkerAllocator(catalog)
         self._op_seq = 0
         self.dropped: list[tuple[QueueItem, str]] = []  # 被丢弃项 + 原因（R7 审计）
+        # 队首阻塞可观测性（H1）：queue_name -> {item, reason, since, frames, warned}
+        # 队首门控会冻结整条队列，必须能看见"卡在哪、卡多久"，否则就是静默失速。
+        self.blocked: dict[str, dict] = {}
+        self.stalls: list[tuple[QueueItem, str]] = []  # 失速告警（同一队首只报一次）
+        self._block_reason: str = ""  # 最近一次门控失败原因（_block 写入，_note_block 读取）
         self._build_flights: dict[str, list[dict]] = {}  # queue_name -> [在途建造确认状态]（多并行）
         # 本帧已被下过令的单位 tag（跨队列去重：burnysc2 同帧同单位命令被去重丢单——真机踩坑）
         self._frame_busy: set[int] = set()
@@ -83,6 +94,37 @@ class ProductionRuntime:
     def queue(self, name: str) -> Queue | None:
         return self._queues.get(name)
 
+    # ---- 阻塞记录（不静默：门控失败必须留下原因）----
+
+    def _block(self, reason: str) -> str:
+        """记下本次门控失败原因并返回 "blocked"（原因由 _note_block 落到 self.blocked）。"""
+        self._block_reason = reason
+        return "blocked"
+
+    @staticmethod
+    def _why(res, fallback: str) -> str:
+        """ConstraintResult.reasons → 单行原因文本。"""
+        return "；".join(res.reasons) if getattr(res, "reasons", ()) else fallback
+
+    def _note_block(self, q_name: str, head: QueueItem, gs: GameState) -> None:
+        """记录/更新队首阻塞；同一队首持续阻塞超 STALL_WARN_SECS 记一条 stalls 告警。"""
+        rec = self.blocked.get(q_name)
+        if rec is None or rec["item"] is not head:
+            self.blocked[q_name] = {
+                "item": head, "reason": self._block_reason,
+                "since": gs.game_time, "frames": 1, "warned": False,
+            }
+            return
+        rec["reason"] = self._block_reason  # 原因会变（先缺矿、后缺工兵）：留最新
+        rec["frames"] += 1
+        waited = gs.game_time - rec["since"]
+        if not rec["warned"] and waited >= STALL_WARN_SECS:
+            rec["warned"] = True
+            self.stalls.append((
+                head,
+                f"队列 {q_name!r} 队首阻塞 {waited:.0f}s（{rec['frames']} 帧）：{rec['reason']}",
+            ))
+
     # ---- 每帧 tick ----
 
     def on_game_state(self, gs: GameState) -> None:
@@ -112,10 +154,13 @@ class ProductionRuntime:
                     # else: _retry_build 已 drop，不保留
             self._build_flights[q.name] = still_pending
 
-        # Phase 2: 贪心处理队列项（emit 后不 break → 并行建造）
+        # Phase 2: 队首门控（P0/S11 + 模块 docstring 第 3 条）——
+        # 队首不可行 → 本帧不再处理后续项（乱序执行会破坏 build order，且跨帧累计超支）；
+        # 队首可行 → 继续下一项（资源够时同帧并行发多条建造）。
         pending_min = 0  # 本帧已扣矿（防同帧多并行超支：SC2 对矿不足命令静默拒绝）
         pending_gas = 0
         i = 0
+        blocked_head: QueueItem | None = None
         while i < len(q.items):
             head = q.items[i]
             if head.op in UNSUPPORTED_QUEUE_OPS:
@@ -131,17 +176,23 @@ class ProductionRuntime:
                 entry = self._catalog.by_stable_id(head.type) if head.type else None
                 if entry is not None:
                     if gs.minerals - pending_min < entry.cost.minerals:
-                        i += 1
-                        continue
+                        self._block(
+                            f"晶体矿不足（本帧余 {gs.minerals - pending_min} < {entry.cost.minerals}）"
+                        )
+                        blocked_head = head
+                        break
                     if gs.vespene - pending_gas < entry.cost.vespene:
-                        i += 1
-                        continue
+                        self._block(
+                            f"高能瓦斯不足（本帧余 {gs.vespene - pending_gas} < {entry.cost.vespene}）"
+                        )
+                        blocked_head = head
+                        break
                 outcome = self._try_build(head, q.name, gs)
                 if outcome == "blocked":
-                    i += 1  # 资源/前置/工兵/放置位不足 → 跳过试下一项
-                    continue
+                    blocked_head = head
+                    break
                 if outcome == "consumed":
-                    q.items.pop(i)
+                    q.items.pop(i)  # 作者错误（未知 type/缺 placement）：丢弃继续，不冻结整队
                     continue
                 # emitted: 扣本地资源，count--，出队或留队
                 if entry is not None:
@@ -151,12 +202,15 @@ class ProductionRuntime:
                 if head.count <= 0:
                     q.items.pop(i)
                 else:
-                    i += 1
-                continue  # 不 break → 继续下一项（并行！）
+                    i += 1  # count>1 逐帧排队（既有设计）：本帧余量让给后续项
+                continue
             if head.op is QueueOp.TRAIN:
                 outcome = self._try_train(head, gs)
                 if outcome == "blocked":
-                    i += 1
+                    blocked_head = head
+                    break
+                if outcome == "consumed":
+                    q.items.pop(i)  # 作者错误（train 缺 type）：丢弃继续（否则 count>1 会反复记 dropped）
                     continue
                 head.count -= 1
                 if head.count <= 0:
@@ -164,7 +218,14 @@ class ProductionRuntime:
                 else:
                     i += 1
                 continue
-            i += 1  # 未知 op → 跳过
+            # 未知 op：不可执行又不能静默留在队里（会永久占住队首）→ 出队记 dropped
+            self.dropped.append((head, f"未知 QueueOp {head.op!r}"))
+            q.items.pop(i)
+
+        if blocked_head is not None:
+            self._note_block(q.name, blocked_head, gs)
+        else:
+            self.blocked.pop(q.name, None)  # 队列通畅或已空 → 清阻塞记录
 
     # ---- 单项执行 ----
 
@@ -193,10 +254,10 @@ class ProductionRuntime:
             return "consumed"
         res = check_train(gs, self._catalog, head.type)
         if not res.ok:
-            return "blocked"
+            return self._block(self._why(res, f"train {head.type} 门控不通过"))
         producer = self._pick_producer(gs, head.type)
         if producer is None:
-            return "blocked"  # 无就绪产出建筑 → 等
+            return self._block(f"无就绪产出建筑（{head.type} 的产出建筑未完工/训练槽满）")
         self._emit([Emission("train", [producer.tag], {"type": head.type})], gs.seq)
         return "emitted"
 
@@ -221,13 +282,13 @@ class ProductionRuntime:
             self._drop(head, reason)  # 作者错误：丢弃并继续，不阻塞整队
             return "consumed"
         if pos is None:
-            return "blocked"  # 放置位全被占：瞬时阻塞等待
+            return self._block("候选放置位全被占用（等空位；若区域已满会一直卡在这里）")
         res = check_build(gs, self._catalog, head.type, pos)
         if not res.ok:
-            return "blocked"  # 阻塞等待（资源/前置/占用）
+            return self._block(self._why(res, f"build {head.type} 门控不通过"))
         builder = self._pick_builder(gs)
         if builder is None:
-            return "blocked"  # 无工兵 → 等
+            return self._block("无空闲 SCV 可派去建造")
         self._emit(
             [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
             gs.seq,
@@ -534,10 +595,10 @@ class ProductionRuntime:
         """挂件：母建筑自建（builder = 母建筑，非 SCV）；SC2 把挂件吸附到右下 2×2。"""
         res = check_addon(gs, self._catalog, head.type)
         if not res.ok:
-            return "blocked"  # 母建筑还没建好（前置）→ 等 macro 队列
+            return self._block(self._why(res, f"挂件 {head.type} 门控不通过（母建筑前置）"))
         parent = self._pick_parent_for_addon(gs, head.type)
         if parent is None:
-            return "blocked"  # 无空闲母建筑 → 等（母建筑被毁的僵局由上层维持规则
+            return self._block("无空闲母建筑可挂（在训练/已带挂件）")  # 等（母建筑被毁的僵局由上层维持规则
             # 自适应处理：reactors >= 现存 rax 即开训，不卡 4 台——真机教训）
         # 挂件是无目标能力：position=None，SC2 吸附到母建筑右下 2×2（真机教训：传点会被静默拒绝）
         self._emit(
@@ -593,11 +654,13 @@ class ProductionRuntime:
         """气矿：SCV 把精炼厂建在空闲气井上（build_gas 动作，target = 气井 Unit）。"""
         res = check_gas(gs, self._catalog, head.type)
         if not res.ok:
-            return "blocked"
+            return self._block(self._why(res, f"气矿 {head.type} 门控不通过"))
         geyser = self._pick_free_geyser(gs)
         builder = self._pick_builder(gs)
         if geyser is None or builder is None:
-            return "blocked"
+            return self._block(
+                "无空闲气井" if geyser is None else "无空闲 SCV 可派去建气矿"
+            )
         self._emit(
             [Emission("build_gas", [builder.tag],
                       {"type": head.type, "target_unit": geyser.tag})],

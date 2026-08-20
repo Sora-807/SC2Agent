@@ -123,8 +123,8 @@ class TankProdSink:
             rax = self._count(gs, "BARRACKS")
             scvs = self._count(gs, "SCV")
             fails = getattr(self._bot, "_apply_failures", []) if self._bot else []
-            flight = {k: (v["type"], v["frames"]) for k, v in
-                      self._runtime._build_flight.items()}
+            flight = {k: [(f["type"], f["frames"]) for f in v] for k, v in
+                      self._runtime._build_flights.items()}  # 并行建造后是 list（原 _build_flight 已改名）
             dropped = [(i.type, r) for i, r in self._runtime.dropped][-3:]
             log(f"[tick] seq={raw.seq} t={raw.game_time:.0f} 矿={gs.minerals} 气={gs.vespene} "
                 f"supply={gs.supply_used}/{gs.supply_cap} depot={depots} rax={rax} factory={factory} "

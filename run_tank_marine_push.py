@@ -125,11 +125,14 @@ class TankFullFlowSink:
             QueueItem(op="build", type="terran/armory", placement=PlacementInRegion("home")),
             # TODO: 二矿 CC（需扫描 5×5 放置位）+ research（生产运行时暂不支持 RESEARCH op）
         ])
-        self._runtime.submit_queue("army", [
-            # 军队训练（兵营/工厂槽，独立于 CC 和 SCV 建造）
-            # 兵营未建好前 _try_train 返回 blocked → 队列自然等待
-            QueueItem(op="train", type="terran/marine", count=20),
-            QueueItem(op="train", type="terran/siegetank", count=4),
+        # 军队训练按**产线**分队列（T4 队首门控后必须这样写）：
+        # 队首门控会冻结整条队列，兵营槽忙时若 marine/tank 同队，坦克要等 20 机枪训完才开始 ——
+        # 分队列表达"不同产线并行"（与上面 scv/macro 同一原则），保持真机验过的并行产出。
+        self._runtime.submit_queue("army_rax", [
+            QueueItem(op="train", type="terran/marine", count=20),  # 兵营槽
+        ])
+        self._runtime.submit_queue("army_fac", [
+            QueueItem(op="train", type="terran/siegetank", count=4),  # 工厂槽（未建好前 blocked → 自然等待）
         ])
         # 驻扎点 = CC 朝敌方方向 15 格（近似主矿入口 ramp）
         dx, dy = self._enemy.x - cc.x, self._enemy.y - cc.y
@@ -176,12 +179,12 @@ class TankFullFlowSink:
                 QueueItem(op="assign_workers", task=task, count=len(idle)),
             ])
         macro_q = self._runtime.queue("macro")
-        army_q = self._runtime.queue("army")
+        army_qs = [self._runtime.queue(n) for n in ("army_rax", "army_fac")]
         formup = self._engine._active_step == "formup"
         # 只在 formup 补训（advance 后不补，避免新兵拖组心——run_full_flow 真机教训）
-        # 三队列并行：macro(建筑) + army(军队) + scv(农民) 都排空后才维持
+        # 多队列并行：macro(建筑) + army_rax/army_fac(两条产线) + scv(农民) 都排空后才维持
         if (macro_q is not None and not macro_q.items
-                and army_q is not None and not army_q.items
+                and not any(q.items for q in army_qs if q is not None)
                 and not any(self._runtime._build_flights.values()) and formup):
             # 补给维持：被拆掉的补给站补建（macro 排空后）
             depots = self._count(gs, "SUPPLYDEPOT")
@@ -234,9 +237,15 @@ class TankFullFlowSink:
             flight = {k: [(f["type"], f["frames"]) for f in v] for k, v in
                       self._runtime._build_flights.items()}
             dropped = [(i.type, r) for i, r in self._runtime.dropped][-3:]
-            # 坦克训练诊断：army 队列状态 + 工厂 orders
-            army_q = self._runtime.queue("army")
-            army_items = [(i.op.value, i.type, i.count) for i in army_q.items] if army_q else []
+            # 队首门控可观测性（H1）：卡在哪个项、卡多久、为什么（T6 真机证据点）
+            blocked = {k: (v["item"].type or v["item"].op.value,
+                           f"{gs.game_time - v['since']:.0f}s", v["reason"])
+                       for k, v in self._runtime.blocked.items()}
+            stalls = [m for _, m in self._runtime.stalls][-2:]
+            # 坦克训练诊断：两条军队产线队列状态 + 工厂 orders
+            army_items = [(n, [(i.op.value, i.type, i.count) for i in q.items])
+                          for n in ("army_rax", "army_fac")
+                          if (q := self._runtime.queue(n)) is not None]
             factory_orders = []
             for u in gs.units:
                 if u.owner is Owner.SELF and u.type_name == "FACTORY" and u.build_progress >= 1.0:
@@ -278,7 +287,7 @@ class TankFullFlowSink:
                 f"supply={gs.supply_used}/{gs.supply_cap} depot={depots} refinery={refinery_count} factory={factory} techlab={techlab} "
                 f"scv={scvs} marine={marines} tank={tanks} sieged={sieged} scv_sample={scv_sample} army_q={army_items} fac_orders={factory_orders} {leased}{gc}step={step} "
                 f"done={self._engine._done} tank_orders={tank_orders} apply_failures={fails[-3:]} "
-                f"flight={flight} dropped={dropped}")
+                f"flight={flight} dropped={dropped} blocked={blocked} stalls={stalls}")
             # 建筑位置快照（每 100 帧 = 10 游戏秒）：实际落位 vs base_layout 计划位对照
             if raw.seq % 100 == 0:
                 bldgs = sorted(
