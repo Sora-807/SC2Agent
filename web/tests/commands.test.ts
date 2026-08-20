@@ -72,11 +72,16 @@ describe("sendCommand", () => {
   });
 
   it("请求体一定带 based_on_seq（R8 的门在后端，但前端不能忘了填）", async () => {
-    const spy = vi.fn(async () =>
-      new Response(JSON.stringify({ ok: true, accepted_seq: 7, detail: {} }), { status: 200 }));
-    globalThis.fetch = spy as unknown as typeof fetch;
+    const seen: { url: string; init?: RequestInit }[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true, accepted_seq: 7, detail: {} }),
+        { status: 200 });
+    }) as unknown as typeof fetch;
     await sendCommand({ kind: "queue", op: "clear", body: { name: "main" } }, 7);
-    const body = JSON.parse(String((spy.mock.calls[0]![1] as RequestInit).body));
+    expect(seen.length).toBe(1);
+    expect(seen[0]!.url).toContain("/api/commands/queue/clear");
+    const body = JSON.parse(String(seen[0]!.init!.body));
     expect(body.based_on_seq).toBe(7);
     expect(body.name).toBe("main");
   });

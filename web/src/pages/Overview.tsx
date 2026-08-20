@@ -161,9 +161,13 @@ export function Overview() {
         ) : <Empty text="无警报" />}
       </Panel>
 
-      <Panel id="proj" title="投影 · 参考计划" {...shared} jump="production" className="xl:col-span-3"
+      <Panel id="proj"
+             title={projection?.source.kind === "live_queue"
+               ? "投影 · 当前队列 " + projection.source.queue_name
+               : "投影 · 参考计划"}
+             {...shared} jump="production" className="xl:col-span-3"
              right={<span className="text-[11px] text-amber-500">
-               {projection?.source.kind === "draft" ? "参考计划，非当前队列" : ""}
+               {projection?.source.kind === "draft" ? "队列为空，显示参考计划" : ""}
              </span>}>
         {projection ? <ProjectionChart frame={projection} height={150} /> : <Empty />}
       </Panel>

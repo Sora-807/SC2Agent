@@ -9,6 +9,11 @@ import { z } from "zod";
 
 /**
  * 契约版本。
+ * rev 8：`frame/projection` 增 `skipped`；`source.kind="live_queue"` 终于有真值。
+ *   之前 `Planner` 与 `ProductionRuntime` 没有互转（一个吃 ProductionModuleInstance、
+ *   一个执行 QueueItem），所以"当前队列的投影"产不出来，UI 只能诚实地写「参考计划」。
+ *   后端补了 `view.projection` 这条桥，现在能投真队列了 —— UI 的措辞跟着改。
+ *   `skipped` 是"不静默"：队列里有项投不了（如 cancel）必须让用户看见。
  * rev 7：新增 topic `static/strategy` —— 策略图结构（steps/branches/edges/声明节）。
  *   `frame/flow` 只有"现在在哪个 step"，**图本身不在任何帧里**，F4 的状态图与 F9 的 AST 编辑器
  *   都没法画。它每个 flow 版本只变一次，所以归静态面；hot-edit（S8）落地后改成事件驱动。
@@ -37,7 +42,7 @@ import { z } from "zod";
  *   `frame/production` 增队列级 `blocked`（后端 T4 已有 `runtime.blocked`：原因 + 起始时间 + 是否已告警）。
  * rev 1：初版（DSL v0.2 之前，签名表尚不存在，schema 降级为空参数表）。
  */
-export const REV = 7 as const;
+export const REV = 8 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -594,6 +599,8 @@ export const zProjectionFrame = z.object({
       reason: z.string().nullable(),
     }),
   ),
+  /** 队列里投不进来的项 + 原因（如 cancel）。不显示的话投影会悄悄少算一段 */
+  skipped: z.array(z.object({ op: z.string(), reason: z.string() })),
 });
 
 export const zAlertsFrame = z.object({

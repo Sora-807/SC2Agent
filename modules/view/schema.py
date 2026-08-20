@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 #: 契约版本。改任何字段 = REV+1 + §2 修订 + 前端同步（红线 C8）。
+#: rev 8：`frame/projection` 增 `skipped`；`source.kind="live_queue"` 终于有真值。
+#:   缺口修好了：`Planner.project` 与 `ProductionRuntime` 之前没有互转（一个吃
+#:   ProductionModuleInstance、一个执行 QueueItem），所以"当前队列的投影"产不出来。
+#:   `view.projection` 补上这条桥（并让 `planner.expand` 透传裸 Op）。
+#:   `skipped` 是"不静默"：队列里有项投不了（如 cancel）必须让用户看见，
+#:   否则投影会悄悄少算一段。
 #: rev 7：新增 topic `static/strategy` —— 策略图结构（steps/branches/edges/声明节）。
 #:   `frame/flow` 只有"现在在哪个 step"，**图本身不在任何帧里**，F4 的状态图与 F9 的 AST 编辑器
 #:   都没法画。它每个 flow 版本只变一次，所以归静态面；hot-edit（S8）落地后再改成事件驱动。
@@ -32,7 +38,7 @@ from typing import Any
 #:      改增 queue + attempted_slots（摆放调试叠加要画"试过哪几个槽位"）。
 #: rev 3：区域几何改为"一张标签网格 + 索引"（原 leaf[].cells 的 per-region mask 不可扩展）。
 #: rev 2：static/schema 逐字镜像 flow.vocab.dump_vocabulary()；production 队列增 blocked。
-REV = 7
+REV = 8
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -655,6 +661,8 @@ class ProjectionFrame:
     source: dict              # {kind:"live_queue",queue_name} | {kind:"draft",plan_id}
     points: list[ProjectionPointView]
     events: list[ProjectionEventView]
+    #: 队列里投不进来的项 + 原因（如 `cancel`）。不静默：否则投影会悄悄少算一段
+    skipped: list[dict] = field(default_factory=list)
 
 
 # ---------------- frame/alerts ----------------

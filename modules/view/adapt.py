@@ -125,6 +125,7 @@ def projection_frame(
     horizon: float,
     queue_name: str | None = None,
     plan_id: str | None = None,
+    skipped: list[tuple[str, str]] | None = None,
 ) -> ProjectionFrame:
     """planner.ProjectionCurve → frame/projection（纯重排，不算新数值）。"""
     if (queue_name is None) == (plan_id is None):
@@ -153,6 +154,7 @@ def projection_frame(
             ProjectionEventView(kind=e.kind, stable_id=e.type, t=e.t, reason=e.reason)
             for e in curve.events
         ],
+        skipped=[{"op": op, "reason": reason} for op, reason in (skipped or [])],
     )
 
 

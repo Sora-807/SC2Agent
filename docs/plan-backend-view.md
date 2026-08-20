@@ -116,7 +116,19 @@
 
 ### 实施中发现、需要记账的两个缺口
 
-**① planner 与生产运行时的 authoring 面还没统一 → "当前队列的实时投影"目前做不到**
+**① ~~planner 与生产运行时的 authoring 面没统一~~ → ✅ 已修（`view.projection` 这条桥）**
+
+修法：`planner.build_order.expand()` **透传裸 `Op`**（3 行），`view.projection.queue_to_ops()`
+把 `QueueItem` 一对一翻成 `Build/Train/Research/AssignWorkers`。于是
+`frame/projection.source.kind="live_queue"` 有了真值，UI 不用再写"参考计划"（队列空了才退回它）。
+翻不了的项（如 `cancel`）进 `skipped` 带原因下发 —— 不显示的话投影会悄悄少算一段。
+
+**顺带修了一处语义分歧**：ADR-0030 D2 把运行时的 `assign_workers` 改成目标值语义，
+但 planner 里还是 delta（`st.gas_workers += move`）。投影模型与真实行为不一致会让投影不可信，
+而投影不可信等于**警报也不可信**（AlertService 的卡人口/缺前置都从投影来）。
+已把 planner 对齐到目标值（含"下调配额把人退回另一池、总人数守恒"的测试）。
+
+原缺口记录（保留）：
 
 `Planner.project(gs, seq, until)` 吃 `ProductionModuleInstance` 列表(`MODULE_REGISTRY`:
 `basic_opening`/`factory_chain`/`bio_tank_opening`),而 `ProductionRuntime` 执行 `QueueItem` 队列,

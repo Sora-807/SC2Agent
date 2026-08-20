@@ -59,13 +59,22 @@ def register_module(ref: str, fn: Callable[[dict], list[Op]]) -> None:
     MODULE_REGISTRY[ref] = fn
 
 
-def expand(seq: list[ProductionModuleInstance]) -> list[Op]:
-    """把 production_sequence（模块实例列表）展平成 op 序列（按实例顺序拼接）。"""
+def expand(seq: list) -> list[Op]:
+    """把 production_sequence 展平成 op 序列（按顺序拼接）。
+
+    **已展开的 `Op` 原样透传**：这样投影既能吃"模块实例列表"（authoring 面），
+    也能吃"已经是 op 序列"的输入 —— 比如把 live 生产队列（`QueueItem`）翻成 Op 后直接投影
+    （见 `view.projection`）。否则"当前队列的实时投影"只能靠另建一条模块注册的歪路。
+    混合列表也允许（一部分模块实例、一部分裸 Op）。
+    """
     out: list[Op] = []
-    for inst in seq:
-        fn = MODULE_REGISTRY.get(inst.module_ref)
+    for item in seq:
+        if isinstance(item, Op):
+            out.append(item)
+            continue
+        fn = MODULE_REGISTRY.get(item.module_ref)
         if fn is None:
             raise ValueError(
-                f"未知 production module {inst.module_ref!r}（instance {inst.instance_id!r}）")
-        out.extend(fn(inst.params))
+                f"未知 production module {item.module_ref!r}（instance {item.instance_id!r}）")
+        out.extend(fn(item.params))
     return out

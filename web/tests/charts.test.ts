@@ -109,7 +109,7 @@ describe("toMarkers", () => {
   it("无事件时无竖线", () => {
     const empty: ProjectionFrame = {
       based_on_seq: 1, based_on_game_time: 0, horizon: 0,
-      source: { kind: "live_queue", queue_name: "main" }, points: [], events: [],
+      source: { kind: "live_queue", queue_name: "main" }, points: [], events: [], skipped: [],
     };
     expect(toMarkers(empty)).toEqual([]);
   });

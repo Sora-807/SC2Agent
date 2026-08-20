@@ -18,6 +18,7 @@ from game.state import GameState
 from view import adapt
 from view.alerts import AlertService
 from view.encode import envelope
+from view.projection import project_queue
 from view.schema import AlertsFrame
 from view.statics import (
     catalog_static,
@@ -58,7 +59,10 @@ class FrameProducer:
     frame_source: str = "live"
     my_race: str = "terran"
     enemy_race: str | None = None
+    #: 兜底的"参考计划"（没有 live 队列时用）。有 runtime 且队列非空时**优先投影真队列**。
     projection_plan: list | None = None
+    #: 投影哪条队列（多队列时取这条；它们互相独立，拼起来投影是错的）
+    projection_queue: str = "main"
     horizon: float = PROJECTION_HORIZON
     projection_every: float = PROJECTION_EVERY
     ops_every: float = OPS_EVERY
@@ -122,17 +126,12 @@ class FrameProducer:
                                  adapt.economy_frame(self.keeper.snapshot(gs))))
 
         curve = None
-        if (self.planner is not None and self.projection_plan is not None
-                and gs.game_time - self._proj_at >= self.projection_every):
-            self._proj_at = gs.game_time
-            curve = self.planner.project(
-                gs, self.projection_plan, until=gs.game_time + self.horizon)
-            out.append(self._env("frame/projection", gs, adapt.projection_frame(
-                curve, based_on_seq=gs.seq, based_on_game_time=gs.game_time,
-                horizon=self.horizon,
-                # 诚实标注 draft：planner 吃 ProductionModuleInstance、运行时吃 QueueItem，
-                # authoring 面还没统一，所以这**不是**"当前队列的投影"。
-                plan_id=_plan_id(self.projection_plan))))
+        if self.planner is not None and gs.game_time - self._proj_at >= self.projection_every:
+            proj = self._project(gs)
+            if proj is not None:
+                self._proj_at = gs.game_time
+                curve, frame = proj
+                out.append(self._env("frame/projection", gs, frame))
 
         assert self.alerts is not None
         fired = self.alerts.evaluate(gs, production=prod_snap, curve=curve)
@@ -144,6 +143,31 @@ class FrameProducer:
             out.append(self._env("frame/ops", gs, adapt.ops_frame(self.ring)))
 
         return out
+
+    def _project(self, gs: GameState):
+        """投影当前生产队列；队列为空才退回"参考计划"。
+
+        以前只能投"参考计划"（planner 与运行时的 authoring 面没有互转）。
+        `view.projection` 把 `QueueItem` 翻成 planner 的 op 后，
+        `source.kind="live_queue"` 才有真值 —— 概览页的"实际 vs 预测"从此不是骗人的。
+        """
+        queue = None
+        if self.runtime is not None:
+            queue = self.runtime.queue(self.projection_queue)
+        if queue is not None and queue.items:
+            curve, translated = project_queue(
+                self.planner, gs, list(queue.items),
+                until=gs.game_time + self.horizon, catalog=self.catalog)
+            return curve, adapt.projection_frame(
+                curve, based_on_seq=gs.seq, based_on_game_time=gs.game_time,
+                horizon=self.horizon, queue_name=queue.name,
+                skipped=translated.skipped)
+        if self.projection_plan is None:
+            return None
+        curve = self.planner.project(gs, self.projection_plan, until=gs.game_time + self.horizon)
+        return curve, adapt.projection_frame(
+            curve, based_on_seq=gs.seq, based_on_game_time=gs.game_time,
+            horizon=self.horizon, plan_id=_plan_id(self.projection_plan))
 
     def session(self, gs: GameState, state: str, *, error: str | None = None) -> dict:
         """单独产一条会话帧（状态变化时用）。"""

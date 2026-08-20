@@ -185,19 +185,32 @@ class Planner:
             st.gas -= e.cost.vespene
             st.in_flight.append(InFlight(op.type, "research", e.build_time, 0.0, e.produced_by))
         elif isinstance(op, AssignWorkers):
-            # best-effort：派 min(count, 可用) 个；可用 = idle + 另一采集池
+            # **目标值语义**（ADR-0030 D2）：维持 count 个，不是"再派 count 个"。
+            # 运行时的 assign_workers 已经是目标值（队列项 = 写目标，D2.2），
+            # planner 若还用 delta 语义，投影就和真实行为不一致 —— 那种不一致会让投影不可信，
+            # 而投影不可信等于警报也不可信（AlertService 的卡人口/缺前置都从它来）。
+            cur = st.gas_workers if op.task == "gas" else st.mineral_workers
             other = st.mineral_workers if op.task == "gas" else st.gas_workers
-            available = st.idle_workers + other
-            move = min(op.count, available)
-            from_idle = min(st.idle_workers, move)
-            st.idle_workers -= from_idle
-            rest = move - from_idle  # 从另一池拉
-            if op.task == "gas":
-                st.mineral_workers -= rest
-                st.gas_workers += move
-            else:
-                st.gas_workers -= rest
-                st.mineral_workers += move
+            delta = op.count - cur                     # 差多少补多少；超了就退回去
+            if delta > 0:
+                move = min(delta, st.idle_workers + other)
+                from_idle = min(st.idle_workers, move)
+                st.idle_workers -= from_idle
+                rest = move - from_idle                # 不够就从另一采集池拉
+                if op.task == "gas":
+                    st.mineral_workers -= rest
+                    st.gas_workers += move
+                else:
+                    st.gas_workers -= rest
+                    st.mineral_workers += move
+            elif delta < 0:
+                give_back = min(-delta, cur)           # 多出来的转到另一池（不凭空消失）
+                if op.task == "gas":
+                    st.gas_workers -= give_back
+                    st.mineral_workers += give_back
+                else:
+                    st.mineral_workers -= give_back
+                    st.gas_workers += give_back
 
     def _apply_completed(self, st: SimState, done: list[InFlight], curve: ProjectionCurve) -> None:
         for f in done:

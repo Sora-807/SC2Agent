@@ -272,16 +272,29 @@ export function ProductionPage() {
       </div>
 
       <Card
-        title="投影 · 参考计划"
+        title={projection?.source.kind === "live_queue"
+          ? "投影 · 当前队列 " + projection.source.queue_name
+          : "投影 · 参考计划"}
         right={
-          <span className="text-[11px] text-amber-500">
-            {projection?.source.kind === "draft"
-              ? "注意：这是参考计划的投影，不是当前队列 —— planner 与运行时的 authoring 面尚未统一"
-              : "当前队列"}
+          <span className="text-[11px]">
+            {projection?.source.kind === "draft" ? (
+              <span className="text-amber-500">
+                队列为空，显示的是参考计划 {projection.source.plan_id}
+              </span>
+            ) : (
+              <span className="text-emerald-500">基于 seq {projection?.based_on_seq}</span>
+            )}
           </span>
         }
       >
         {projection ? <ProjectionChart frame={projection} /> : <Empty />}
+        {projection && projection.skipped.length > 0 && (
+          <div className="mt-1 text-[11px] text-amber-400">
+            有 {projection.skipped.length} 项没进投影：
+            {projection.skipped.map((s) => s.op + "（" + s.reason + "）").join("；")}
+            <span className="ml-1 text-neutral-600">—— 曲线比真实队列少算了这部分</span>
+          </div>
+        )}
       </Card>
 
       <Card title="投影泳道（Gantt）">
