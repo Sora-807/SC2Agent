@@ -11,6 +11,8 @@
 - planner：constraint/mechanics/game
 - tactical_map：game
 - mechanics：game
+- view：只读视图层，在 flow/production/planner/tactical_map **之上**；可依赖它们，
+  但零 driver / 零 sc2（view 不认识 SC2，也不拥有游戏循环）；**没有任何下层模块 import view**
 
 "ports" 出现在每个模块的禁止列表里 = 回归守卫：顶层 ports 模块已删除，
 任何模块重新 import ports 即测试失败。
@@ -22,15 +24,17 @@ MODULES_DIR = Path(__file__).resolve().parents[2] / "modules"
 
 # module -> 禁止 import 的顶层名（其余模块 + 第三方 sc2，driver 除外）
 PROHIBITED = {
-    "game":         {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "driver", "sc2"},
-    "tactical_map": {"ports", "mechanics", "constraint", "planner", "world", "flow", "driver", "sc2"},
-    "mechanics":    {"ports", "tactical_map", "constraint", "planner", "world", "flow", "driver", "sc2"},
-    "constraint":   {"ports", "planner", "world", "flow", "driver", "sc2"},
-    "planner":      {"ports", "tactical_map", "world", "flow", "driver", "sc2"},
-    "world":        {"ports", "tactical_map", "mechanics", "constraint", "planner", "flow", "driver", "sc2"},
-    "flow":         {"ports", "mechanics", "constraint", "planner", "world", "driver", "sc2"},
-    "production":   {"ports", "mechanics", "planner", "world", "flow", "driver", "sc2"},
-    "driver":       {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production"},
+    "game":         {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2"},
+    "tactical_map": {"ports", "mechanics", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2"},
+    "mechanics":    {"ports", "tactical_map", "constraint", "planner", "world", "flow", "production", "view", "driver", "sc2"},
+    "constraint":   {"ports", "planner", "world", "flow", "production", "view", "driver", "sc2"},
+    "planner":      {"ports", "tactical_map", "world", "flow", "production", "view", "driver", "sc2"},
+    "world":        {"ports", "tactical_map", "mechanics", "constraint", "planner", "flow", "production", "view", "driver", "sc2"},
+    "flow":         {"ports", "mechanics", "constraint", "planner", "world", "production", "view", "driver", "sc2"},
+    "production":   {"ports", "mechanics", "planner", "world", "flow", "view", "driver", "sc2"},
+    "driver":       {"ports", "tactical_map", "mechanics", "constraint", "planner", "world", "flow", "production", "view"},
+    # view 是最上层的只读视图：可依赖所有引擎模块，但不认识 SC2，也不拥有游戏循环
+    "view":         {"ports", "driver", "sc2"},
 }
 
 _IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)")
@@ -69,6 +73,31 @@ def test_no_prohibited_imports():
                 rel = f.relative_to(MODULES_DIR)
                 violations.append(f"{rel}: imports {sorted(bad)} (prohibited)")
     assert not violations, "dependency red-line violations:\n" + "\n".join(violations)
+
+
+def test_view_schema_depends_only_on_game():
+    """view.schema 是契约的数据模型，必须能独立于任何引擎重构演进。
+
+    "从引擎取数"隔离在 view.statics / view.adapt；schema 只碰 game 的类型。
+    这条守住了，flow/planner 的重构就永远不会波及契约定义本身。
+    """
+    f = MODULES_DIR / "view" / "schema.py"
+    assert f.is_file(), "missing modules/view/schema.py"
+    engine = {"flow", "production", "planner", "constraint", "tactical_map", "mechanics", "world", "driver"}
+    bad = _imports_in(f) & engine
+    assert not bad, f"view/schema.py 只应依赖 game，却 import 了 {sorted(bad)}"
+
+
+def test_nobody_imports_view():
+    """没有任何下层模块 import view（否则视图层会反向污染引擎）。"""
+    violations = []
+    for module in PROHIBITED:
+        if module == "view":
+            continue
+        for f in _module_files(module):
+            if "view" in _imports_in(f):
+                violations.append(str(f.relative_to(MODULES_DIR)))
+    assert not violations, "下列文件 import 了 view（禁止）:\n" + "\n".join(violations)
 
 
 def test_sc2_importable():

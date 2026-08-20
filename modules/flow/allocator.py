@@ -28,6 +28,29 @@ def _refill_floor(spec: dict, target: int) -> int:
     return max(int(floor), 1)
 
 
+#: 补兵状态取值（前端只做"字符串→颜色"映射，不复算规则）
+REFILL_STATES = ("补兵中", "已截断", "滞回区", "满足")
+
+
+def _refill_state(cur: int, floor: int, target: int, cap: int) -> str:
+    """与 `Allocator.refresh` 的分支一一对应，别的地方不要重写这套判断。
+
+    - `cur >= floor`：不补 → 到 target 算"满足"，否则是滞回区（死一个不立刻抢 free 池）
+    - `cur < floor`：要补 → need>0 是"补兵中"；need<=0 说明被 max 截断（target>max 的配置）
+    """
+    if cur >= floor:
+        return "满足" if cur >= target else "滞回区"
+    return "补兵中" if (min(target, cap) - cur) > 0 else "已截断"
+
+
+def _worst_state(states: list[str]) -> str:
+    """组级状态 = 最"值得关注"的那个类型的状态（补兵中 > 已截断 > 滞回区 > 满足）。"""
+    for s in REFILL_STATES:
+        if s in states:
+            return s
+    return "满足"
+
+
 @dataclass
 class GroupState:
     group_id: str
@@ -93,6 +116,38 @@ class Allocator:
         if g is None:
             return []
         return sorted(g.leased_by_type.get(stable_id, set()))
+
+    # ---- 读模型（B1）----
+    def snapshot(self) -> list[dict]:
+        """每组的 composition（含 current）+ 补兵状态 + 已 lease 单位。
+
+        `refill_state` 的分支**刻意与 `refresh` 一一对应**（同一套 floor/cap/need 判断）：
+        补兵规则只有一份实现，UI 显示的状态就不可能和引擎的实际行为对不上。
+        前端红线 C3 要求"滞回状态由后端判定"，这里就是那个后端。
+        """
+        out: list[dict] = []
+        for g in self._groups.values():
+            comp: dict[str, dict] = {}
+            for stable_id, spec in g.composition.items():
+                cur = len(g.leased_by_type.get(stable_id, set()))
+                target = spec.get("target", spec.get("max", 0))
+                cap = spec.get("max", target)
+                floor = _refill_floor(spec, target)
+                comp[stable_id] = {
+                    "min": int(spec.get("min", target)),
+                    "target": int(target),
+                    "max": int(cap),
+                    "current": cur,
+                }
+                comp[stable_id]["_state"] = _refill_state(cur, floor, target, cap)
+            out.append({
+                "group_id": g.group_id,
+                "composition": {k: {n: v for n, v in spec.items() if n != "_state"}
+                                for k, spec in comp.items()},
+                "refill_state": _worst_state([spec["_state"] for spec in comp.values()]),
+                "leased_tags": sorted({tag for s in g.leased_by_type.values() for tag in s}),
+            })
+        return out
 
     def expand_all(self, group_id: str) -> list[int]:
         """group 内所有类型已 lease 的 unit_tag（供 group_center 等空间谓词用）。"""

@@ -46,6 +46,17 @@ UNSUPPORTED_QUEUE_OPS: dict[QueueOp, str] = {
 }
 
 
+def _placement_dict(p) -> dict | None:
+    """PlacementSpec → 帧里的判别联合（前端按 kind 分支渲染）。"""
+    if p is None:
+        return None
+    if isinstance(p, PlacementExact):
+        return {"kind": "exact", "mark": p.mark}
+    if isinstance(p, PlacementInRegion):
+        return {"kind": "in_region", "region": p.region, "index": p.index}
+    raise TypeError(f"未知 PlacementSpec {type(p).__name__}（不静默：新增放置形态要同步契约）")
+
+
 class ProductionRuntime:
     """生产运行时：命名队列集合 + 队首门控 drain + 工具操作（P0 生产模块安排）。"""
 
@@ -124,6 +135,84 @@ class ProductionRuntime:
                 head,
                 f"队列 {q_name!r} 队首阻塞 {waited:.0f}s（{rec['frames']} 帧）：{rec['reason']}",
             ))
+
+    # ---- 读模型（B1）----
+
+    def snapshot(self) -> dict:
+        """生产运行时的显式只读快照（供 view / agent / 复盘录制）。
+
+        **纯派生，不改 drain**：队首门控的语义已经决定了队列里每一项的状态 ——
+        还留在 `q.items` 里的，要么是被卡住的队首（`blocked[q]` 指向它），要么是本帧没轮到；
+        已发出的项要么已出队（train/assign_workers），要么进了 `_build_flights`（build 在途）。
+        所以不需要在 drain 里埋状态位，也就不会和 drain 的任何重构打架。
+
+        返回**普通 dict**（production 不认识 view，架构测试锁死方向）；
+        键名与 `docs/plan-frontend.md` §2 的 ProductionFrame 对齐，由 view.adapt 显式映射。
+        """
+        queues: list[dict] = []
+        for q in self._queues.values():
+            rec = self.blocked.get(q.name)
+            blocked_item = rec["item"] if rec else None
+            items: list[dict] = []
+            for index, it in enumerate(q.items):
+                is_blocked = it is blocked_item
+                items.append({
+                    "index": index,
+                    "op": it.op.value if isinstance(it.op, QueueOp) else str(it.op),
+                    "stable_id": it.type,
+                    "count": it.count,
+                    "placement": _placement_dict(it.placement),
+                    "task": it.task.value if isinstance(it.task, WorkerTask) else it.task,
+                    "status": "队首阻塞" if is_blocked else "未处理",
+                    "block_reason": rec["reason"] if is_blocked else None,
+                })
+            if not q.items:
+                head_status = "空"
+            elif blocked_item is not None:
+                head_status = "阻塞"
+            else:
+                head_status = "可执行"
+            queues.append({
+                "name": q.name,
+                "head_status": head_status,
+                "blocked": None if rec is None else {
+                    "reason": rec["reason"],
+                    "since": rec["since"],
+                    "frames": rec["frames"],
+                    "warned": rec["warned"],
+                },
+                "items": items,
+            })
+
+        in_flight: list[dict] = []
+        for q_name, flights in self._build_flights.items():
+            for f in flights:
+                in_flight.append({
+                    "queue": q_name,
+                    "stable_id": f["type"],
+                    "builder_tag": f.get("builder"),
+                    "expect_pos": f.get("expect_pos"),
+                    "radius": f.get("radius", 0.0),
+                    "frames_waited": f.get("frames", 0),
+                    "retries": f.get("retries", 0),
+                    # 已尝试过的槽位名：摆放调试叠加层要画"试过哪几个位置"（F5）
+                    "attempted_slots": sorted(f.get("attempted") or ()),
+                })
+
+        return {
+            "queues": queues,
+            "in_flight": in_flight,
+            # dropped 目前不带时间戳（QueueItem 被丢时没有记 game_time）→ 帧里 at=None，
+            # UI 显示"未知"而不是编一个时间（不静默）。要时间戳得在 _drop 处补记。
+            "dropped": [
+                {"op": it.op.value if isinstance(it.op, QueueOp) else str(it.op),
+                 "stable_id": it.type, "reason": reason, "at": None}
+                for it, reason in self.dropped
+            ],
+            "stalls": [
+                {"stable_id": it.type, "text": text} for it, text in self.stalls
+            ],
+        }
 
     # ---- 每帧 tick ----
 

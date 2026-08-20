@@ -11,6 +11,7 @@ port 用 duck-typing（任何有 submit_operations 的对象）；flow 不 impor
 from __future__ import annotations
 
 import json
+from collections import deque
 
 from game import GameState, Operation
 from game.operation import OP_CATALOG, ParamType
@@ -23,6 +24,10 @@ from tactical_map.resolver import resolve_action_params
 # 全局转移上限（ADR-0021 §4 第 3 条）：strategy 未声明 loop_limits.max_step_transitions 时兜底，
 # 保证"没有任何配置能让引擎无限转移 step"。声明值优先（编译期已校验为正整数）。
 DEFAULT_MAX_STEP_TRANSITIONS = 200
+
+#: 转移历史保留条数（观测用）。只保留最近 K 条：完整历史属于事件日志（ADR-0024），
+#: 引擎内存里留一小段就够 UI 显示"最近怎么转过来的"。
+TRANSITION_HISTORY = 20
 
 
 class FlowEngine:
@@ -47,11 +52,15 @@ class FlowEngine:
         for g in assembly.groups:
             self._alloc.create_group(g.group_id, g.composition)
         si = assembly.strategy_instances[0]
+        self._instance_id = si.instance_id
+        self._strategy_ref = si.strategy_ref
         self._bindings = si.bindings  # slot -> group_id
         self._params = {p: spec.get("default") for p, spec in manifest.params.items()}
         self._params.update(si.params)
         self._active_step = manifest.initial_step
-        self._step_entry_count = 1
+        # 每个 step 各自的进入次数（环上策略才有意义："ADVANCE 第 3 次"）。
+        # 累计转移数另有 _step_transition_count，二者不是一回事。
+        self._step_entries: dict[str, int] = {manifest.initial_step: 1}
         self._step_transition_count = 0
         self._variables = {v: spec.get("default") for v, spec in manifest.variables.items()}
         self._locals: dict = {}  # 进入 step 时重置（spec-003 §3.2）
@@ -66,6 +75,12 @@ class FlowEngine:
         # 不静默；UI/agent/真机日志读它就知道"条件其实没求出来"。
         self.eval_diagnostics: dict[tuple, int] = {}
         self._op_seq = 0
+        # ---- 观测（B1，供 view.adapt 读；引擎不认识 view）----
+        # 这两样必须在求值/转移**当场**记：分支命中不落到任何持久状态里，
+        # 转移原因在转移完成后也无从反推。事后从外部推断不出来，所以写入点就在这里。
+        self._last_game_time: float | None = None
+        self._branch_hit: dict | None = None
+        self._transitions: deque = deque(maxlen=TRANSITION_HISTORY)
 
     # ---- RuntimeSink ----
     def on_game_state(self, gs: GameState) -> None:
@@ -75,20 +90,69 @@ class FlowEngine:
             self._strategy_start = gs.game_time
         if self._step_entered is None:
             self._step_entered = gs.game_time
+        self._last_game_time = gs.game_time
+        self._branch_hit = None  # 本帧未命中就是 None（等待型 step 的真实状态）
         self._alloc.refresh(gs)
         ctx = EvalCtx(gs, self._alloc, self._bindings, self._params, self._variables,
                       self._strategy_start, self._step_entered, self._region_layer,
                       catalog=self._catalog, definitions=self._m.definitions,
                       step_id=self._active_step, diagnostics=self.eval_diagnostics)
         step = self._m.steps[self._active_step]
-        for b in step.get("branches", []):
+        for index, b in enumerate(step.get("branches", [])):
             when = b.get("when")
             if when is None or eval_when(when, ctx):  # else（无 when）或 true
+                self._branch_hit = {
+                    "step_id": self._active_step,
+                    "branch_id": b.get("branch_id"),
+                    "index": index,
+                }
                 self._exec_do(b.get("do", []), ctx, gs)
                 return  # 首条命中，本帧结束
 
     def on_session_event(self, event) -> None:
         pass
+
+    # ---- 读模型（B1）----
+    def snapshot(self) -> dict:
+        """当前运行时状态的显式只读快照（供 view / agent / 复盘录制）。
+
+        为什么必须有这个方法而不是让外部读 `_` 字段：引擎离三族全量还有很长的路，
+        如果 UI 直接依赖私有字段，之后任何重构都会打断 UI。这里是唯一的观测出口。
+
+        返回**普通 dict**（不是 view 的 dataclass）：flow 不认识 view，架构测试锁死这个方向。
+        键名与 `docs/plan-frontend.md` §2 的 StrategyView 对齐，由 view.adapt 显式映射。
+        """
+        now = self._last_game_time
+        entered = self._step_entered
+        return {
+            "instance_id": self._instance_id,
+            "strategy_ref": self._strategy_ref,
+            "version": int(self._m.version),
+            "params": dict(self._params),
+            "variables": dict(self._variables),
+            "locals": dict(self._locals),
+            "definitions": dict(self._m.definitions),
+            "active_step": self._active_step,
+            "step_entered_at": entered,
+            "step_elapsed": None if (now is None or entered is None) else (now - entered),
+            "step_entry_count": self._step_entries.get(self._active_step, 1),
+            "branch_hit": None if self._branch_hit is None else dict(self._branch_hit),
+            "transitions": [dict(t) for t in self._transitions],
+            "transition_count": self._step_transition_count,
+            "transition_limit": int(
+                self._m.loop_limits.get("max_step_transitions", DEFAULT_MAX_STEP_TRANSITIONS)
+            ),
+            "done": self._done,
+            "exit_record": None if self.exit_record is None else dict(self.exit_record),
+            "bindings": dict(self._bindings),
+            # 求值诊断（H6）：("step", kind, detail) -> 次数。摊平成列表给 UI，
+            # 让"条件其实没求出来"这件事在调试页可见（不静默）。
+            "eval_diagnostics": [
+                {"step_id": k[0], "kind": k[1], "detail": k[2], "count": v}
+                for k, v in sorted(self.eval_diagnostics.items())
+            ],
+            "groups": _allocator_snapshot(self._alloc),
+        }
 
     # ---- do 执行 ----
     def _exec_do(self, actions: list, ctx: EvalCtx, gs: GameState) -> None:
@@ -146,8 +210,12 @@ class FlowEngine:
                 self.eval_diagnostics.get(note_diagnostic_key, 0) + 1
             )
             return
+        self._transitions.append({
+            "from_step": self._active_step, "to": edge["to"],
+            "kind": k, "reason": r, "at": gs.game_time,
+        })
         self._active_step = edge["to"]
-        self._step_entry_count += 1
+        self._step_entries[edge["to"]] = self._step_entries.get(edge["to"], 0) + 1
         self._step_transition_count += 1
         self._step_entered = gs.game_time
         self._locals = {}  # 进入新 step：locals 重置（spec-003 §3.2）
@@ -157,6 +225,23 @@ class FlowEngine:
             self._done = True
             self.exit_record = {"kind": "failed", "reason": "LOOP_LIMIT", "limit": limit}
         # 本帧结束（不本帧求值新 step；下帧求值）
+
+
+def _allocator_snapshot(alloc) -> list[dict]:
+    """取 allocator 的读模型。
+
+    ADR-0030 D3.5 会把 Allocator 改成**会话装配注入**（`FlowEngine(..., allocator=...)`）。
+    届时注入进来的实现必须同样提供 `snapshot()` —— 缺了就在这里显式报错，
+    而不是抛一个看不出所以然的 AttributeError（不静默）。包装类请把 `snapshot()` 透传下去。
+    """
+    snap = getattr(alloc, "snapshot", None)
+    if snap is None:
+        raise TypeError(
+            f"注入的 allocator（{type(alloc).__name__}）缺 snapshot()："
+            "flow 的读模型要靠它给出 composition/current/refill_state/leased_tags"
+            "（契约 frame/flow.groups；见 docs/plan-backend-view.md B1）"
+        )
+    return snap()
 
 
 def _resolve_params(params: dict, ctx: EvalCtx) -> dict:
