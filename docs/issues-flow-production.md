@@ -235,3 +235,38 @@ flight dict 的键（item/type/builder/frames/attempted/seen_tags/expect_pos/rad
 10. `reorder` 子集/外来项应拒绝；`count=0` 应拒绝（P12）。
 11. `stalls` 恢复事件 / dropped 带队列归属（P13）。
 12. 性能护栏：300-500 units + 10 条队列 → 断言单帧 < 2 ms（P18；flow 侧已有实测，生产侧没有）。
+
+---
+
+## 7. 复核（前后端那条线收尾后，2026-08）
+
+那条线已完成 B0-B11 + F0-F9（`modules/view` / `modules/api` / `tools` / `web`，约 8.3k 行；
+全量 `pytest tests` = 612 passed）。它顺手覆盖/降级了本清单里的几项 —— 重新评估如下：
+
+| 项 | 复核结论 |
+|---|---|
+| **P5** ApplyResult 被丢弃 | **降级为中**。B9（ApplyResult 三态裁决 + GameEvent 目录）+ `view.port.RecordingPort` 已把"每条 op 的接受/拒绝"回填到命令流水，UI 能区分"静默拒单 / 发出未落地"。**剩余**：`ProductionRuntime` 自己仍不消费裁决结果（看得见 ≠ 会自愈，例如被拒的 build 不会自动重排）。 |
+| **P13** stalls/dropped 无归属与解决事件 | **基本关闭**。`view.alerts` 用我们记的 `blocked.since/warned` 直接产 `queue_blocked` 警报（`warned` 时升级 error），带 id + 冷却；队列帧带 `blocked`。剩 `dropped` 的队列归属，低危。 |
+| **P19** 接口面缺口 | **关闭**。`view.adapt/statics/observe` + `api` 已提供队列/在途/经济/组的读模型，并且 `ObservationPacket` 明确是"同一条观测路径的另一种渲染"（禁止给 agent 另建摘要路径）。 |
+| **P6** 死 flight 隐形 | **仍在，但修法位置变了**：不必再改 runtime，`view.alerts` 加一条 `flight_stalled`（读 flight 的 frames/last_wait）即可，与 `queue_blocked` 同形。 |
+| **P18** 生产侧无性能护栏 | **仍在**。他们的读模型每帧要跑 adapt/encode，性能面反而更值得测了。 |
+| P8 / P10 / P15 / P16 / P17 / F7 / F9 / F11 / F12 | **仍在**，全是中低危或结构性，无人阻塞。 |
+
+### 一个新出现的陷阱（已加守卫）
+
+`assign_workers` 现在有两种语义并存：装配了 `EconomyKeeper` 的脚本是**目标值**（ADR-0030 D2），
+未装配的老脚本（`run_full_flow.py` 等）仍是一次性"派 N 个"。两者各自自洽，但混用会出事 ——
+`run_full_flow.py` 里有 `count=len(idle)` 这种"按当前空闲数派人"的写法，一旦给它接上维持器，
+目标就会变成一个随帧抖动的数字（真机表现：气工数量乱跳）。
+
+`tests/flow/test_run_scripts_offline.py` 加了守卫：**装配了 `economy=` 的脚本不得出现 `count=len(`**。
+于是"接维持器却忘了改 count"是测试红，而不是真机事故。老脚本不受约束（它们没接维持器）。
+
+### 现在唯一的硬缺口：真机
+
+两条线都动了真机路径且都还没跑过真机：
+- 本线：队首门控帧账本、建造工征用、采矿维持器、气矿重试路径。
+- 那条线：会话进程分离（B3）、地形静态面（B4）、ApplyResult/GameEvent（B9）、driver 抽取增量。
+
+**建议先停止加功能，跑一次真机**（`run_tank_marine_push.py`），一次性收 DSL-T6 与 ADR-0030 验收 9 的证据；
+观察点见 ADR-0030「真机验证要点」与 `plan-strategy-dsl-v02` §8。

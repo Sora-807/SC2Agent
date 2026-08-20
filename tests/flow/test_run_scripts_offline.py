@@ -90,3 +90,22 @@ def test_tank_script_shares_one_ownership_table():
     assert "allocator=self._alloc" in src, "FlowEngine 要注入同一个 Allocator"
     assert "self._economy.on_game_state" in src, "维持器必须每帧 tick，否则不收敛"
     assert 'submit_queue("steward"' not in src, "手写的采矿维持循环应已删除（ADR-0030 验收 9）"
+
+
+
+def test_target_semantics_scripts_do_not_derive_count_from_live_counts():
+    """陷阱守卫：一旦脚本装配了 EconomyKeeper，assign_workers 就是**目标值**（ADR-0030 D2），
+
+    此时再写 `count=len(idle)` 这种"按当前空闲数派人"的老写法，会把目标写成一个随帧抖动的数字。
+    未装配维持器的老脚本（run_full_flow 等）仍是一次性语义，可以继续用老写法 —— 但两者不能混。
+    这条守卫让"给老脚本接上维持器却忘了改 count"变成测试红，而不是真机上气工数量乱跳。
+    """
+    for script in sorted(ROOT.glob("run_*.py")):
+        src = script.read_text(encoding="utf-8")
+        if "economy=" not in src:
+            continue  # 老脚本：一次性语义，不受这条约束
+        offenders = [line.strip() for line in src.splitlines()
+                     if "assign_workers" in line and "count=len(" in line]
+        assert not offenders, (
+            f"{script.name} 装配了 EconomyKeeper（目标值语义），但仍按当前数量派人：{offenders}"
+        )
