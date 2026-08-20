@@ -40,8 +40,10 @@ TICK_SECONDS = 0.2
 DEFAULT_FRAME_DIR = Path("web/public/fixtures")
 #: 离线沙盒会话的推进节拍（真实秒）。live 源按它 tick，前端就像看真对局。
 SESSION_TICK = 0.25
-#: 提案日志的默认落点。**不放帧源目录**：那个目录是静态服务的（会被公开），
-#: 而且提案是运行时数据、不该进版本库。
+#: 提案日志的**建议**落点（`tools/serve_api.py` 显式传它）。
+#: **不放帧源目录**：那个目录是静态服务的（会被公开），而且提案是运行时数据、不该进版本库。
+#: 注意 `create_app` 的默认是**不持久化**（见下）—— 默认落到一个共享文件会让每个
+#: 不传路径的测试互相污染（实测踩过：手动跑的 35 条提案混进了单测）。
 DEFAULT_PROPOSAL_LOG = Path("runtime/proposals.jsonl")
 
 
@@ -58,8 +60,10 @@ def create_app(frame_dir: Path | str | None = None,
     #: 上一份观察包的 seq —— ADR-0009 的"替换而非追加"：新包 supersedes 旧包
     app.state.last_observation_seq = None
     #: 提案存储（B7）。落盘在帧源目录旁边 —— 提案的价值一半在历史，追加日志天然保留。
+    # 默认 path=None = 只在内存里（进程结束就没了）。持久化必须显式要求 ——
+    # 默认持久化到共享文件会让测试互相污染，而且"哪些提案属于这次运行"变得说不清。
     app.state.proposals = ProposalStore(
-        load_terran(), path=Path(proposal_log) if proposal_log else DEFAULT_PROPOSAL_LOG)
+        load_terran(), path=Path(proposal_log) if proposal_log else None)
 
     def _session(create: bool = True) -> OfflineSession | None:
         if app.state.session is None and create:

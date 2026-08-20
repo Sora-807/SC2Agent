@@ -185,8 +185,14 @@ class ProposalStore:
     # ---- 读 ----
 
     def list(self) -> list[dict]:
+        """按**插入顺序**返回，不按 `created_at` 排。
+
+        `created_at` 是**游戏时间**：会话重启后它从 0 重新开始，跨会话排序毫无意义 ——
+        真机上表现为"刚被拒的提案排到了很旧的位置，于是回流窗口里看不到它"，
+        agent 就会一遍遍重提同一件事（实测踩过）。dict 保序，插入序就是发生顺序。
+        """
         self._expire()
-        return [p.to_json() for p in sorted(self._items.values(), key=lambda x: x.created_at)]
+        return [p.to_json() for p in self._items.values()]
 
     def get(self, pid: str) -> Proposal | None:
         self._expire()

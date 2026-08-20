@@ -28,7 +28,8 @@ CAT = load_terran()
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    c = TestClient(create_app(tmp_path / "frames"))
+    # 显式给 tmp 的提案日志：不给就是内存态，但这里要顺带验持久化路径也工作
+    c = TestClient(create_app(tmp_path / "frames", tmp_path / "proposals.jsonl"))
     c.post("/api/session/start", params={"autotick": "false"})
     return c
 
@@ -244,8 +245,8 @@ def test_stale_anchor_expires_and_blocks_accept_p5(client: TestClient):
     sess = client.app.state.session
     for _ in range(int(ANCHOR_STALE_SECONDS) + 2):
         sess.tick()
-    rows = client.get("/api/proposals").json()
-    assert rows[0]["status"] == "已失效"
+    rows = {x["id"]: x for x in client.get("/api/proposals").json()}
+    assert rows[p["id"]]["status"] == "已失效"
     r = client.post(f"/api/proposals/{p['id']}/accept")
     assert r.status_code == 409 and "已失效" in r.json()["detail"]
 

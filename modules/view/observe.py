@@ -23,6 +23,9 @@ from game.catalog import Catalog
 PROJECTION_LOOKAHEAD = 30.0
 #: 最近转移只给这么多条（完整历史进 trace，不进 prompt）
 RECENT_TRANSITIONS = 5
+#: 提案历史只给最近这么多条。给它是为了**闭上 §6 P3 的环**：
+#: 用户拒绝时写的理由必须回流，否则 agent 会一遍遍推同一个被拒的提案。
+RECENT_PROPOSALS = 6
 
 
 @dataclass(slots=True)
@@ -64,6 +67,7 @@ def observation_packet(
     alerts = _payload(frames, "frame/alerts")
     session = _payload(frames, "frame/session")
     strategy = _payload(frames, "static/strategy")
+    proposals = _payload(frames, "proposals")
 
     seq = int(_env(frames, "frame/world").get("seq", 0)) if "frame/world" in frames else 0
     game_time = float(_env(frames, "frame/world").get("game_time", 0.0)) if "frame/world" in frames else 0.0
@@ -77,6 +81,7 @@ def observation_packet(
         "策略": _strategy_text(flow, strategy),
         "风险": _alerts_text(alerts),
         "投影": _projection_text(proj, game_time, zh),
+        "提案历史": _proposals_text(proposals),
     }
     facts = {
         "based_on_seq": seq,
@@ -90,6 +95,10 @@ def observation_packet(
                            if q.get("blocked")],
         "active_step": ((flow or {}).get("strategies") or [{}])[0].get("active_step"),
         "alert_kinds": sorted({a["kind"] for a in (alerts or {}).get("alerts", [])}),
+        "pending_proposals": [p["id"] for p in (proposals or {}).get("proposals", [])
+                              if p["status"] == "待审批"],
+        "rejected_titles": [p["title_zh"] for p in (proposals or {}).get("proposals", [])
+                            if p["status"] == "已拒绝"],
     }
     return ObservationPacket(seq=seq, game_time=round(game_time, 3), supersedes=supersedes,
                              sections={k: v for k, v in sections.items() if v}, facts=facts)
@@ -198,6 +207,42 @@ def _alerts_text(alerts: dict | None) -> str:
     if not alerts or not alerts.get("alerts"):
         return ""
     return "\n".join(f"[{a['severity']}] {a['text_zh']}" for a in alerts["alerts"])
+
+
+def _proposals_text(proposals: dict | None) -> str:
+    """我之前提过什么、结果如何、**为什么被拒**。
+
+    这是 §6 P3 的另一半：用户拒绝时写的理由必须回到 agent 面前，
+    否则它会一遍遍推同一个被拒的提案（而且每次都觉得自己是第一次想到）。
+    """
+    rows = (proposals or {}).get("proposals") or []
+    if not rows:
+        return ""
+    # **被拒的和待审批的永远带上**，不受"最近 N 条"窗口限制：
+    # 它们是最需要影响下一步决策的两类，被窗口截掉就等于回流失效（实测踩过）。
+    must = [p for p in rows if p["status"] in ("已拒绝", "待审批")]
+    recent = [p for p in rows[-RECENT_PROPOSALS:] if p not in must]
+    shown = must[-RECENT_PROPOSALS:] + recent
+    out: list[str] = []
+    for p in shown:
+        line = f"[{p['status']}] {p['title_zh']}"
+        decision = p.get("decision") or {}
+        if decision.get("comment_zh"):
+            line += f" —— 用户说：{decision['comment_zh']}"
+        if p["status"] == "已失效":
+            line += "（基于的世界已经过去了，要重提就基于当前状态）"
+        if (p.get("validation") or {}).get("ok") is False:
+            errs = "；".join(e.get("text_zh", "") for e in p["validation"].get("errors", []))
+            line += f"（校验未通过：{errs}）"
+        out.append(line)
+    pending = [p for p in rows if p["status"] == "待审批"]
+    if pending:
+        out.append(f"**还有 {len(pending)} 条在等审批** —— 别重复提同一件事，"
+                   "也别提与它冲突的改动。")
+    rejected = [p for p in rows if p["status"] == "已拒绝"]
+    if rejected:
+        out.append("被拒过的方向不要原样再提；要提就针对用户给的理由做调整。")
+    return "\n".join(out)
 
 
 def _projection_text(proj: dict | None, now: float, zh) -> str:

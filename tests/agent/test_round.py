@@ -170,6 +170,43 @@ def test_invalid_proposal_comes_back_with_the_reason_not_silence(api: TestClient
     assert api.get("/api/proposals").json()[0]["validation"]["ok"] is False
 
 
+def test_rejection_reason_flows_back_into_the_observation(api: TestClient, tmp_path: Path):
+    """**§6 P3 的另一半**：用户拒绝时写的理由必须回到 agent 面前。
+
+    否则它会一遍遍推同一个被拒的提案，而且每次都觉得自己是第一次想到。
+    """
+    llm = _script(
+        ToolCall("c1", "observe", {}),
+        ToolCall("c2", "propose", PROPOSAL_ARGS),
+        ToolCall("c3", "done", {"result": "ok"}),
+    )
+    asyncio.run(_run(api, llm, tmp_path))
+    pid = api.get("/api/proposals").json()[0]["id"]
+    api.post(f"/api/proposals/{pid}/reject", json={"comment_zh": "这波先开矿，不急着补气"})
+    api.app.state.session.tick()          # 推一帧让 proposals 帧带上新状态
+
+    tools_ = {t.name: t for t in make_tools(_client_for(api))}
+    text = asyncio.run(tools_["observe"].function({}))
+    assert "提案历史" in text
+    assert "这波先开矿" in text, "用户的拒绝理由必须出现在观察包里"
+    assert "被拒过的方向不要原样再提" in text
+
+
+def test_pending_proposals_are_flagged_so_it_does_not_double_propose(api: TestClient,
+                                                                    tmp_path: Path):
+    llm = _script(
+        ToolCall("c1", "observe", {}),
+        ToolCall("c2", "propose", PROPOSAL_ARGS),
+        ToolCall("c3", "done", {"result": "ok"}),
+    )
+    asyncio.run(_run(api, llm, tmp_path))
+    api.app.state.session.tick()
+    tools_ = {t.name: t for t in make_tools(_client_for(api))}
+    text = asyncio.run(tools_["observe"].function({}))
+    assert "还有 1 条在等审批" in text
+    assert "别重复提同一件事" in text
+
+
 def test_api_error_classifies_stale_observation():
     """agent 要能区分"世界变了"（重取观察）和"请求不合法"（别重试）。"""
     stale = ApiError(409, {"reason": "过期", "based_on_seq": 3, "current_seq": 20})
