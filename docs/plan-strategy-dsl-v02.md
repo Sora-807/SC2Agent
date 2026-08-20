@@ -33,15 +33,15 @@
 | # | 项 | 状态 |
 |---|---|---|
 | H1 | T4 队首 block 缺失速可观测性（永久阻塞静默冻结整队，违反红线 #4；live agent 也瞎） | **已落地** |
-| H2 | T3.4 `min` 滞回的 `min=0`/省略边界会把补兵整个关掉（样例 min=target=max=20 掩盖） | 待做（T3） |
-| H3 | T2c 的 bool 陷阱只查 `op`，漏了 `step_id/kind/reason/group_slot/type/action_atom/edges.from,to/...` | 部分（loop_limits 值已查） |
+| H2 | T3.4 `min` 滞回的 `min=0`/省略边界会把补兵整个关掉（样例 min=target=max=20 掩盖） | **已落地**（T3：省略=target 下限，0=只在空组补） |
+| H3 | T2c 的 bool 陷阱只查 `op`，漏了 `step_id/kind/reason/group_slot/type/action_atom/edges.from,to/...` | **已落地**（T2：`_check_identifier` 覆盖全部标识符字段） |
 | H4 | 缺 ADR-0021 明文要求的图校验（不可达 step + 环出口）；含"环出口可以是 exit_strategy"的坑 | **已落地** |
-| H5 | T1/T5 漏了 `run_*.py`（catalog 必传会让 run_flow_arrived/run_flow_slice 构造期 ValueError） | 部分（本轮修了失效引用） |
-| H6 | D9 的 "None→False" 是静默降级：`not (a>b)` 会翻成 True，`!=` 遇 None 也返 False | 待做（T2） |
-| J1 | D5 删 `on_exit` 同意，但要落 backlog（多实例/hot-swap 轮恢复），别变成"谁也说不清为什么没有的字段" | 待做 |
-| J2 | 运算符保留 args 同意，但顺手把 arity 写进签名表（当前 `{op: and, args:[x]}`、`{op: not, args:[a,b]}` 都不报） | 待做（T2） |
-| J3 | `point_toward` 参数名 `from` 是 Python 关键字（生成 TypedDict/解析器/提示词都会绊）→ 改 `origin` | 待做（T2，现在改零成本） |
-| A1 | T2 收尾加 `flow/vocab.py: dump_vocabulary()`（签名表+OP_CATALOG+UNIMPLEMENTED 导出机器可读词表） | 待做（T2） |
+| H5 | T1/T5 漏了 `run_*.py`（catalog 必传会让 run_flow_arrived/run_flow_slice 构造期 ValueError） | **已落地**（T1/T2/T3 一起迁移 + 离线编译验证） |
+| H6 | D9 的 "None→False" 是静默降级：`not (a>b)` 会翻成 True，`!=` 遇 None 也返 False | **已落地**（T2：逐运算符定义 + `eval_diagnostics` 留痕） |
+| J1 | D5 删 `on_exit` 同意，但要落 backlog（多实例/hot-swap 轮恢复），别变成"谁也说不清为什么没有的字段" | **已落地**（T3：顶层键白名单 + `REMOVED_KEYS` 墓碑，写了就报错并说明去哪了） |
+| J2 | 运算符保留 args 同意，但顺手把 arity 写进签名表（当前 `{op: and, args:[x]}`、`{op: not, args:[a,b]}` 都不报） | **已落地**（T2：`OPERATOR_ARITY`） |
+| J3 | `point_toward` 参数名 `from` 是 Python 关键字（生成 TypedDict/解析器/提示词都会绊）→ 改 `origin` | **已落地**（T2） |
+| A1 | T2 收尾加 `flow/vocab.py: dump_vocabulary()`（签名表+OP_CATALOG+UNIMPLEMENTED 导出机器可读词表） | **已落地**（T2：+ `render_prompt_card()` 2.5KB 卡片 + 漂移守卫测试） |
 
 ### 实施中发现的修正（比原判断更好的答案）
 
@@ -86,15 +86,15 @@ T4(+H1) → 真机验 → T1 → T2(+H3/H6/J2/J3/A1) → T3(+H2) → T5(+H5) →
 
 | 顺序 | 任务 | 依赖 | 产出 |
 |---|---|---|---|
-| T1 | 词汇统一:flow 全 stable id + catalog 必传 | 无 | allocator/predicates/engine 匹配重写 + 全部 flow 测试迁移 |
-| T2 | 语法层加固+糖:签名表/命名参数/defs/校验补全 | T1 | predicates 签名表 + manifest 校验 + engine 求值 + 新测试 |
-| T3 | 死字段清理:删 on_exit/QueueItem.when/ActionRequest,min 滞回 | T1 | 三处删除 + allocator 滞回 + 测试 |
+| T1 ✅ | 词汇统一:flow 全 stable id + catalog 必传 | 无 | allocator/predicates/engine 匹配重写 + 全部 flow 测试迁移 + run_*.py |
+| T2 ✅ | 语法层加固+糖:签名表/命名参数/defs/校验补全 + A1 词表导出 | T1 | predicates 签名表 + manifest 校验 + engine 求值 + 26 个新测试 |
+| T3 ✅ | 死字段清理:删 on_exit/QueueItem.when/ActionRequest,min 滞回 + 顶层键墓碑 | T1 | 三处删除 + allocator 滞回 + 测试 |
 | T4 ✅ | 生产语义对齐:队首 block + 阻塞可观测(H1) + 未知 op 记 dropped | 无(与 flow 侧零耦合) | runtime 改动 + 测试 + docstring 对齐 + run_*.py 日志 |
 | H4 ✅ | 图级编译校验(不可达 step/环出口/死边)+ 全局转移上限兜底 | 无 | manifest/engine 改动 + 10 个新测试 |
-| T5 | 样例与文档迁移:tank_marine_push.yaml、bio_push、P0/需求文档 | T2+T3 | 新语法样例 + 文档同步 |
-| T6 | 全量回归 + 真机冒烟(run_full_flow / run_tank_marine_push) | T1-T5 | pytest 全绿 + 真机日志证据 |
+| T5 ✅ | 样例与文档迁移:tank_marine_push.yaml(+definitions)、P0/需求文档/test-plan | T2+T3 | 新语法样例 + 文档同步 |
+| T6 | 全量回归 + 真机冒烟(run_full_flow / run_tank_marine_push) | T1-T5 | pytest 全绿 + 真机日志证据（真机需人执行）|
 
-执行顺序:**T4(+H1) ✅ → H4 ✅ → T1 → T2(+H3/H6/J2/J3/A1) → T3(+H2) → T5(+H5) → T6**。
+执行顺序:**T4(+H1) ✅ → H4 ✅ → T1 ✅ → T2(+H3/H6/J2/J3/A1) ✅ → T3(+H2) ✅ → T5(+H5) ✅ → T6（离线部分 ✅，真机待人执行）**。
 T4 与 flow 侧零耦合,且是本轮唯一引入**新故障模式(失速)**的改动 —— 单独提交、单独回归、单独真机验,
 别和 T1/T2 的大规模机械迁移混在一个提交里(混了以后真机出问题分不清是词汇迁移还是队列语义)。
 
@@ -330,3 +330,60 @@ QueueItem 构造签名更新;ActionRequest 导入删除后架构测试仍绿。
 - 生产 authoring 统一(planner module_defs 代码注册 → YAML);
 - OP_CATALOG 与 driver 任何改动;跨帧超支根治(依赖 D6 ApplyResult);
 - 现有真机魔法数(90 帧/retries=6/NODE_RADIUS)常量化重构 —— 记入 backlog,不在本轮。
+
+---
+
+## 8. 落地记录（本轮实际完成）
+
+| 提交 | 内容 | 测试 |
+|---|---|---|
+| `12a1c79` | T4 + H1：队首门控 block + 阻塞可观测（blocked/stalls）+ 未知 op 记 dropped；run 脚本日志加 blocked/stalls；army 队列按产线拆分 | 323 |
+| `2b131c1` | H4：图级校验（不可达 step / 无出口环 / 死边）+ 全局转移上限兜底 + exit_record | 319 |
+| `5ad2be6` | T1：词汇统一（authoring 全 stable id、catalog 必传、单侧归一）+ 测试/样例/run 脚本迁移 | 326 |
+| `8f8e8bc` | T2 + A1：签名表 + 命名参数 + arity + definitions/ref + None 安全与诊断 + 校验补全 + flow/vocab 词表导出 | 352 |
+| `90bd846` | T3 + H2：死字段清理（on_exit/ActionRequest/QueueItem.when）+ 顶层键墓碑 + S3 补兵滞回 | 359 |
+| 本次 | T5 + T6（离线）：样例 definitions 重构、P0/需求文档同步、run_*.py 离线守卫测试 | 363 |
+
+基线 309 → 363（+54 测试）。全程每个任务结束 `uv run python -m pytest tests -q` 全绿。
+
+### 样例前后对比（`docs/tank_marine_push.yaml`，去注释）
+
+| 指标 | T2 前（位置参数） | 现在（命名参数 + definitions） |
+|---|---|---|
+| 字符数 | 5050 | 4871 |
+| 括号 `{}[]` | 296 | 220 |
+| 最长单行 | 291 | 217 |
+| `point_toward(...)` 抄写 | 4 遍 | 1 处定义（`front_point`）|
+| 集结条件抄写 | 2 遍 | 1 处定义（`formed`）|
+
+命名参数本身会让单个节点变长（`arrived` 48→63 字符），但配 `{ref}` 后深嵌套节点大幅缩短
+（`enemy_count_near` 那条 155→82），整体反而更短，且"参数顺序写错"从静默 bug 变成编译错误。
+
+### T6 剩余部分（真机，需要人执行）
+
+离线部分已完成：`pytest tests` 全绿（含架构分层测试）；`run_*.py` 新增离线守卫测试
+（内联策略必须能编译 + 构造引擎、脚本引用的引擎/运行时私有属性必须存在 —— 后者正是 a41abc9 之后
+`run_full_flow.py` 一直坏掉的那类漂移）。
+
+真机冒烟命令与观察点：
+
+```bash
+uv run python run_full_flow.py          # 生产链 + 队首 block 语义
+uv run python run_tank_marine_push.py   # 新语法 yaml（definitions）+ 蛙跳循环 + 拆分后的军队队列
+```
+
+观察点（证据入 `docs/*.log`）：
+1. `dropped=` 不增长（未知 op / 作者错误项应为 0）。
+2. `blocked=` 出现后能恢复（队首攒够矿即继续），`stalls=` 为空或只在真卡死时出现一条。
+3. 蛙跳行为与旧版一致（组心距敌矿递减、siege 只在坦克入 tank_cover 那轮发）。
+4. `army_rax`/`army_fac` 两条产线并行产出（拆队列后坦克不再等 20 机枪训完）。
+5. 若 block 语义确实压低吞吐：记录证据，后续轮再加 per-queue `skip_blocked` 开关（本轮不修）。
+
+### 遗留 / 交接
+
+- `on_exit` 的恢复条件写在代码里（`flow.manifest.REMOVED_KEYS`）：多实例 / hot-swap 轮按 spec-002 放回。
+- timer（`start_timer`/`stop_timer`/`timer_elapsed`）三处对称拒绝，T8 一起放回。
+- 表达式字符串 DSL 仍不做：前置条件（词表 `flow.vocab` + 稳定 IR）现在才刚具备，届时它只是签名表的机械投影。
+- `docs/plan-backend-view.md` 的 B1（显式读模型 `snapshot()`）本想作为 T2/T3/T4 的补充条款顺手落；
+  实际落地的可观测面已覆盖它要的大半：`FlowEngine.exit_record` / `FlowEngine.eval_diagnostics` /
+  `ProductionRuntime.blocked` / `ProductionRuntime.stalls`，B1 只需把它们包装成 snapshot 读模型。

@@ -8,7 +8,7 @@
 #              到步兵组心(3内)  才 siege(否则 SKIP)   到前沿 point_toward
 #   tank_hop/inf_hop 内 arrived(inf, target, 8) → exit_strategy ARRIVED（任意时刻近似）
 #
-# 前沿点 = point_toward(group_center(armor), target, tank_cover)：坦克覆盖内、朝敌方向。
+# 前沿点 = definitions.front_point = point_toward(group_center(armor), target, tank_cover)：坦克覆盖内、朝敌方向。
 # 坦克离目标远时 siege_gate 跳过架起（SKIP→inf_hop）；仅坦克入 target 10.4 内那一轮才 siege。
 
 strategy:
@@ -26,19 +26,25 @@ strategy:
     min_inf: {type: int, default: 20}
     min_tank: {type: int, default: 4}
   variables: {}
+  definitions:
+    # 前沿点：坦克覆盖内、朝敌方向。原来这个表达式在 when/动作参数里抄了 4 遍 ——
+    # 改一处漏三处的经典来源，且校验器抓不到（D3 别名节）。
+    front_point: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: tank_cover}}
+    # 集结完成：20 枪兵 + 4 坦克（garrison 与 formup 两处是同一条件）。
+    formed: {op: and, args: [{op: ">=", args: [{op: group_count, group: inf, type: terran/marine}, {param: min_inf}]}, {op: ">=", args: [{op: group_count, group: armor, type: terran/siegetank}, {param: min_tank}]}]}
   initial_step: garrison
   steps:
     # 驻扎主矿入口：枪兵每帧前往 garrison_pos 防守，凑齐 20+4 → formup
     - step_id: garrison
       branches:
-        - when: {op: and, args: [{op: ">=", args: [{op: group_count, group: inf, type: terran/marine}, {param: min_inf}]}, {op: ">=", args: [{op: group_count, group: armor, type: terran/siegetank}, {param: min_tank}]}]}
+        - when: {ref: formed}
           do: [{op: exit_step, kind: done, reason: READY}]
         - do:
             - {op: group_action, group_slot: inf, type: terran/marine, action_atom: attack_move_to, params: {position: {param: garrison_pos}}}
 
     - step_id: formup
       branches:
-        - when: {op: and, args: [{op: ">=", args: [{op: group_count, group: inf, type: terran/marine}, {param: min_inf}]}, {op: ">=", args: [{op: group_count, group: armor, type: terran/siegetank}, {param: min_tank}]}]}
+        - when: {ref: formed}
           do: [{op: exit_step, kind: done, reason: FORMED}]
         - do: []
 
@@ -68,10 +74,10 @@ strategy:
           do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
         - when: {op: ">", args: [{op: distance_between, a: inf, b: armor}, {param: inf_hold_dist}]}
           do: [{op: exit_step, kind: interrupted, reason: STRAGGLED}]
-        - when: {op: arrived, group: inf, target: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: tank_cover}}, radius: 3.0}
+        - when: {op: arrived, group: inf, target: {ref: front_point}, radius: 3.0}
           do: [{op: exit_step, kind: done, reason: IN_PLACE}]
         - do:
-            - {op: group_action, group_slot: inf, type: terran/marine, action_atom: attack_move_to, params: {position: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: tank_cover}}}}
+            - {op: group_action, group_slot: inf, type: terran/marine, action_atom: attack_move_to, params: {position: {ref: front_point}}}
 
     # 脱队停等：hold + step_elapsed ≥ hold_secs → RESUME
     - step_id: inf_wait
@@ -84,10 +90,10 @@ strategy:
     # 威胁评估：前沿点近敌 < threat_limit 且血线 > 0.6 → CLEARED → 下一轮 tank_hop；否则继续清理
     - step_id: threat_gate
       branches:
-        - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, anchor: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: tank_cover}}, radius: {param: threat_radius}}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, group: inf}, 0.6]}]}
+        - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, anchor: {ref: front_point}, radius: {param: threat_radius}}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, group: inf}, 0.6]}]}
           do: [{op: exit_step, kind: done, reason: CLEARED}]
         - do:
-            - {op: group_action, group_slot: inf, type: terran/marine, action_atom: attack_move_to, params: {position: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: tank_cover}}}}
+            - {op: group_action, group_slot: inf, type: terran/marine, action_atom: attack_move_to, params: {position: {ref: front_point}}}
 
   edges:
     - {from: garrison, to: formup, kind: done, reason: READY}

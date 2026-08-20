@@ -1,0 +1,76 @@
+"""run_*.py 真机脚本的离线守卫（T6 前置 / H5）。
+
+真机脚本不进 pytest（需要 SC2），于是最容易漂移：a41abc9 把 ProductionRuntime._build_flight 改名成
+_build_flights，run_full_flow.py 的 tick 日志就一直是坏的 —— 首个日志帧 AttributeError，
+而 T6 恰恰要用它做冒烟。这里补两层离线守卫：
+1. 脚本里的内联 strategy/assembly 必须能编译 + 构造引擎（词表/命名参数/catalog 迁移不漏脚本）。
+2. 脚本引用的引擎/运行时私有属性必须真实存在（改名即测试红）。
+"""
+import importlib
+import re
+import sys
+from pathlib import Path
+
+from driver.fake import FakeGamePort
+from flow.engine import FlowEngine
+from flow.manifest import parse_assembly, parse_strategy
+from game.catalog import load_terran
+from production.runtime import ProductionRuntime
+
+ROOT = Path(__file__).resolve().parents[2]
+CAT = load_terran()
+
+
+class _NullPort:
+    def submit_operations(self, ops):
+        pass
+
+
+def _import(name: str):
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    return importlib.import_module(name)
+
+
+def test_inline_strategies_compile_and_engine_constructs():
+    """run_flow_arrived / run_flow_slice / run_full_flow 的内联策略离线编译 + 构造引擎。"""
+    cases = [
+        ("run_flow_arrived", lambda m: (m.STRATEGY, m.ASSEMBLY)),
+        ("run_flow_slice", lambda m: (m.STRATEGY, m.ASSEMBLY)),
+        ("run_full_flow", lambda m: (m.STRATEGY, m._assembly([50.0, 50.0]))),
+    ]
+    for name, pick in cases:
+        mod = _import(name)
+        strategy_yaml, assembly_yaml = pick(mod)
+        st = parse_strategy(strategy_yaml)
+        asm = parse_assembly(assembly_yaml)
+        eng = FlowEngine(st, asm, FakeGamePort(script=[]), catalog=CAT)
+        assert eng._active_step == st.initial_step, name
+
+
+def test_tank_push_script_uses_repo_sample():
+    """run_tank_marine_push 直接吃 docs/tank_marine_push.yaml（含 definitions），必须能编译。"""
+    mod = _import("run_tank_marine_push")
+    st = parse_strategy(mod._strategy_yaml())
+    assert st.id == "tank_marine_push"
+    assert "front_point" in st.definitions and "formed" in st.definitions
+
+
+def test_run_scripts_only_touch_existing_runtime_attrs():
+    """脚本引用的 ProductionRuntime 私有属性必须存在（防 _build_flight → _build_flights 这类漂移）。"""
+    rt = ProductionRuntime(CAT, _NullPort())
+    pattern = re.compile(r"_runtime\.(_[a-z_]+)")
+    for script in sorted(ROOT.glob("run_*.py")):
+        for attr in sorted(set(pattern.findall(script.read_text(encoding="utf-8")))):
+            assert hasattr(rt, attr), f"{script.name} 引用了 ProductionRuntime 上不存在的 {attr!r}"
+
+
+def test_run_scripts_only_touch_existing_engine_attrs():
+    """同上，针对 FlowEngine（_active_step/_done/_bindings/_alloc 这些真机日志常用字段）。"""
+    st = parse_strategy(_import("run_flow_slice").STRATEGY)
+    asm = parse_assembly(_import("run_flow_slice").ASSEMBLY)
+    eng = FlowEngine(st, asm, FakeGamePort(script=[]), catalog=CAT)
+    pattern = re.compile(r"_engine\.(_[a-z_]+)")
+    for script in sorted(ROOT.glob("run_*.py")):
+        for attr in sorted(set(pattern.findall(script.read_text(encoding="utf-8")))):
+            assert hasattr(eng, attr), f"{script.name} 引用了 FlowEngine 上不存在的 {attr!r}"
