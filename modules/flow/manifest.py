@@ -18,11 +18,12 @@ from dataclasses import dataclass, field
 import yaml
 
 from game import is_known_action
-from game.operation import OP_CATALOG
+from game.operation import OP_CATALOG, ParamType
 
 from flow.predicates import (
     OPERATOR_ARITY,
     PREDICATE_SIGNATURES,
+    SPATIAL_NAME_PARAMS,
     UNIMPLEMENTED_PREDICATE_OPS,
     UNIMPLEMENTED_SPATIAL_OPS,
 )
@@ -81,6 +82,11 @@ UNIMPLEMENTED_DO_OPS: dict[str, str] = {
 # params 声明允许的键与类型白名单（live_editable 等无消费方的键先不收）
 PARAM_KEYS = frozenset({"type", "default"})
 PARAM_TYPES = frozenset({"int", "float", "point", "bool", "str"})
+
+# step / branch 键白名单（F3）：拼错 branches 会让这个 step 每帧什么都不做（静默死锁）；
+# 拼错 when 会让条件被丢掉、分支变成无条件执行（静默灾难）。两者编译期都要拦。
+STEP_KEYS = frozenset({"step_id", "branches", "locals"})
+BRANCH_KEYS = frozenset({"when", "do"})
 
 # strategy / assembly 顶层键白名单：删掉一个字段（如 on_exit）后，旧文件继续写它必须**报错**，
 # 不能静默忽略 —— 否则"删字段"就变成了"悄悄失效"（D5 的反面）。
@@ -310,6 +316,110 @@ def _validate_graph(m: StrategyManifest, err) -> None:
             )
 
 
+def _check_param_value(value, ptype, where: str, err) -> None:
+    """按声明 type 校验参数值（F4 / T2c #10）。ptype 为 None（未声明类型）时跳过。"""
+    if ptype is None or value is None:
+        return
+    if ptype == "point":
+        ok = (isinstance(value, (list, tuple)) and len(value) == 2
+              and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value))
+        if not ok:
+            err(f"{where}: 声明 type=point，值应为 [x, y] 两个数，当前 {value!r}")
+    elif ptype == "int":
+        if isinstance(value, bool) or not isinstance(value, int):
+            err(f"{where}: 声明 type=int，当前 {value!r}（{type(value).__name__}）")
+    elif ptype == "float":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            err(f"{where}: 声明 type=float，当前 {value!r}（{type(value).__name__}）")
+    elif ptype == "bool":
+        if not isinstance(value, bool):
+            err(f"{where}: 声明 type=bool，当前 {value!r}（{type(value).__name__}）")
+    elif ptype == "str":
+        if not isinstance(value, str):
+            err(f"{where}: 声明 type=str，当前 {value!r}（{type(value).__name__}）")
+
+
+def iter_group_actions(m: StrategyManifest):
+    """遍历所有 group_action do 项 → (where, action)。校验与读模型共用。"""
+    for sid, step in m.steps.items():
+        for i, b in enumerate(step.get("branches", [])):
+            for a in (b.get("do") or []):
+                if isinstance(a, dict) and a.get("op") == "group_action":
+                    yield f"{sid}/branch[{i}]", a
+
+
+def iter_value_nodes(m: StrategyManifest):
+    """遍历所有值树里的 op 节点 → (where, node)：when / 动作参数 / definitions / set_* 的 value。"""
+    def walk(node, where):
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                yield from walk(item, where)
+            return
+        if not isinstance(node, dict):
+            return
+        if node.get("op"):
+            yield where, node
+        for key, val in node.items():
+            if key != "op":
+                yield from walk(val, where)
+
+    for dname, dnode in (m.definitions or {}).items():
+        yield from walk(dnode, f"definitions[{dname!r}]")
+    for sid, step in m.steps.items():
+        for i, b in enumerate(step.get("branches", [])):
+            where = f"{sid}/branch[{i}]"
+            if "when" in b:
+                yield from walk(b["when"], where)
+            for a in (b.get("do") or []):
+                if not isinstance(a, dict):
+                    continue
+                for pval in (a.get("params") or {}).values():
+                    yield from walk(pval, where)
+                if "value" in a:
+                    yield from walk(a["value"], where)
+
+
+def validate_map_names(m: StrategyManifest, layer) -> list[str]:
+    """字面量地图名字校验（F5）：策略里写死的点位名/区域名必须在 RegionLayer 里存在。
+
+    引擎构造期就拿到了 layer，所以这本来就该是编译期错误（R6：提交必须 validate）——
+    此前拼错的名字会一路静默：resolver 原样保留 → driver 静默失败，或谓词恒 False。
+    返回问题清单（空 = 通过）；layer 为 None 时跳过（离线单测/无地图场景）。
+    """
+    if layer is None:
+        return []
+    problems: list[str] = []
+
+    def check(name, kind: str, where: str) -> None:
+        if not isinstance(name, str):
+            return  # 字面坐标/引用节点：不是名字
+        if kind == "region":
+            if name not in layer.regions and name not in layer.big_regions:
+                problems.append(
+                    f"{where}: 区域名 {name!r} 不在地图层的 regions/big_regions"
+                    f"（点位名当区域名用会静默恒 False）"
+                )
+        elif layer.anchor(name) is None:
+            problems.append(f"{where}: 地图名 {name!r} 在地图层里解析不到（区域锚点/大区/点位标记都没有）")
+
+    for where, action in iter_group_actions(m):
+        atom = action.get("action_atom")
+        params = action.get("params") or {}
+        for pname, ptype, _required in OP_CATALOG.get(atom, []):
+            if ptype not in (ParamType.POINT, ParamType.POINTS) or pname not in params:
+                continue
+            val = params[pname]
+            items = val if (ptype == ParamType.POINTS and isinstance(val, list)) else [val]
+            for item in items:
+                check(item, "point", f"{where}/{atom}.{pname}")
+
+    for where, node in iter_value_nodes(m):
+        for pname, kind in SPATIAL_NAME_PARAMS.get(node.get("op"), {}).items():
+            if pname in node:
+                check(node[pname], kind, f"{where}/{node['op']}.{pname}")
+    return problems
+
+
 def validate_strategy(m: StrategyManifest) -> None:
     """编译期校验（spec-003 验收点 1-5 + spec-004 子集；其余后补）。
 
@@ -337,6 +447,22 @@ def validate_strategy(m: StrategyManifest) -> None:
         ptype = spec.get("type")
         if ptype is not None and ptype not in PARAM_TYPES:
             err(f"params.{pname}: 未知 type {ptype!r}（白名单 {sorted(PARAM_TYPES)}）")
+        elif "default" in spec:
+            _check_param_value(spec["default"], ptype, f"params.{pname}.default", err)
+
+    # variables 声明：与 params 同一套形态校验（此前只查 params，不一致）
+    for vname, spec in (m.variables or {}).items():
+        if not isinstance(spec, dict):
+            err(f"variables.{vname}: 声明必须是 mapping（如 {{type: int, default: 0}}），当前 {spec!r}")
+            continue
+        unknown = sorted(set(spec) - PARAM_KEYS)
+        if unknown:
+            err(f"variables.{vname}: 未知键 {unknown}（只允许 {sorted(PARAM_KEYS)}）")
+        vtype = spec.get("type")
+        if vtype is not None and vtype not in PARAM_TYPES:
+            err(f"variables.{vname}: 未知 type {vtype!r}（白名单 {sorted(PARAM_TYPES)}）")
+        elif "default" in spec:
+            _check_param_value(spec["default"], vtype, f"variables.{vname}.default", err)
 
     # definitions 别名节（T2b）：值树同 when 词表，且不得自引用/成环
     for dname, dnode in (m.definitions or {}).items():
@@ -371,10 +497,26 @@ def validate_strategy(m: StrategyManifest) -> None:
             )
 
     for sid, step in m.steps.items():
+        # F3：step 键白名单 —— 拼错 branches（branchs）会让这个 step 每帧什么都不做，永远
+        unknown_step_keys = sorted(set(step) - STEP_KEYS)
+        if unknown_step_keys:
+            err(f"step {sid}: 未知键 {unknown_step_keys}（只允许 {sorted(STEP_KEYS)}；"
+                "拼错 branches 会让这个 step 每帧什么都不做）")
+        declared_locals = step.get("locals")
+        if declared_locals is not None and (
+            not isinstance(declared_locals, list)
+            or any(not isinstance(x, str) for x in declared_locals)
+        ):
+            err(f"step {sid}: locals 必须是字符串列表，当前 {declared_locals!r}")
         branches = step.get("branches", [])
-        locals_declared = set(step.get("locals") or [])
+        locals_declared = set(declared_locals) if isinstance(declared_locals, list) else set()
         for i, b in enumerate(branches):
             where = f"{sid}/branch[{i}]"
+            # F3：branch 键白名单 —— 拼错 when（wehn）会让条件被丢掉、分支变无条件执行
+            unknown_branch_keys = sorted(set(b) - BRANCH_KEYS)
+            if unknown_branch_keys:
+                err(f"{where}: 未知键 {unknown_branch_keys}（只允许 {sorted(BRANCH_KEYS)}；"
+                    "拼错 when 会让条件被丢掉、这条分支变成无条件执行）")
             if "when" not in b and i != len(branches) - 1:
                 err(f"{where}: else（无 when）分支必须且只能放在最后（spec-003 §2）")
             if "when" in b:
@@ -490,5 +632,41 @@ def validate_assembly(m: StrategyManifest, a: FlowAssembly) -> None:
                 errors.append(f"instance {si.instance_id}: 绑定未声明的 slot {slot!r}")
             if gid not in group_ids:
                 errors.append(f"instance {si.instance_id}: 绑定不存在的 group {gid!r}")
+
+        # F5-1：声明的 slot 必须都有绑定 —— 否则该 slot 的所有 group_action 永久静默 no-op
+        unbound = [s for s in m.group_slots if s not in si.bindings]
+        if unbound:
+            errors.append(
+                f"instance {si.instance_id}: 声明的 group_slot {unbound} 没有绑定 group"
+                "（这些 slot 的所有动作会永久静默 no-op）"
+            )
+
+        # F5-2：(slot, type) 必须在绑定组的 composition 里 —— 否则 expand 恒为空，永久 no-op
+        comp_by_gid = {g.group_id: set(g.composition or {}) for g in a.groups}
+        for where, action in iter_group_actions(m):
+            slot = action.get("group_slot")
+            stable_type = action.get("type")
+            gid = si.bindings.get(slot)
+            if gid is None or stable_type is None or gid not in comp_by_gid:
+                continue  # 上面已分别报错
+            if stable_type not in comp_by_gid[gid]:
+                errors.append(
+                    f"{where}: group_action({slot}, {stable_type}) —— 绑定的 group {gid} 的 composition"
+                    f"里没有这个兵种（有：{sorted(comp_by_gid[gid])}），动作会永久静默 no-op"
+                )
+
+        # F4：instance params 键必须已声明（拼错会静默用 default），并按声明 type 校验值
+        def _err(msg: str) -> None:
+            errors.append(msg)
+
+        for pname, pval in (si.params or {}).items():
+            if pname not in m.params:
+                errors.append(
+                    f"instance {si.instance_id}: params 里的 {pname!r} 不是 strategy 声明的参数"
+                    f"（声明：{sorted(m.params)}）—— 覆盖会被静默忽略"
+                )
+                continue
+            _check_param_value(pval, (m.params[pname] or {}).get("type"),
+                               f"instance {si.instance_id}: params.{pname}", _err)
     if errors:
         raise AssertionError("assembly 编译校验失败:\n- " + "\n- ".join(errors))

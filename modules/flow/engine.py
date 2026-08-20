@@ -16,7 +16,7 @@ from game import GameState, Operation
 from game.operation import OP_CATALOG, ParamType
 
 from flow.allocator import Allocator
-from flow.manifest import FlowAssembly, StrategyManifest, validate_assembly
+from flow.manifest import FlowAssembly, StrategyManifest, validate_assembly, validate_map_names
 from flow.predicates import EvalCtx, eval_when
 from tactical_map.resolver import resolve_action_params
 
@@ -35,6 +35,10 @@ class FlowEngine:
                 "形态变体）翻译回 stable id 才能匹配（T1 词汇统一，D1）"
             )
         validate_assembly(manifest, assembly)  # R6：绑定/引用错误在构造期拒绝
+        # R6/F5-3：策略里写死的点位名/区域名在这里才有 layer 可查 —— 构造期拒绝，不留到运行期静默失败
+        name_problems = validate_map_names(manifest, region_layer)
+        if name_problems:
+            raise AssertionError("地图名字校验失败:\n- " + "\n- ".join(name_problems))
         self._m = manifest
         self._port = port
         self._alloc = Allocator(catalog=catalog)  # catalog 透传给 Allocator（形态变体归一化，T3）

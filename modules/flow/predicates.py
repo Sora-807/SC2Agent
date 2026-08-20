@@ -80,6 +80,18 @@ UNIMPLEMENTED_SPATIAL_OPS: dict[str, str] = {
 # 值工具（返回 Point2/数值而非布尔）：动作参数位直接用，when 里作为参数嵌套
 VALUE_OPS = frozenset({"group_center", "region_center", "point_toward"})
 
+# 会把字符串当"地图名字"解析的参数位 → 期望的名字种类（编译期校验字面量名字，F5）。
+# "point" 走 RegionLayer.anchor（区域锚点/大区锚点/点位标记都算）；
+# "region" 必须是区域名（regions/big_regions）—— 点位名当区域名用会静默恒 False。
+SPATIAL_NAME_PARAMS: dict[str, dict[str, str]] = {
+    "arrived": {"target": "point"},
+    "enemy_count_near": {"anchor": "point"},
+    "point_toward": {"origin": "point", "toward": "point"},
+    "region_center": {"name": "region"},
+    "group_center_in_region": {"region": "region"},
+    "enemy_visible_in": {"region": "region"},
+}
+
 
 @dataclass
 class EvalCtx:

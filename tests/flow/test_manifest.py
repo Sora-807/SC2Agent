@@ -472,3 +472,103 @@ def test_unknown_top_level_key_rejected():
 def test_assembly_unknown_top_level_key_rejected():
     with pytest.raises(AssertionError, match="顶层未知键"):
         parse_assembly(_assembly_text("{min: 1, target: 1, max: 1}") + "on_exit: release\n")
+
+
+
+# ---- F3/F4/F5：键名打错 / 声明类型 / 绑定与兵种（编译期）----
+
+
+def test_step_key_typo_rejected():
+    """F3：branchs 拼错 → 旧行为是编译通过、该 step 每帧什么都不做（永远）。"""
+    bad = VALID.replace("    branches:", "    branchs:")
+    with pytest.raises(AssertionError, match="未知键"):
+        parse_strategy(bad)
+
+
+def test_branch_key_typo_rejected():
+    """F3：wehn 拼错 → 旧行为是条件被丢掉、这条分支变成无条件执行。"""
+    bad = VALID.replace('      - when: {op: ">=", args: [{op: strategy_elapsed}, 600]}',
+                        '      - wehn: {op: ">=", args: [{op: strategy_elapsed}, 600]}')
+    with pytest.raises(AssertionError, match="未知键"):
+        parse_strategy(bad)
+
+
+def test_locals_must_be_string_list():
+    bad = VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: 3")
+    with pytest.raises(AssertionError, match="locals"):
+        parse_strategy(bad)
+
+
+def test_variables_declaration_validated_like_params():
+    with pytest.raises(AssertionError, match="未知键"):
+        parse_strategy(VALID.replace("{type: int, default: 0}", "{type: int, default: 0, hot: true}"))
+    with pytest.raises(AssertionError, match="未知 type"):
+        parse_strategy(VALID.replace("{type: int, default: 0}", "{type: unit, default: 0}"))
+
+
+def test_declared_default_type_checked():
+    """声明 type=int 却给了字符串 → 编译失败（F4/T2c #10）。"""
+    with pytest.raises(AssertionError, match="type=int"):
+        parse_strategy(VALID.replace("{type: int, default: 1}", '{type: int, default: "x"}'))
+
+
+def test_point_default_must_be_xy_pair():
+    with pytest.raises(AssertionError, match="type=point"):
+        parse_strategy(VALID.replace("{type: int, default: 1}", "{type: point, default: [1, 2, 3]}"))
+
+
+def test_assembly_instance_param_typo_rejected():
+    """F4：实例 params 键拼错 → 旧行为是校验通过、静默用 default。"""
+    bad = _assembly_text("{min: 1, target: 1, max: 1}").replace("params: {}", "params: {p2: 5}")
+    with pytest.raises(AssertionError, match="不是 strategy 声明的参数"):
+        validate_assembly(parse_strategy(VALID), parse_assembly(bad))
+
+
+def test_assembly_instance_param_type_checked():
+    bad = _assembly_text("{min: 1, target: 1, max: 1}").replace("params: {}", 'params: {p1: "x"}')
+    with pytest.raises(AssertionError, match="type=int"):
+        validate_assembly(parse_strategy(VALID), parse_assembly(bad))
+
+
+TWO_SLOT = """
+id: two
+group_slots: [inf, armor]
+params: {}
+variables: {}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: inf, type: terran/marine, action_atom: move_to, params: {position: [1, 1]}}
+          - {op: group_action, group_slot: armor, type: terran/siegetank, action_atom: move_to, params: {position: [1, 1]}}
+edges: []
+"""
+
+
+def _two_slot_assembly(bindings: str, comp: str = "terran/marine: {min: 1, target: 1, max: 1}"):
+    return f"""
+id: a
+groups:
+  - group_id: G1
+    composition:
+      {comp}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: two
+    bindings: {bindings}
+    params: {{}}
+"""
+
+
+def test_assembly_unbound_slot_rejected():
+    """F5-1：声明了 armor 却不绑定 → 旧行为是 armor 的所有动作永久静默 no-op。"""
+    with pytest.raises(AssertionError, match="没有绑定 group"):
+        validate_assembly(parse_strategy(TWO_SLOT), parse_assembly(_two_slot_assembly("{inf: G1}")))
+
+
+def test_group_action_type_must_be_in_bound_group():
+    """F5-2：给 inf 下坦克命令，而 inf 绑的组里只有枪兵 → 旧行为是 expand 恒空、永久静默 no-op。"""
+    with pytest.raises(AssertionError, match="composition"):
+        validate_assembly(parse_strategy(TWO_SLOT),
+                          parse_assembly(_two_slot_assembly("{inf: G1, armor: G1}")))
