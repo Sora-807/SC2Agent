@@ -15,8 +15,8 @@ import { Overview } from "./pages/Overview";
 import { MapPage } from "./pages/MapPage";
 import { DebugPage } from "./pages/DebugPage";
 import { FlowPage } from "./pages/FlowPage";
+import { PlanningPage } from "./pages/PlanningPage";
 import { ProductionPage } from "./pages/ProductionPage";
-import { PlanningPage } from "./pages/Stubs";
 import { useFrames } from "./store/frames";
 
 export function App() {

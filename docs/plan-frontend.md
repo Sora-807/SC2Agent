@@ -28,7 +28,7 @@
 | U5 | **位置可插值,进度/计数绝不插值** | 1Hz 采样不插值则地图一格一格跳;但 ADR-0017 明令禁止伪造进度动画,两者要分开 |
 | U6 | 中文文案**一律来自后端 catalog/region 数据**,前端不建 i18n 字典 | `display_name_zh`/`aliases_zh`/`description_zh` 已在数据层,前端再建一份=第二个命名真相源 |
 | U7 | **UI 与 agent 共用同一套命令 API**,不开 UI 后门 | UI 操作 agent 可脚本化,agent 动作 UI 看得见;写入面本来就小(队列 op/会话/提案) |
-| U8 | Flow 编辑 = **AST 直编 + 图渲染**,不做文本表面语法(定 D12) | `when` 已是结构化 AST。DSL v0.2 落地后 `flow.vocab.dump_vocabulary()` 提供签名表 + arity + 动作目录 + 未实现清单 + 节点形态 + 规则,且**与校验器和 LLM 提示词同源** → 无往返解析问题,schema 约束连线的数据全齐,编辑器风险大幅下降 |
+| U8 | Flow 编辑 = **AST 直编 + 图渲染**,不做文本表面语法(定 D12) | F9 的 AST 编辑分两步:**看与导出先做扎实**(图+分支渲染+JSON 导出,已落地),改结构编辑器留 next —— 数据结构已齐(`static/schema` 签名 + `static/strategy` 值树),不欠债 | `when` 已是结构化 AST。DSL v0.2 落地后 `flow.vocab.dump_vocabulary()` 提供签名表 + arity + 动作目录 + 未实现清单 + 节点形态 + 规则,且**与校验器和 LLM 提示词同源** → 无往返解析问题,schema 约束连线的数据全齐,编辑器风险大幅下降 |
 | U9 | V1 **固定布局 + 可折叠**,拖拽 dock 后置(违 ADR-0023 §2.1) | dock 引擎+布局序列化是独立工程量,早期收益低 |
 | U10 | Flow 页**不围绕泳道设计**,但帧 schema 一律列表形状 | 引擎单实例(DSL-T2c#6 编译期拒绝多实例),ADR-0017 的 lane 模型现在没后端;列表形状让多实例长出来时不改协议 |
 | U11 | React + TS + Vite(而非 NiceGUI/Streamlit 单语言方案) | 1Hz canvas + 交互式图编辑 + 长曲线,Python 原生 UI 框架做不好;代价是引入第二语言,已确认接受 |
@@ -452,7 +452,7 @@ interface Proposal {
 | F6 | 概览页组装 ✅**已完成** | F1-F4 | — | 六面板 + 可折叠(localStorage) + 点击跳完整页 + 内嵌地图与投影 |
 | F7 | 对话栏 + 提案审批 ✅**已完成**(agent 侧待 B10) | F1,F3 | B7 ✅ | 重对话栏(消息流+内联提案卡+待审批徽标)、主区审批面板、**双投影对比图**、逐条接受、拒绝附理由 |
 | F8 | 接 live ✅**已完成** | F1-F6 | B2,B3 ✅ | `WsFrameSource({live:true})` + `ReviewableSource` 回看、会话启动(offline/sim/sc2)与停止、回到实时 |
-| F9 | 规划页(地图/生产/Flow AST 编辑器) | F2,F3,F4 | B2,B4 + DSL-T2 | 离线创作工具 |
+| F9 | 规划页 ✅**已完成** | F2,F3,F4 | B2,B4 | 三工作台:地图(槽位/点位/区域)、生产(草稿→提案)、Flow 装配(图+分支AST+导出) |
 
 **F0-F6 对后端零依赖** —— 可与 DSL v0.2 重构完全并行。F5 先跑夹具、B1 落地后自动变真数据。
 

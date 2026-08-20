@@ -33,24 +33,3 @@ export function MapPage() {
     </Stub>
   );
 }
-
-export function PlanningPage() {
-  return (
-    <Stub
-      stage="F9"
-      title="规划（离线）"
-      will={[
-        "地图规划：区域 / 预留区 / 槽位 / 标记点，模板只读 + 复制成草稿",
-        "生产规划：自定义起始状态 + 投影工作台",
-        "Flow 装配：AST 结构化编辑器（schema 来自 static/schema，非法连线直接禁止）",
-        "所有画布操作转成结构化 patch，人与 agent 同一表示",
-      ]}
-    >
-      <Card title="边界提醒">
-        <div className="text-neutral-400">
-          离线草稿**绝不默认叠加 live**（ADR-0022 反例）；live 中不出现模块/Strategy 的创建与编辑入口（R5）。
-        </div>
-      </Card>
-    </Stub>
-  );
-}
