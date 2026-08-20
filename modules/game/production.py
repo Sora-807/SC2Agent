@@ -57,7 +57,8 @@ class QueueItem:
     count: int = 1  # 数量（≥1；train 5 个则 count=5）
     placement: PlacementSpec | None = None  # 建造位置抽象标记；queue 处理层转 TL+BR 坐标（ADR-0027）
     task: WorkerTask | None = None  # assign_workers 用：mineral/gas/idle（闭集枚举）
-    when: str | None = None  # 可选一次性触发条件（如 "supply>=16" 满足才执行此条）
+    # 注：条件项（原 when: "supply>=16"）无消费方，已删（T3/D5：死字段是虚假承诺）。
+    # 生产 authoring 统一轮再以结构化 AST 条件回归（与 flow 的 when 同一套词表/求值器）。
 
     def __post_init__(self) -> None:
         """归一化：允许 YAML/JSON/测试以字符串构造，统一收成枚举成员。"""

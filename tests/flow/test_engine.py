@@ -599,3 +599,72 @@ strategy_instances:
     assert eng._done is True  # 敌人进入 main_base → exit
 
 
+
+
+
+# ---- F1：去重键必须含单位集合 ----
+
+HOLD_POINT = """
+id: hold_point
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: go
+steps:
+  - step_id: go
+    branches:
+      - do:
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: attack_move_to, params: {position: [50.0, 50.0]}}
+edges: []
+"""
+
+HOLD_ASSEMBLY = """
+id: a
+groups:
+  - group_id: G1
+    composition:
+      terran/marine: {min: 4, target: 4, max: 4}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: hold_point
+    bindings: {main: G1}
+    params: {}
+"""
+
+
+def test_refilled_units_receive_current_order():
+    """F1：组补兵后新成员必须收到当前命令（固定目标点也要重发）。
+
+    旧实现的去重键只有 (slot, type, atom, params)，且在展开 tags 之前判定 —— 新兵永远待命。
+    真机表现：garrison 用固定 garrison_pos，后造出来的枪兵站在兵营不动。
+    """
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(HOLD_POINT), parse_assembly(HOLD_ASSEMBLY), port, catalog=CAT)
+    eng.on_game_state(_gs(0, 2, 0.0))
+    assert [o.unit_tags for o in port.submitted] == [[100, 101]]
+    eng.on_game_state(_gs(1, 4, 1.0))  # 补兵到 4
+    assert [o.unit_tags for o in port.submitted] == [[100, 101], [100, 101, 102, 103]]
+    eng.on_game_state(_gs(2, 4, 2.0))  # 成员与参数都没变 → 仍然去重，不刷命令
+    assert len(port.submitted) == 2
+
+
+def test_empty_group_does_not_poison_dedup():
+    """F1 变体：首次求值时组是空的，不能写去重键 —— 否则之后有兵了也永远不发。"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(HOLD_POINT), parse_assembly(HOLD_ASSEMBLY), port, catalog=CAT)
+    eng.on_game_state(_gs(0, 0, 0.0))   # 空组：no-op
+    assert port.submitted == []
+    eng.on_game_state(_gs(1, 2, 1.0))   # 有兵了 → 必须下发
+    assert [o.unit_tags for o in port.submitted] == [[100, 101]]
+
+
+def test_unit_death_reasserts_order_to_survivors():
+    """成员减少也算集合变化 → 给存活者重新确认命令（幂等，不会累积命令风暴）。"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(HOLD_POINT), parse_assembly(HOLD_ASSEMBLY), port, catalog=CAT)
+    eng.on_game_state(_gs(0, 4, 0.0))
+    assert len(port.submitted) == 1
+    eng.on_game_state(_gs(1, 3, 1.0))  # 死了一个（tag 100..102 存活）
+    assert [o.unit_tags for o in port.submitted][-1] == [100, 101, 102]
+    eng.on_game_state(_gs(2, 3, 2.0))
+    assert len(port.submitted) == 2  # 稳定后不再重发

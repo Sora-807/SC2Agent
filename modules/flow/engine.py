@@ -53,7 +53,9 @@ class FlowEngine:
         self._locals: dict = {}  # 进入 step 时重置（spec-003 §3.2）
         self._strategy_start: float | None = None
         self._step_entered: float | None = None
-        self._last_emitted: dict[tuple, str] = {}  # (slot, type, atom) -> params_key
+        # 去重状态：(slot, type, atom) -> (unit_tags, params_key)。
+        # 单位集合必须进键：组补兵/伤亡后成员变了，同一条命令要重新下发，否则新兵永远待命（F1）。
+        self._last_emitted: dict[tuple, tuple] = {}
         self._done = False
         self.exit_record: dict | None = None  # 结束原因（exit_strategy 的 kind/reason，或 LOOP_LIMIT）
         # 求值期诊断（H6）：(step, kind, detail) -> 次数。None 比较等"降级为 False"的路径留痕，
@@ -101,8 +103,6 @@ class FlowEngine:
                 self._variables[a["name"]] = eval_when(a.get("value"), ctx)
             elif op == "set_local":
                 self._locals[a["name"]] = eval_when(a.get("value"), ctx)
-            elif op in ("start_timer", "stop_timer"):
-                pass  # V1 stub：timer_elapsed 谓词未实现前，计时器写操作无害空转
             else:
                 raise ValueError(f"unknown do op {op!r}")  # 编译期已拦；此为兜底
 
@@ -110,19 +110,22 @@ class FlowEngine:
         slot = a["group_slot"]
         type_name = a["type"]
         atom = a["action_atom"]
+        # 先展开单位：空组直接 no-op 且**不写去重键** ——
+        # 旧实现先写键再判空，导致"首次求值时组还空着"的 step 之后永远不再下发（F1 的变体）。
+        gid = self._bindings.get(slot)
+        tags = self._alloc.expand(gid, type_name) if gid else []
+        if not tags:
+            return  # 空 group no-op（下一帧有人了再发）
         params = _resolve_params(a.get("params", {}), ctx)
         # ADR-0029 D1：emit 前把 map 名解析成数值（去重也在解析后，spec-003 §2.1）
         params = resolve_action_params(atom, params, self._region_layer)
         # T4 去重量化：POINT/POINTS 参数 round 到整格进键（动态点微移 <0.5 不重发、≥1 才重发）；
         # 实际下发的 params 保留精确值（仅 pkey 量化）。
         pkey = json.dumps(_quantize_for_dedup(atom, params), sort_keys=True, default=str)
-        if self._last_emitted.get((slot, type_name, atom)) == pkey:
-            return  # 去重：同 (slot,type,action,params) 不重发
-        self._last_emitted[(slot, type_name, atom)] = pkey
-        gid = self._bindings.get(slot)
-        tags = self._alloc.expand(gid, type_name) if gid else []
-        if not tags:
-            return  # 空 group no-op
+        signature = (tuple(tags), pkey)  # 单位集合 + 参数：任一变化都要重发（F1）
+        if self._last_emitted.get((slot, type_name, atom)) == signature:
+            return  # 去重：同 (slot,type,action,单位集合,params) 不重发
+        self._last_emitted[(slot, type_name, atom)] = signature
         self._op_seq += 1
         self._port.submit_operations([Operation(
             op_id=self._op_seq, unit_tags=tags, action=atom, params=params, seq=gs.seq,
@@ -133,7 +136,12 @@ class FlowEngine:
         edge = next((e for e in self._m.edges
                      if e["from"] == self._active_step and e["kind"] == k and e["reason"] == r), None)
         if edge is None:
-            return  # validate 应拦
+            # 编译期已拦（死边/无匹配边都是编译错误）；热改或手构造 manifest 时留痕，不静默卡住
+            note_diagnostic_key = (self._active_step, "exit_step_no_edge", f"{k}/{r}")
+            self.eval_diagnostics[note_diagnostic_key] = (
+                self.eval_diagnostics.get(note_diagnostic_key, 0) + 1
+            )
+            return
         self._active_step = edge["to"]
         self._step_entry_count += 1
         self._step_transition_count += 1
