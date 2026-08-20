@@ -74,13 +74,33 @@
 | **B8** | 警报最小版 `view/alerts.py` ✅**已完成**(节拍缓存 ProjectionMonitor 归 B2) | B0 | 零 | `frame/alerts` |
 | **B6** | 命令写入面 + `api.session.OfflineSession` ✅**已完成**(提案接受归 B7) | B2 | 零 | 前端可写;R8 的门落地 |
 | **B7** | 提案存储 + validate 网关 + **双投影预览** ✅**已完成** | B6 | 零 | 前端 F7 |
-| **B3** | 会话控制 + 进程分离(解 `start()` 阻塞,`stop()` 真实现) | **T6** | 零 | 前端 F8 的 live |
+| **B3** | 会话控制 + 进程分离 ✅**已完成**(sc2 驱动路径已接,待真机冒烟) | — | 零 | 前端 F8 的 live |
 | **B4** | `MapInfo` 地形静态面(driver 增量导出 game_info) | **T6** | 零 | 地图页从散点图变地图 |
 | **B9** | D6 `ApplyResult` 字段 + D7 `GameEvent` 目录 | **T6**,B3 | 零 | 命令流水的落地状态 |
 | **B10** | `ObservationPacket` + `/api/agent/tools` ✅**已完成** | B2 | 零 | agent 读面与 UI 同源 |
 | **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
 
-执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 → B4 → B9`
+执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ✅ → B10 ✅ → B3 ✅ → B4 → B9`
+
+### B3 落地要点
+
+**进程分离的机械**（`tools/run_session.py` 子进程 + `api.live.LiveSession` 父端）:
+- stdin 收命令、stdout 出帧，一行一条 JSON；`{"_": meta|ack|error|projection|bye}` 控制行与帧分开
+- 命令在**帧边界**应用 —— 帧中间改状态会让"这一帧的观察对应哪个世界"说不清（R8 的前提）
+- 崩溃**结构化**报给父进程（traceback 进 `error` 字段），父进程变"崩溃"态而不挂
+- `driver=sim` 用假世界跑**同一条**产帧与命令路径 —— 所以整套机械在没有 SC2 的环境里被 8 条测试覆盖
+  （spawn / 流式帧 / 命令生效 / 过期拒 / 崩溃不带走 api / 优雅停止 / 双投影往返 / sc2 模式）
+- 子进程限速 `--tick-seconds`：不限速的话 600 游戏秒两秒跑完，"live"就不像 live 了
+
+**提案在 live 会话上完整可用**：`ProposalStore` 不再直接碰 `session.world/runtime`（那是离线专有），
+改成**会话三件套协议**（`queue_items`/`apply_queue`/`project`）。`project` 在 live 上走**子进程往返**，
+因为 GameState 在子进程里，父进程只有帧（从 WorldFrame 反推 GameState 又错又脆）。
+
+**踩坑两个**：
+1. `LiveSession.queue_items` 漏了字段名映射（帧里 `stable_id`，`parse_item` 吃 `type`）——
+   两条双投影曲线一模一样、cap 都是 15，查了半天是 `type=None` 一路流进投影。已修 + 回归测试。
+2. `OfflineSession` 的 `game_time` 在 `__init__` 没初始化 —— 会话协议统一后 `ProposalStore`
+   一读就 AttributeError。两种会话的协议属性必须"一直可读"。
 
 ### B10 落地要点
 

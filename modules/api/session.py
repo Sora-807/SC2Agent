@@ -133,6 +133,9 @@ class OfflineSession:
         self.label = label
         self.state = "对局中"
         self.error: str | None = None
+        # 会话协议要求 `game_time` 一直可读（提案的 anchor/失效判断读它）；
+        # 没初始化的话，第一帧之前访问就会 AttributeError（实测踩过）。
+        self.game_time = 0.0
         self.world = WorldSim(catalog=catalog, cc_pos=Point2(30.5, 30.5), minerals=minerals)
         self.world.bootstrap(workers=workers)
         tpl = load_ladder_map()
@@ -181,6 +184,9 @@ class OfflineSession:
         顺序有语义：建造征用要先落到 lease 表，维持器才知道哪些工兵不能动（ADR-0030 D3.3）。
         """
         gs = self.world.game_state()
+        # 会话协议要求 `game_time` 一直反映「最新一帧」：提案的 anchor/失效判断读它。
+        # 必须在这里更新，而不是依赖 producer 的某个调用路径（proposals 可能没接上）。
+        self.game_time = gs.game_time
         self.engine.on_game_state(gs)
         self.runtime.on_game_state(gs)
         self.keeper.on_game_state(gs)
@@ -284,6 +290,29 @@ class OfflineSession:
         """采集配额 = **目标值**（维持 N 个，幂等；ADR-0030 D2），不是"再派 N 个"。"""
         self.keeper.set_target(task, int(count))
         return {"task": task, "quota": int(count), "accepted_seq": self.seq}
+
+    # ---- 提案需要的三件事（与 LiveSession 同名同义）----
+
+    def queue_items(self, name: str = "main") -> list:
+        q = self.runtime.queue(name)
+        return list(q.items) if q else []
+
+    def apply_queue(self, name: str, items: list) -> dict:
+        return self.queue_op("submit", name, items=items)
+
+    def project(self, items: list, *, name: str = "main", horizon: float = 120.0,
+                timeout: float = 5.0) -> dict | None:
+        """本地算（我们就有 GameState）。签名与 `LiveSession.project` 一致。"""
+        from view.adapt import projection_frame
+        from view.encode import to_json
+        from view.projection import project_queue
+
+        gs = self.world.game_state()
+        curve, tr = project_queue(self.producer.planner, gs, items,
+                                  until=gs.game_time + horizon, catalog=self.catalog)
+        return to_json(projection_frame(
+            curve, based_on_seq=gs.seq, based_on_game_time=gs.game_time,
+            horizon=horizon, queue_name=name, skipped=tr.skipped))
 
     def describe(self) -> dict[str, Any]:
         return {

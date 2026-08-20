@@ -31,6 +31,7 @@ from view.observe import frames_by_topic, observation_packet
 from view.proposals import ProposalStore
 
 from api.commands import CommandResult, QueueCommand, WorkerCommand
+from api.live import LiveSession
 from api.session import OfflineSession, StaleObservation
 from api.sources import SourceRegistry
 
@@ -133,12 +134,20 @@ def create_app(frame_dir: Path | str | None = None,
         return sess.describe()
 
     @app.post("/api/session/start")
-    async def session_start(autotick: bool = Query(True)) -> dict:
-        """建会话。`autotick=false` 时不自动推进 —— 测试与"单步调试"需要手动 tick。
+    async def session_start(autotick: bool = Query(True),
+                            driver: str = Query("offline")) -> dict:
+        """建会话。`driver`：`offline`（进程内假世界）/ `sim`（子进程假世界，验进程分离）/
+        `sc2`（子进程真机）。`autotick=false` 时不自动推进（测试与单步调试用）。
 
         必须是 `async def`：`asyncio.create_task` 需要运行中的事件循环，
         而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
         """
+        if app.state.session is not None:
+            raise HTTPException(status_code=409, detail="已有运行中的会话（先 POST /api/session/stop）")
+        if driver in ("sim", "sc2"):
+            app.state.session = LiveSession(driver=driver)
+            app.state.proposals.session = app.state.session
+            return app.state.session.describe()
         sess = _session()
         assert sess is not None
         if autotick:
@@ -161,7 +170,10 @@ def create_app(frame_dir: Path | str | None = None,
         app.state.session_task = None
         sess = app.state.session
         if sess is not None:
-            sess.state = "已结束"
+            if hasattr(sess, "proc"):
+                sess.stop()          # 子进程会话：真停
+            else:
+                sess.state = "已结束"
         app.state.session = None
         # 也要断开提案对会话的引用：否则停掉会话后新建的提案会基于**死会话**的世界
         # 算 anchor（拿到一个永远不会再变的 game_time），P5 的失效判断就失效了。

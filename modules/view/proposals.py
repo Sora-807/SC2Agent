@@ -289,33 +289,24 @@ class ProposalStore:
     def preview_pair(self, pid: str, *, horizon: float = 120.0) -> dict:
         """双投影：当前队列 vs 提案后的队列。**接受前先看未来** —— §6 的杀手功能。
 
-        两条曲线都用**同一个 GameState** 起点，所以差异只来自队列本身。
+        通过 `session.project(items)` 算：离线会话本地算，live 会话让**子进程**算
+        （GameState 在子进程里，父进程只有帧）。所以这里不直接碰 `session.world`。
         """
-        from view.adapt import projection_frame
-        from view.projection import project_queue
-
         p = self._require(pid)
         if self.session is None:
             raise ValueError("没有会话，算不了投影")
-        gs = self.session.world.game_state()
-        planner = self.session.producer.planner
+        project = getattr(self.session, "project", None)
+        if project is None:
+            raise ValueError("会话不支持投影")
         queue_name = str(p.target.get("queue") or "main")
         current = self._current_items(queue_name)
         proposed = apply_hunks(current, p.hunks)
 
-        def one(items: list[QueueItem], name: str) -> dict:
-            curve, tr = project_queue(planner, gs, items,
-                                      until=gs.game_time + horizon, catalog=self.catalog)
-            from view.encode import to_json
-            return to_json(projection_frame(
-                curve, based_on_seq=gs.seq, based_on_game_time=gs.game_time,
-                horizon=horizon, queue_name=name, skipped=tr.skipped))
-
-        return {
-            "proposal_id": p.id,
-            "current": one(current, queue_name),
-            "proposed": one(proposed, queue_name + "（提案后）"),
-        }
+        cur_frame = project(list(current), name=queue_name, horizon=horizon)
+        prop_frame = project(list(proposed), name=queue_name + "（提案后）", horizon=horizon)
+        if cur_frame is None or prop_frame is None:
+            raise ValueError("会话没有算出投影（可能还没有帧）")
+        return {"proposal_id": p.id, "current": cur_frame, "proposed": prop_frame}
 
     # ---- 内部 ----
 
@@ -330,22 +321,26 @@ class ProposalStore:
     def _current_items(self, queue_name: str) -> list[QueueItem]:
         if self.session is None:
             return []
-        q = self.session.runtime.queue(queue_name)
-        return list(q.items) if q else []
+        # 走会话三件套协议：离线会话读 runtime，live 会话从最近一帧反解
+        get = getattr(self.session, "queue_items", None)
+        if get is None:
+            return []
+        return list(get(queue_name))
 
     def _anchor(self) -> dict | None:
         if self.session is None:
             return None
-        return {"seq": self.session.seq, "game_time": round(self.session.world.t, 3)}
+        # 会话协议：seq 与 game_time 是两种会话都有的属性（离线=世界，live=父进程追踪到的）
+        return {"seq": int(self.session.seq), "game_time": round(float(self.session.game_time), 3)}
 
     def _now(self) -> float:
-        return round(self.session.world.t, 3) if self.session is not None else 0.0
+        return round(float(self.session.game_time), 3) if self.session is not None else 0.0
 
     def _expire(self) -> None:
         """anchor 过期 → 自动"已失效"（§6 P5：禁止盲接受）。"""
         if self.session is None:
             return
-        now = self.session.world.t
+        now = float(self.session.game_time)
         for p in self._items.values():
             if p.status != STATUS_PENDING or not p.anchor:
                 continue
