@@ -127,10 +127,15 @@
 8. 性能护栏：300 单位 + 10 矿点 + 2 精炼厂，单帧 < 2 ms（issues P18：生产侧目前零性能护栏）。
 9. `steward` 那类脚本里的手写维持循环可以删掉，真机行为不变差（T6 真机对照）。
 
-## 落地顺序建议
+## 落地顺序
 
 1. `WorkerPoolPort` + Allocator 实现 + 注入（D3.4/D3.5）—— 需与 B1 协调 `engine.py`。
-2. `production/economy.py` 维持器 + 目标值语义（D2/D4）+ 离线测 1/2/6/7。
+   （协议已落在 `modules/game/ports.py`；缺 Allocator 侧实现与会话装配注入。）
+2. ✅ `production/economy.py` 维持器 + 目标值语义（D2/D4）+ 离线验收 1-8。
+   **实现细化**：征用登记先独立成 `WorkerReservations` 对象（可被生产运行时与 Allocator 共同持有），
+   而不是一开始就塞进 Allocator 内部 —— 这样第 2 步不必碰任何有争议的文件，第 1/3 步再把它接进 lease 表。
+   气优先于矿在 `_targets` 里落地：先扣 `gas` 与 `reserve_idle`，剩下的人数才是矿的上限
+   （否则人不够时矿会先把人占满、气目标永远补不齐）；`reserve_idle` 因此才有真实行为。
 3. 生产运行时改走征用（D3.3）+ 离线测 4；`worker._pick_worker` 的 `rest[0]` 兜底删除。
 4. `assign_workers` 队列项改写目标（D2.2）+ 离线测 3；flow 侧编译期拦截放开（D1.3）。
 5. 删 `steward`（验收 9）+ 补性能护栏（验收 8）。
