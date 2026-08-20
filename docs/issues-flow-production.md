@@ -6,8 +6,11 @@
 
 ## 0. 并行改动的文件归属（与前后端计划的握手）
 
-当前工作树里前后端那条线只有 `web/` 与两份计划文档（未跟踪），`modules/` 零改动 ——
-也就是 **B0（`modules/view`）还没开工，B1（`snapshot()` 读模型）也没开工**。
+**状态更新（本轮末）**：前后端那条线**已开工** —— 工作树里出现了未跟踪的 `modules/view/`、`tests/view/`、
+`tools/`，并且 `tests/architecture/test_imports.py` 被改动（未提交，B0 加分层规则）。所以下面这张表从"预案"变成
+"现行约定"：`production/runtime.py` 的改动**必须先和那条线打招呼**。
+（另：他们的 `tests/view/test_statics.py` 当前 3 条红，原因在他们自己那边 ——
+`spawn_layout_nearest()` 返回单个 `SpawnLayout`，测试按 2 元组解包。与本清单的改动无关。）
 `plan-backend-view.md` §2 的冲突矩阵把 B1 排在"T3 合并后"，T3 已合并，所以 B1 随时可能进来。
 
 | 文件 | 本清单要动 | 前后端计划要动 | 约定 |
@@ -39,32 +42,21 @@ T2/D8 已把它们改成编译期拒绝，`_exec_do` 里的 `pass` 分支不可�
 ### ✅ F8（中，已修）`exit_step` 无匹配边时运行期静默 return
 编译期已拦，但热改/手构造 manifest 会静默卡在原 step。现在记一条 `eval_diagnostics`。
 
-### F2（高）`set_local` 只能写、无法读
+### ✅ F3（已修 `c6efb79`）step / branch 级键名打错 → 静默改变语义
+（step 键白名单 `{step_id, branches, locals}`、branch 键白名单 `{when, do}`、locals 必须是字符串列表。）
+
+### ✅ F4（已修 `c6efb79`）声明与覆盖的类型
+（params/variables 同一套形态校验、default 按 type 校验、instance params 键必须已声明且按 type 校验值。）
+
+### ✅ F5（已修 `c6efb79`）绑定 / 兵种 / 地图名三处静默 no-op
+（声明 slot 必须有绑定；`(slot,type)` 必须在绑定组 composition 里；新增 `validate_map_names(m, layer)`
+在 `FlowEngine` 构造期校验字面量点位名/区域名，区域名参数要求真是区域 —— 点位名当区域名用会静默恒 False。）
+
+### F2（高，未修）`set_local` 只能写、无法读
 证据：`predicates.py` 没有 `{local: name}` 节点；`engine.py` 的 `set_local` 写进 `self._locals`，零读取路径。
 这与 D8 拒绝 timer 的理由**一字不差**（写被允许 / 读被拒绝 = 静默无效）。
 修法二选一：实现 `{local: name}`（+ 校验必须在本 step 的 `locals` 声明里），或把 `set_local`/`locals`
 一起移入 `UNIMPLEMENTED_DO_OPS`。建议后者（V1 没有真实用例），T8 做 timer 时一起放回。
-
-### F3（高）step / branch 级键名打错 → 静默改变语义
-复现：
-- `branchs:`（拼错 `branches`）→ **编译通过**，该 step 每帧什么都不做，永远。
-- `wehn:`（拼错 `when`）→ **编译通过**，条件被丢掉 → 变无条件分支，第一帧就 `exit_strategy`。
-修法：step 键白名单 `{step_id, branches, locals}`、branch 键白名单 `{when, do}`（与顶层键白名单同一套机制，~10 行）。
-LLM 产脚本时这是高频错误面。
-
-### F4（高）instance `params` 键名打错 → 静默用 default
-复现：声明 `radius`，实例写 `params: {radus: 3.0}` → `validate_assembly` 通过，引擎 params =
-`{radius: 8.0, radus: 3.0}`，覆盖意图丢失。
-修法：`si.params` 键必须 ⊆ 声明的 params；顺带按声明 type 做值检查（point 要 `[x,y]`、int/float 要数值）——
-即 T2c #10 剩下的部分。
-
-### F5（高）绑定 / 兵种 / 点位名三处静默 no-op
-复现（三条同时通过校验，运行期全部 no-op，`eval_diagnostics` 空）：
-1. 声明 `group_slots: [inf, armor]` 但只绑定 `inf` → armor 的所有动作永久 no-op。
-2. `group_action(slot=inf, type=terran/siegetank)` 而 inf 绑的组 composition 里只有枪兵 → 永久 no-op。
-3. 点位名拼错（`hoem`）→ `resolver` 明文"原样保留 → driver 静默失败"（`resolver.py` docstring 自己承认"编译期校验后补"）。
-修法：`validate_assembly` 补两条（每个声明 slot 必须有绑定；每个 `(slot,type)` 必须在绑定组的 composition 里）；
-`FlowEngine.__init__` 已经拿到 `region_layer`，构造期即可全量校验字面量点位名/区域名（R6：提交必须 validate）。
 
 ### F7（中）`_step_entry_count` 只写不读
 ADR-0021 的 attempt 概念本该用它（UI 显示 "attempt 3"）。要么进 B1 读模型，要么删。
@@ -165,11 +157,78 @@ EconomyKeeper.on_game_state(gs)          # 每帧（或每 N 帧）跑，无内�
 ## 4. 建议顺序（止血 → 收口 → 加功能）
 
 1. ~~F1 去重键~~ ✅ 已修（唯一会在真机上表现为"兵不动"的阻断 bug）。
-2. **编译期五道口子**：F3（step/branch 键白名单）+ F4（instance params 键/类型）+ F5（绑定/兵种/点位名）。
-   全部是"信息已经在手里、只是没查"，且正是 LLM 产脚本的高频错误面。
+2. ~~编译期五道口子（F3/F4/F5）~~ ✅ 已修 `c6efb79`。
 3. **生产语义止血**：P1（train 前置）+ P3（全局帧账本）—— 这两条决定"发出去的单会不会被 SC2 静默吃掉"。
 4. **写-读不对称收口**：F2（`set_local`）+ P9（`assign_workers` 蒸发）+ P2（clear 不清 flight）。
 5. **经济维持器**（P14 + P7/P11）：这是"SCV 采矿做得不好"的根治。
 6. **可观测性收口**：P5（ApplyResult 回流）+ P6（死 flight）+ P13（事件结构化）+ F11（环形缓冲）——
    与 B1 读模型天然合流，建议与前后端那条线一起排。
 7. 最后才是 T8（timer）/ T9（威胁谓词）这类加功能。
+
+---
+
+## 5. 生产侧完整审查补充（并行子代理只读审查，逐条带行号）
+
+§2 已记的 P1-P14 之外，补齐下面这些（同一份报告，未在上面展开的）：
+
+### P15（中）`_block_reason` 是隐式实例状态
+`runtime.py:99-102` `_block()` 写 `self._block_reason`，`_note_block()`（`109-126`）读它 —— 隐藏状态 + 时间耦合。
+将来若 Phase 1（在途确认）或非队首路径也调 `_block`，读到的可能是别人留下的原因。
+（这是 T4/H1 我自己引入的接缝，欠一次机械重构：改成返回 `(outcome, reason)` 元组，约十几处调用点。）
+
+### P16（低）`constraint/checks.py` 过时注释 + 死 API
+- `checks.py:10` docstring 说"footprint 重叠为单格近似，TL+BR 待升级"，但 `occupied_cells`（`64-79`）已实现完整 TL+BR。
+- `checks.py:131-133` `check_assign_workers()` 无生产调用方（runtime 自己处理），只有一条测试在断言它 —— 被测试养着的死 API。
+
+### P17（中，结构）五条建造路径重复
+`_try_build`(`264-306`) / `_try_build_addon`(`594-618`) / `_try_build_gas`(`653-679`) 三段重复
+`check_* → pick → _emit → 手写 flight dict`；`_retry_build`(`376-406`) / `_retry_build_addon`(`408-433`) 再重复一份。
+flight dict 的键（item/type/builder/frames/attempted/seen_tags/expect_pos/radius/retries）散落 5 处，拼错要到运行期才炸。
+建议：(a) `BuildFlight` dataclass + `_start_flight(...)` 工厂；(b) 统一 outcome 协议 `(status, reason)`（顺带消灭 P15）；
+(c) 职责切分（`QueueManager` / `PlacementPlanner` / `FlightTracker` / `TrainPlanner`，runtime 当 facade）——
+697 行现在承担全部职责，每次改动都要读懂完整 FSM。(c) 建议与 B1 读模型那轮一起做。
+
+### P18（中，性能护栏缺失）每帧重复全扫
+- `occupied_cells`（`checks.py:64-79`）每次全扫 `gs.units`，一帧内被 `check_build`、`_resolve_placement`、
+  `_has_addon`（per 母建筑）反复调用 → O((2N+P)·U)。
+- `_confirm_build`（`runtime.py:331-342`）每个 flight 各做一次 `_type_entity_tags` 全扫 + 位置匹配再扫一遍；
+  10 个并行 flight = 20 次 O(U)。
+- `_pick_free_geyser`（`622-651`）每次重建 buildings 列表；`_pick_builder` / `_addon_order_names` / `_worker_names`
+  每帧重算静态 frozenset（`__init__` 缓存一次即可）。
+现在 U<100 不会破 2 ms，但那是"碰巧够用"而非"测得够用"——**flow 侧我已实测有数（F10），生产侧完全没有性能护栏**。
+
+### P19（中，接口面）读写面缺口（与 B1 读模型直接衔接）
+已有 `queue(name)` / `dropped` / `blocked` / `stalls`；缺：
+1. `list_queues()` + 队列级快照（head / 长度 / blocked 状态）；
+2. `_build_flights` 的公开读模型（类型/预期位置/帧数/最后等待原因/attempted）；
+3. `apply_rejects`（ApplyResult 回流，P5）；
+4. dropped/stalls 带 queue 归属 + game_time + resolved 事件（P13）；
+5. 队列工具操作的输入校验与错误返回（P12）；
+6. WorkerAllocator 的"为什么没派 / 为什么只派了 k 个"原因回传（P9）。
+
+### 低危杂项（各一行）
+- `runtime.py:333-336` `expect is None` 分支不可达（所有 flight 创建点都设了 `expect_pos`）+ 注释误导。
+- `runtime.py:155` 空队列的 `_build_flights[q.name] = []` 不删 key → 历史队列留空列表，读模型噪声。
+- `runtime.py:541-543` `_slot_point` 是 `return bs.build_point` 的单行包装，无接缝价值。
+- `runtime.py:304/405/432/616/677` 的 `radius`（1.5 / 3.0）是散落魔法数，无来源注释。
+- `runtime.py:243-248` `_base_anchor` 直接吃 `big_grid.data[0][0]`（隐式依赖区域层已校验）；
+  `region_layer=None` 时 `_pick_free_geyser` 静默退化为**全图选井**（可能选到敌方气井），无告警（R7 要求降级告警）。
+- `runtime.py:311-316` `entry is None` 时默认 `size=2`，掩盖未知类型（flight 创建前已校验，属防御性死路径）。
+- `worker.py:119-130` `_idle` 只 stop"正在采集"的工兵，背矿返程中的不解放（可能符合直觉但未文档化）。
+
+---
+
+## 6. 可离线补的测试清单（12 条，都能从现有 helper 扩展）
+
+1. `train siegetank` 有工厂无 techlab → 应阻塞（现会 emit，P1）。
+2. 同帧两个生产建筑 + 60 矿两条 marine → 只应发一条（现发两条，P3）；跨队列同帧超发同理。
+3. 气矿第一次失败后应重试到第二个气井，两井耗尽才 drop（现直接 drop，P4）。
+4. `clear()/remove()/reorder()` 后有在途 flight → flight 不应再 retry/发令（P2）。
+5. flight 永久等待（无 SCV / 无母建筑 / 气井全占）→ 应记 wait reason + stalls（P6）。
+6. addon 重试应排除已试母建筑、试第二台（P8）。
+7. IDLE 的 skip 生效：先 build 后 assign(idle) 不 stop 同一 SCV（P7）。
+8. `assign_workers` 无节点/无工兵 → 应有 dropped/blocked 原因而非静默（P9）。
+9. 在途挂件位置靠近气井 → 不应误占气井（P10）。
+10. `reorder` 子集/外来项应拒绝；`count=0` 应拒绝（P12）。
+11. `stalls` 恢复事件 / dropped 带队列归属（P13）。
+12. 性能护栏：300-500 units + 10 条队列 → 断言单帧 < 2 ms（P18；flow 侧已有实测，生产侧没有）。
