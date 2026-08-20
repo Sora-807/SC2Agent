@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "modules"))
 
-from api.app import DEFAULT_FRAME_DIR, create_app  # noqa: E402
+from api.app import DEFAULT_FRAME_DIR, DEFAULT_PROPOSAL_LOG, create_app  # noqa: E402
 
 
 def main() -> int:
@@ -26,11 +26,14 @@ def main() -> int:
     ap.add_argument("--frame-dir", default=str(ROOT / DEFAULT_FRAME_DIR))
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8770)
+    ap.add_argument("--proposals", default=str(ROOT / DEFAULT_PROPOSAL_LOG))
     ap.add_argument("--log-level", default="warning")
     args = ap.parse_args()
-    print(f"view API → http://{args.host}:{args.port}/api/health  帧源目录 {args.frame_dir}")
-    uvicorn.run(create_app(args.frame_dir), host=args.host, port=args.port,
-                log_level=args.log_level)
+    print(f"view API → http://{args.host}:{args.port}/api/health")
+    print(f"  帧源目录 {args.frame_dir}")
+    print(f"  提案日志 {args.proposals}")
+    uvicorn.run(create_app(args.frame_dir, args.proposals),
+                host=args.host, port=args.port, log_level=args.log_level)
     return 0
 
 

@@ -20,3 +20,5 @@ docs/state_trace.jsonl
 Thumbs.db
 .DS_Store
 .zcode/
+# 运行时数据（提案日志、录制的帧）—— 不进版本库
+runtime/

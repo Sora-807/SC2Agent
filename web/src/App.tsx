@@ -4,7 +4,8 @@
  * 结构 = 会话条 / 时间线 / 左图标栏 / 主区 / 右对话栏（plan-frontend.md §5）。
  * App 本身不碰帧源实现，只用 store —— 换成 live 时这个文件零改动（决策 U1）。
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { ProposalHost } from "./panels/ProposalHost";
 import { ChatDock } from "./shell/ChatDock";
 import { IconRail } from "./shell/IconRail";
 import { SessionBar } from "./shell/SessionBar";
@@ -21,6 +22,12 @@ import { useFrames } from "./store/frames";
 export function App() {
   const [page, go] = useRoute();
   const { init, error, loading, fixtures } = useFrames();
+  // 提案选中态放在外壳：对话栏点开 → 主区显示审批（双投影图在 320px 侧栏里没法看）
+  const [openProposal, setOpenProposal] = useState<string | null>(null);
+  const proposals = useFrames((s) => s.proposals);
+  const reviewing = openProposal
+    ? proposals?.proposals.find((p) => p.id === openProposal) ?? null
+    : null;
 
   useEffect(() => {
     void init();
@@ -48,6 +55,9 @@ export function App() {
         <main className="min-w-0 flex-1 overflow-auto px-3">
           {loading || fixtures.length === 0 ? (
             <div className="p-6 text-neutral-500">加载帧…</div>
+          ) : openProposal ? (
+            <ProposalHost id={openProposal} fromFrame={reviewing}
+                          onClose={() => setOpenProposal(null)} />
           ) : (
             <>
               {page === "overview" && <Overview />}
@@ -59,7 +69,7 @@ export function App() {
             </>
           )}
         </main>
-        <ChatDock />
+        <ChatDock selected={openProposal} onOpen={setOpenProposal} />
       </div>
       <footer className="mt-3 border-t border-neutral-800 pt-2 text-xs text-neutral-500">
         契约 ViewFrame v0.1（rev=1）· 唯一真相源 docs/plan-frontend.md §2 ·

@@ -39,9 +39,13 @@ TICK_SECONDS = 0.2
 DEFAULT_FRAME_DIR = Path("web/public/fixtures")
 #: 离线沙盒会话的推进节拍（真实秒）。live 源按它 tick，前端就像看真对局。
 SESSION_TICK = 0.25
+#: 提案日志的默认落点。**不放帧源目录**：那个目录是静态服务的（会被公开），
+#: 而且提案是运行时数据、不该进版本库。
+DEFAULT_PROPOSAL_LOG = Path("runtime/proposals.jsonl")
 
 
-def create_app(frame_dir: Path | str | None = None) -> FastAPI:
+def create_app(frame_dir: Path | str | None = None,
+               proposal_log: Path | str | None = None) -> FastAPI:
     registry = SourceRegistry(Path(frame_dir) if frame_dir else DEFAULT_FRAME_DIR)
     registry.load_labels_from_index()
 
@@ -51,9 +55,8 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
     app.state.session = None
     app.state.session_task = None
     #: 提案存储（B7）。落盘在帧源目录旁边 —— 提案的价值一半在历史，追加日志天然保留。
-    app.state.proposals = ProposalStore(load_terran(),
-                                        path=Path(frame_dir or DEFAULT_FRAME_DIR).parent
-                                        / "proposals.jsonl")
+    app.state.proposals = ProposalStore(
+        load_terran(), path=Path(proposal_log) if proposal_log else DEFAULT_PROPOSAL_LOG)
 
     def _session(create: bool = True) -> OfflineSession | None:
         if app.state.session is None and create:
