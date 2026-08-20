@@ -116,18 +116,28 @@ def check_gas(gs: GameState, catalog: Catalog, stable_id: str) -> ConstraintResu
 
 
 def check_train(gs: GameState, catalog: Catalog, stable_id: str) -> ConstraintResult:
-    """train 可行性：类型存在 + 资源 + 供给 + 就绪产出建筑。"""
+    """train 可行性：类型存在 + 资源 + 供给 + **前置** + 就绪产出建筑。
+
+    前置必须查（P1）：坦克的 prerequisites 是 factorytechlab，而 produced_by 只是 factory ——
+    只查产出建筑时"工厂就绪但没挂 techlab"会判可行 → 发单 → SC2 静默拒 → 队首被消费 →
+    坦克订单永久蒸发且无任何记录。这是"不静默"红线在跨进程边界上的漏洞。
+    """
     e = _entry(catalog, stable_id)
     if e is None:
         return ConstraintResult(False, (f"未知类型 {stable_id!r}",))
     reasons = check_resources(gs, e.cost)
     if gs.supply_used + e.cost.supply > gs.supply_cap:
         reasons.append(f"供给不足 {gs.supply_used}+{e.cost.supply}>{gs.supply_cap}")
+    reasons.extend(check_prerequisites(gs, catalog, stable_id))
     if e.produced_by and not _ready_self_buildings(gs, catalog, e.produced_by):
         reasons.append(f"缺就绪产出建筑 {e.produced_by}")
     return ConstraintResult(not reasons, tuple(reasons))
 
 
 def check_assign_workers() -> ConstraintResult:
-    """assign_workers 无资源门控（P0：立即发，饱和/溢出由 WorkerAllocator 处理）。"""
+    """assign_workers 无资源门控（P0：立即发，饱和/溢出由 WorkerAllocator 处理）。
+
+    注：生产运行时不调它（自己直接处理 ASSIGN_WORKERS），目前只有单测在用 —— 属"被测试养着的死 API"，
+    等经济维持器落地时一起处置（见 docs/issues-flow-production.md P16）。
+    """
     return ConstraintResult(True)

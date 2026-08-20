@@ -1,7 +1,7 @@
 """flow.vocab：词表导出（A1）—— 提示词与校验器同源的漂移守卫。"""
 import json
 
-from game.operation import OP_CATALOG
+from game.operation import COMPOSITE_ACTIONS, OP_CATALOG
 from flow.predicates import OPERATOR_ARITY, PREDICATE_SIGNATURES, UNIMPLEMENTED_PREDICATE_OPS
 from flow.vocab import dump_vocabulary, render_prompt_card
 
@@ -11,7 +11,8 @@ def test_vocabulary_covers_authoritative_tables():
     v = dump_vocabulary()
     assert set(v["predicates"]) == set(PREDICATE_SIGNATURES)
     assert set(v["operators"]) == set(OPERATOR_ARITY)
-    assert set(v["actions"]) == set(OP_CATALOG)
+    # 可用动作 = OP_CATALOG 减去复合意图（后者 driver 不直接执行，见 forbidden.composite_actions）
+    assert set(v["actions"]) == set(OP_CATALOG) - set(COMPOSITE_ACTIONS)
     assert v["predicates"]["arrived"]["params"] == [
         {"name": "group", "required": True},
         {"name": "target", "required": True},
@@ -26,7 +27,11 @@ def test_forbidden_ops_carry_reasons():
     v = dump_vocabulary()
     assert set(v["forbidden"]["predicates"]) == set(UNIMPLEMENTED_PREDICATE_OPS)
     assert all(reason for reason in v["forbidden"]["predicates"].values())
-    assert set(v["forbidden"]["do_ops"]) == {"start_timer", "stop_timer"}
+    assert set(v["forbidden"]["do_ops"]) == {"start_timer", "stop_timer", "set_local"}
+    # 复合意图（driver 不直接执行）与未实现的 step 声明键也要进禁止清单，否则 LLM 会写出静默失效的脚本
+    assert set(v["forbidden"]["composite_actions"]) == {"assign_workers"}
+    assert set(v["forbidden"]["step_keys"]) == {"locals"}
+    assert "assign_workers" not in v["actions"]  # 不出现在可用动作里
 
 
 def test_vocabulary_is_json_serializable():

@@ -97,12 +97,12 @@ def test_undeclared_variable_write_rejected():
         parse_strategy(bad)
 
 
-def test_undeclared_local_write_rejected():
+def test_set_local_rejected_like_timer():
     bad = VALID.replace(
         "do: [{op: exit_step, kind: done, reason: OK}]",
         "do: [{op: set_local, name: nope, value: {const: 1}}, {op: exit_step, kind: done, reason: OK}]",
     )
-    with pytest.raises(AssertionError, match="local"):
+    with pytest.raises(AssertionError, match="未实现"):
         parse_strategy(bad)
 
 
@@ -493,9 +493,10 @@ def test_branch_key_typo_rejected():
         parse_strategy(bad)
 
 
-def test_locals_must_be_string_list():
-    bad = VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: 3")
-    with pytest.raises(AssertionError, match="locals"):
+def test_locals_declaration_rejected_like_set_local():
+    """F2：step 局部变量整套未实现（写没人读）→ 声明 locals 也要报错，别给人错觉。"""
+    bad = VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: [x]")
+    with pytest.raises(AssertionError, match="未实现"):
         parse_strategy(bad)
 
 
@@ -572,3 +573,27 @@ def test_group_action_type_must_be_in_bound_group():
     with pytest.raises(AssertionError, match="composition"):
         validate_assembly(parse_strategy(TWO_SLOT),
                           parse_assembly(_two_slot_assembly("{inf: G1, armor: G1}")))
+
+
+
+def test_composite_action_rejected_in_flow():
+    """assign_workers 是复合意图（需按单位扇出），driver 的 translate_op 对它返回 [] ——
+
+    flow 直接发它会编译通过、运行期静默 no-op。这类"能写但静默失效"的路径必须编译期拦。
+    等经济维持器接上（issues §3）再放开。
+    """
+    bad = VALID.replace(
+        "      - do: []",
+        "      - do: [{op: group_action, group_slot: main, type: terran/scv,"
+        " action_atom: assign_workers, params: {task: mineral, count: 8}}]")
+    with pytest.raises(AssertionError, match="复合意图"):
+        parse_strategy(bad)
+
+
+def test_branch_id_is_allowed_and_must_be_string():
+    """branch_id 是可选的分支稳定标识（观测/读模型用）—— 白名单要放行，但必须是字符串。"""
+    ok = VALID.replace("      - do: []", "      - branch_id: wait\n        do: []")
+    parse_strategy(ok)
+    bad = VALID.replace("      - do: []", "      - branch_id: no\n        do: []")
+    with pytest.raises(AssertionError, match="布尔"):
+        parse_strategy(bad)

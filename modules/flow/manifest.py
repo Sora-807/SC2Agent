@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import yaml
 
 from game import is_known_action
-from game.operation import OP_CATALOG, ParamType
+from game.operation import COMPOSITE_ACTIONS, OP_CATALOG, ParamType, is_composite_action
 
 from flow.predicates import (
     OPERATOR_ARITY,
@@ -70,13 +70,21 @@ LOOP_LIMIT_KEYS = frozenset({"max_step_transitions"})
 
 # do 操作词表（spec-003 §5 可写操作 + group_action）
 DO_OPS = frozenset({
-    "group_action", "exit_step", "exit_strategy", "set_variable", "set_local",
+    "group_action", "exit_step", "exit_strategy", "set_variable",
 })
 
 # 词表里有、V1 未实现的 do 操作 → 原因（D8：写被允许而读被拒 = 静默无效，两边一起拒）
 UNIMPLEMENTED_DO_OPS: dict[str, str] = {
     "start_timer": "计时器运行时（deadline 存储）待建 —— 与 timer_elapsed 谓词对称拒绝（T8 一起放回）",
     "stop_timer": "计时器运行时（deadline 存储）待建 —— 与 timer_elapsed 谓词对称拒绝（T8 一起放回）",
+    # F2：写了没人能读 —— 值树里没有 {local: name} 节点，写进去的 local 无任何读取路径。
+    # 与 timer 同型（写允许 / 读拒绝 = 静默无效），按 D8 一起拒；T8 做 timer 时和 {local} 一并放回。
+    "set_local": "step 内局部变量的**读取**节点（{local: name}）未实现 —— 写了没人能读（T8 一起放回）",
+}
+
+# step 声明里同样"声明了但没有消费方"的键（与 UNIMPLEMENTED_DO_OPS 对称）
+UNIMPLEMENTED_STEP_KEYS: dict[str, str] = {
+    "locals": "step 局部变量未实现（set_local 与 {local: name} 都待建）—— 声明它只会给人错觉（T8 一起放回）",
 }
 
 # params 声明允许的键与类型白名单（live_editable 等无消费方的键先不收）
@@ -85,8 +93,9 @@ PARAM_TYPES = frozenset({"int", "float", "point", "bool", "str"})
 
 # step / branch 键白名单（F3）：拼错 branches 会让这个 step 每帧什么都不做（静默死锁）；
 # 拼错 when 会让条件被丢掉、分支变成无条件执行（静默灾难）。两者编译期都要拦。
-STEP_KEYS = frozenset({"step_id", "branches", "locals"})
-BRANCH_KEYS = frozenset({"when", "do"})
+STEP_KEYS = frozenset({"step_id", "branches"})
+# branch_id 是可选的分支稳定标识（B1 观测/读模型用；不写就按 index 定位）
+BRANCH_KEYS = frozenset({"when", "do", "branch_id"})
 
 # strategy / assembly 顶层键白名单：删掉一个字段（如 on_exit）后，旧文件继续写它必须**报错**，
 # 不能静默忽略 —— 否则"删字段"就变成了"悄悄失效"（D5 的反面）。
@@ -498,18 +507,14 @@ def validate_strategy(m: StrategyManifest) -> None:
 
     for sid, step in m.steps.items():
         # F3：step 键白名单 —— 拼错 branches（branchs）会让这个 step 每帧什么都不做，永远
-        unknown_step_keys = sorted(set(step) - STEP_KEYS)
+        for key, reason in UNIMPLEMENTED_STEP_KEYS.items():
+            if key in step:
+                err(f"step {sid}: {key} 未实现（{reason}）")
+        unknown_step_keys = sorted(set(step) - STEP_KEYS - set(UNIMPLEMENTED_STEP_KEYS))
         if unknown_step_keys:
             err(f"step {sid}: 未知键 {unknown_step_keys}（只允许 {sorted(STEP_KEYS)}；"
                 "拼错 branches 会让这个 step 每帧什么都不做）")
-        declared_locals = step.get("locals")
-        if declared_locals is not None and (
-            not isinstance(declared_locals, list)
-            or any(not isinstance(x, str) for x in declared_locals)
-        ):
-            err(f"step {sid}: locals 必须是字符串列表，当前 {declared_locals!r}")
         branches = step.get("branches", [])
-        locals_declared = set(declared_locals) if isinstance(declared_locals, list) else set()
         for i, b in enumerate(branches):
             where = f"{sid}/branch[{i}]"
             # F3：branch 键白名单 —— 拼错 when（wehn）会让条件被丢掉、分支变无条件执行
@@ -517,6 +522,8 @@ def validate_strategy(m: StrategyManifest) -> None:
             if unknown_branch_keys:
                 err(f"{where}: 未知键 {unknown_branch_keys}（只允许 {sorted(BRANCH_KEYS)}；"
                     "拼错 when 会让条件被丢掉、这条分支变成无条件执行）")
+            if "branch_id" in b:
+                _check_identifier(b["branch_id"], where, "branch_id", err)
             if "when" not in b and i != len(branches) - 1:
                 err(f"{where}: else（无 when）分支必须且只能放在最后（spec-003 §2）")
             if "when" in b:
@@ -559,6 +566,10 @@ def validate_strategy(m: StrategyManifest) -> None:
                     atom = a.get("action_atom")
                     if not is_known_action(atom):
                         err(f"{where}: 未知 action_atom {atom!r}")
+                    elif is_composite_action(atom):
+                        # flow 直接发它 → driver 的 translate_op 返回 [] → 静默 no-op
+                        err(f"{where}: action_atom {atom!r} 是复合意图，flow 不能直接发"
+                            f"（{COMPOSITE_ACTIONS[atom]}）")
                     else:
                         for pname, _ptype, required in OP_CATALOG[atom]:
                             if required and pname not in (a.get("params") or {}):
@@ -570,10 +581,7 @@ def validate_strategy(m: StrategyManifest) -> None:
                     if a.get("name") not in m.variables:
                         err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
                     _validate_value_node(a.get("value"), f"{where}/set_variable.value", m, err)
-                if op == "set_local":
-                    if a.get("name") not in locals_declared:
-                        err(f"{where}: set_local 写未声明的 local {a.get('name')!r}（本 step 声明：{sorted(locals_declared)}）")
-                    _validate_value_node(a.get("value"), f"{where}/set_local.value", m, err)
+
 
     for lk, lv in (m.loop_limits or {}).items():
         if lk not in LOOP_LIMIT_KEYS:

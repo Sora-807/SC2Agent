@@ -12,7 +12,7 @@ OP_CATALOG 漂移，然后模型稳定地写出"看着对、编译不过"的脚�
 """
 from __future__ import annotations
 
-from game.operation import OP_CATALOG
+from game.operation import COMPOSITE_ACTIONS, OP_CATALOG
 
 from flow.manifest import (
     DO_OPS,
@@ -20,6 +20,7 @@ from flow.manifest import (
     PARAM_KEYS,
     PARAM_TYPES,
     UNIMPLEMENTED_DO_OPS,
+    UNIMPLEMENTED_STEP_KEYS,
 )
 from flow.predicates import (
     OPERATOR_ARITY,
@@ -48,12 +49,15 @@ def dump_vocabulary() -> dict:
             name: {"params": [{"name": p, "type": t.value, "required": req}
                               for p, t, req in params]}
             for name, params in sorted(OP_CATALOG.items())
+            if name not in COMPOSITE_ACTIONS  # 复合意图不能作为 group_action 直接发
         },
         "do_ops": sorted(DO_OPS),
         "forbidden": {
             "predicates": dict(sorted(UNIMPLEMENTED_PREDICATE_OPS.items())),
             "spatial_tools": dict(sorted(UNIMPLEMENTED_SPATIAL_OPS.items())),
             "do_ops": dict(sorted(UNIMPLEMENTED_DO_OPS.items())),
+            "composite_actions": dict(sorted(COMPOSITE_ACTIONS.items())),
+            "step_keys": dict(sorted(UNIMPLEMENTED_STEP_KEYS.items())),
         },
         "declarations": {
             "param_keys": sorted(PARAM_KEYS),

@@ -49,6 +49,23 @@ OP_CATALOG: dict[str, list[tuple[str, ParamType, bool]]] = {
 }
 
 
+# 复合意图：**不直接下发 driver**，必须由上层展开成原子操作后再下发。
+# driver 侧对应 UNIMPLEMENTED_ACTIONS 同名条目（translate_op 返回 [] → 静默 no-op），
+# 所以任何"能写但会静默失效"的路径都要在编译期拦住（见 flow.manifest 的 group_action 校验）。
+COMPOSITE_ACTIONS: dict[str, str] = {
+    "assign_workers": (
+        "复合意图：需要按单位扇出成 gather/stop（矿 2 气 3 饱和），driver 不直接执行。"
+        "生产队列走 QueueOp.ASSIGN_WORKERS + WorkerAllocator；"
+        "flow 侧要用它，得等经济维持器接上（见 docs/issues-flow-production.md §3）"
+    ),
+}
+
+
+def is_composite_action(action: str) -> bool:
+    """是否复合意图（不能作为 Operation 直接下发 driver）。"""
+    return action in COMPOSITE_ACTIONS
+
+
 @dataclass(slots=True)
 class Operation:
     """driver 边界动作（unit 级）。engine 产 → driver 翻译成 burnysc2 命令，下一 step 生效。"""

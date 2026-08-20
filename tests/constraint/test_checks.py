@@ -73,3 +73,21 @@ def test_check_resources_vespene():
 
 def test_check_assign_workers_always_ok():
     assert check_assign_workers().ok  # P0：无资源门控，立即发
+
+
+
+def test_check_train_blocked_by_missing_prerequisite():
+    """P1：坦克的 prerequisites 是 factorytechlab，而 produced_by 只是 factory ——
+
+    只查产出建筑时"工厂就绪但没挂 techlab"会判可行 → 发单 → SC2 静默拒 → 队首被消费 → 订单永久蒸发。
+    """
+    gs = _gs([_u(1, "FACTORY")], minerals=300, vespene=200, supply_used=10, supply_cap=50)
+    r = check_train(gs, CAT, "terran/siegetank")
+    assert not r.ok
+    assert any("factorytechlab" in reason for reason in r.reasons)
+
+
+def test_check_train_ok_with_prerequisite_present():
+    gs = _gs([_u(1, "FACTORY"), _u(2, "FACTORYTECHLAB")],
+             minerals=300, vespene=200, supply_used=10, supply_cap=50)
+    assert check_train(gs, CAT, "terran/siegetank").ok
