@@ -625,3 +625,88 @@ def test_assign_workers_queue_item_writes_target_when_keeper_present():
     assert port.submitted == [], "写目标不该立刻发命令（扇出是维持器的事）"
     assert rt.queue("q").items == [], "写完即出队（幂等，不需要门控）"
     assert rt.dropped == [], "更不该被当成失败丢弃"
+
+
+
+# ---- P2/P3/P4：帧账本 / 取消在途 / 气矿重试 ----
+
+
+def test_frame_ledger_is_shared_across_queues():
+    """P3：帧账本跨队列共享 —— 60 矿两条 50 矿 train（两台兵营）只应发一条。
+
+    原来 pending 是 _drain 的局部变量且 TRAIN 完全不记账，第二条靠 SC2 静默拒单兜底，
+    而队列项已经被消费掉了。
+    """
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q1", [QueueItem(op="train", type="terran/marine")])
+    rt.submit_queue("q2", [QueueItem(op="train", type="terran/marine")])
+    rax = [_u(2, "BARRACKS", x=6.0, y=6.0), _u(3, "BARRACKS", x=10.0, y=10.0)]
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0)] + rax,
+                         minerals=60, supply_used=5, supply_cap=20))
+    trains = [o for o in port.submitted if o.action == "train"]
+    assert len(trains) == 1, f"60 矿只够一个机枪，实际发了 {len(trains)} 条"
+    assert any("晶体矿不足" in rec["reason"] for rec in rt.blocked.values())
+
+
+def test_frame_ledger_counts_supply():
+    """P3：同帧连训会超供给上限 —— 供给也要进帧账本。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="train", type="terran/marine", count=3)])
+    rax = [_u(2, "BARRACKS", x=6.0, y=6.0)]
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0)] + rax,
+                         minerals=500, supply_used=19, supply_cap=20))
+    trains = [o for o in port.submitted if o.action == "train"]
+    assert len(trains) == 1, "只剩 1 供给 → 只能训 1 个（机枪占 1）"
+
+
+def test_clear_cancels_in_flight_build():
+    """P2：clear 必须取消在途建造 —— 原来清了队列，flight 照常 retry 并重新发令（假取消）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                   placement=PlacementExact("spot"))])
+    units = [_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")]
+    rt.on_game_state(_gs(units, minerals=200))
+    assert len(port.submitted) == 1
+    assert rt._build_flights["q"], "应有在途 flight"
+    rt.clear("q")
+    assert not rt._build_flights["q"], "clear 应取消在途 flight"
+    assert any("clear" in reason for _item, reason in rt.dropped), "取消要留审计，不静默"
+    for _ in range(120):  # 跑够重试窗口：不应再发第二条 build
+        rt.on_game_state(_gs(units, minerals=200))
+    assert len([o for o in port.submitted if o.action == "build"]) == 1
+
+
+def test_queue_tools_reject_bad_count():
+    """P12：agent/LLM 写面最容易塞 count=0/负数 —— 直接拒绝，不静默改队列。"""
+    rt = _runtime(_Port())
+    import pytest
+
+    with pytest.raises(ValueError, match="count"):
+        rt.submit_queue("q", [QueueItem(op="train", type="terran/marine", count=0)])
+    with pytest.raises(ValueError, match="count"):
+        rt.append("q", [QueueItem(op="train", type="terran/marine", count=-2)])
+
+
+def test_gas_retry_switches_geyser_instead_of_dropping():
+    """P4：气矿第一次放置失败后应换井重试，而不是以"缺 placement"直接丢弃订单。"""
+    port = _Port()
+    rt = _runtime(port)
+    geysers = [_u(20, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=3.0, y=3.0),
+               _u(21, "VESPENEGEYSER", owner=Owner.NEUTRAL, x=5.0, y=5.0)]
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/refinery")])
+    # CC 要离气井够远：_pick_free_geyser 把 2.5 格内有己方建筑的气井算作已占
+    units = [_u(1, "COMMANDCENTER", x=12.0, y=12.0), _u(2, "SCV")]
+    rt.on_game_state(_gs(units, resources=geysers, minerals=200, vespene=0))
+    first = [o for o in port.submitted if o.action == "build_gas"]
+    assert len(first) == 1
+    tried_first = first[0].params["target_unit"]
+    # 命令静默消失（实体不出现、builder 无订单）→ 91 帧后判失败 → 应换另一口井重试
+    for _ in range(95):
+        rt.on_game_state(_gs(units, resources=geysers, minerals=200, vespene=0))
+    gas_ops = [o for o in port.submitted if o.action == "build_gas"]
+    assert len(gas_ops) >= 2, f"应换井重试，实际只有 {len(gas_ops)} 条"
+    assert gas_ops[-1].params["target_unit"] != tried_first, "重试必须换一口没试过的气井"
+    assert not any("缺 placement" in reason for _i, reason in rt.dropped)

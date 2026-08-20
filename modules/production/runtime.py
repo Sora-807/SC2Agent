@@ -84,26 +84,71 @@ class ProductionRuntime:
         self._build_flights: dict[str, list[dict]] = {}  # queue_name -> [在途建造确认状态]（多并行）
         # 本帧已被下过令的单位 tag（跨队列去重：burnysc2 同帧同单位命令被去重丢单——真机踩坑）
         self._frame_busy: set[int] = set()
+        # 本帧资源账本（P3）：**跨队列共享**，且 BUILD/TRAIN/挂件/气矿/重试全部入账。
+        # 原来它是 _drain 的局部变量（每条队列各自一份）且 TRAIN 完全不记账 ——
+        # 60 矿 + 两台兵营能同帧发两条 50 矿 train，第二条靠 SC2 静默拒单兜底（队列项却已消费）。
+        self._frame_min = 0
+        self._frame_gas = 0
+        self._frame_supply = 0
 
     # ---- agent 工具操作（P0：submit_queue/append/prepend/clear/remove/reorder）----
 
+    @staticmethod
+    def _check_items(items: list[QueueItem]) -> None:
+        """工具操作的输入不变量（P12）：agent/LLM 写面最容易塞进 count=0/负数。
+
+        R7 不崩游戏，但也不能静默改队列 —— 这里直接拒绝（调用方是工具操作，拒绝即返回错误）。
+        """
+        for it in items:
+            if not isinstance(it, QueueItem):
+                raise ValueError(f"队列项必须是 QueueItem，当前 {it!r}")
+            if not isinstance(it.count, int) or isinstance(it.count, bool) or it.count < 1:
+                raise ValueError(f"队列项 count 必须是 ≥1 的整数，当前 {it.count!r}")
+
     def submit_queue(self, name: str, items: list[QueueItem]) -> None:
+        """创建/替换命名队列。替换 = 旧队列作废，所以在途建造也要一起取消（P2）。"""
+        self._check_items(items)
+        self._cancel_flights(name, "队列被 submit_queue 替换")
         self._queues[name] = Queue(name=name, items=list(items))
 
     def append(self, name: str, items: list[QueueItem]) -> None:
+        self._check_items(items)
         self._queues.setdefault(name, Queue(name=name)).items.extend(items)
 
     def prepend(self, name: str, items: list[QueueItem]) -> None:
+        self._check_items(items)
         q = self._queues.setdefault(name, Queue(name=name))
         q.items[0:0] = items  # 队首插入（紧急/LLM 临时决策）
 
     def clear(self, name: str) -> None:
+        """清空队列 **并取消在途建造**（P2）。
+
+        原来只删排队项，_build_flights 里的在途建造照常 retry 并重新发令 ——
+        对 agent 来说"取消"是假的（实测清队后 91 帧还在重试）。
+        已经发出去的 build 命令无法真正撤回，能做的是停止重试并记审计。
+        """
+        self._cancel_flights(name, "队列被 clear 取消")
         self._queues[name] = Queue(name=name)
 
     def remove(self, name: str, ref: QueueItem) -> None:
         q = self._queues.get(name)
         if q is not None:
             q.items = [i for i in q.items if i is not ref]
+        self._cancel_flights(name, "队列项被 remove 取消", only_item=ref)
+
+    def _cancel_flights(self, name: str, reason: str, only_item: QueueItem | None = None) -> None:
+        """取消某队列的在途建造：停止重试 + 释放建造工 + 记 dropped（不静默）。"""
+        flights = self._build_flights.get(name)
+        if not flights:
+            return
+        keep = []
+        for flight in flights:
+            if only_item is not None and flight.get("item") is not only_item:
+                keep.append(flight)
+                continue
+            self._release_flight(flight)
+            self.dropped.append((flight.get("item"), reason))
+        self._build_flights[name] = keep
 
     def reorder(self, name: str, refs: list[QueueItem]) -> None:
         q = self._queues.get(name)
@@ -112,6 +157,33 @@ class ProductionRuntime:
 
     def queue(self, name: str) -> Queue | None:
         return self._queues.get(name)
+
+    # ---- 帧资源账本（P3：跨队列共享，所有 emit 点入账）----
+
+    def _shortage(self, gs: GameState, entry, with_supply: bool = False) -> str | None:
+        """本帧余量是否够（None = 够）。entry=None（未知类型）交给下游 drop 路径处理。"""
+        if entry is None:
+            return None
+        if gs.minerals - self._frame_min < entry.cost.minerals:
+            return (f"晶体矿不足（本帧余 {gs.minerals - self._frame_min}"
+                    f" < {entry.cost.minerals}）")
+        if gs.vespene - self._frame_gas < entry.cost.vespene:
+            return (f"高能瓦斯不足（本帧余 {gs.vespene - self._frame_gas}"
+                    f" < {entry.cost.vespene}）")
+        if with_supply and entry.cost.supply:
+            left = gs.supply_cap - gs.supply_used - self._frame_supply
+            if left < entry.cost.supply:
+                return f"供给不足（本帧余 {left} < {entry.cost.supply}）"
+        return None
+
+    def _charge(self, stable_id: str | None) -> None:
+        """在每个真正发出命令的点入账（build / train / 挂件 / 气矿 / 重试重发）。"""
+        entry = self._catalog.by_stable_id(stable_id) if stable_id else None
+        if entry is None:
+            return
+        self._frame_min += entry.cost.minerals
+        self._frame_gas += entry.cost.vespene
+        self._frame_supply += entry.cost.supply
 
     # ---- 阻塞记录（不静默：门控失败必须留下原因）----
 
@@ -226,6 +298,9 @@ class ProductionRuntime:
 
     def on_game_state(self, gs: GameState) -> None:
         self._frame_busy = set()  # 每帧重置：同帧跨队列不重复命令同一单位
+        self._frame_min = 0  # 帧账本（P3）：跨队列共享，drain 前重置
+        self._frame_gas = 0
+        self._frame_supply = 0
         for q in self._queues.values():
             self._drain(q, gs)
 
@@ -257,8 +332,6 @@ class ProductionRuntime:
         # Phase 2: 队首门控（P0/S11 + 模块 docstring 第 3 条）——
         # 队首不可行 → 本帧不再处理后续项（乱序执行会破坏 build order，且跨帧累计超支）；
         # 队首可行 → 继续下一项（资源够时同帧并行发多条建造）。
-        pending_min = 0  # 本帧已扣矿（防同帧多并行超支：SC2 对矿不足命令静默拒绝）
-        pending_gas = 0
         i = 0
         blocked_head: QueueItem | None = None
         while i < len(q.items):
@@ -272,21 +345,13 @@ class ProductionRuntime:
                 q.items.pop(i)
                 continue
             if head.op is QueueOp.BUILD:
-                # 本地资源预检（gs 是帧快照，不反映同帧已扣的矿）
+                # 帧账本预检（gs 是帧快照，不反映同帧已扣的矿；P3 起跨队列共享）
                 entry = self._catalog.by_stable_id(head.type) if head.type else None
-                if entry is not None:
-                    if gs.minerals - pending_min < entry.cost.minerals:
-                        self._block(
-                            f"晶体矿不足（本帧余 {gs.minerals - pending_min} < {entry.cost.minerals}）"
-                        )
-                        blocked_head = head
-                        break
-                    if gs.vespene - pending_gas < entry.cost.vespene:
-                        self._block(
-                            f"高能瓦斯不足（本帧余 {gs.vespene - pending_gas} < {entry.cost.vespene}）"
-                        )
-                        blocked_head = head
-                        break
+                shortage = self._shortage(gs, entry)
+                if shortage is not None:
+                    self._block(shortage)
+                    blocked_head = head
+                    break
                 outcome = self._try_build(head, q.name, gs)
                 if outcome == "blocked":
                     blocked_head = head
@@ -294,10 +359,7 @@ class ProductionRuntime:
                 if outcome == "consumed":
                     q.items.pop(i)  # 作者错误（未知 type/缺 placement）：丢弃继续，不冻结整队
                     continue
-                # emitted: 扣本地资源，count--，出队或留队
-                if entry is not None:
-                    pending_min += entry.cost.minerals
-                    pending_gas += entry.cost.vespene
+                # emitted: 入账（_charge 在 emit 点统一记），count--，出队或留队
                 head.count -= 1
                 if head.count <= 0:
                     q.items.pop(i)
@@ -305,6 +367,14 @@ class ProductionRuntime:
                     i += 1  # count>1 逐帧排队（既有设计）：本帧余量让给后续项
                 continue
             if head.op is QueueOp.TRAIN:
+                # P3：TRAIN 此前完全不记账 —— 60 矿 + 两台兵营能同帧发两条 50 矿 train，
+                # 第二条靠 SC2 静默拒单兜底而队列项已消费。供给同理（同帧连训会超 cap）。
+                entry = self._catalog.by_stable_id(head.type) if head.type else None
+                shortage = self._shortage(gs, entry, with_supply=True)
+                if shortage is not None:
+                    self._block(shortage)
+                    blocked_head = head
+                    break
                 outcome = self._try_train(head, gs)
                 if outcome == "blocked":
                     blocked_head = head
@@ -364,6 +434,7 @@ class ProductionRuntime:
         if producer is None:
             return self._block(f"无就绪产出建筑（{head.type} 的产出建筑未完工/训练槽满）")
         self._emit([Emission("train", [producer.tag], {"type": head.type})], gs.seq)
+        self._charge(head.type)  # P3
         return "emitted"
 
     def _try_build(self, head: QueueItem, q_name: str, gs: GameState) -> str:
@@ -408,6 +479,7 @@ class ProductionRuntime:
             "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）
             "radius": 1.5,
         }
+        self._charge(head.type)  # P3：入账（同帧后续项/其他队列都看得见）
         self._reserve_for_flight(flight, builder.tag)  # 建造期间这个 SCV 谁都不许动
         self._build_flights.setdefault(q_name, []).append(flight)
         return "emitted"
@@ -490,6 +562,8 @@ class ProductionRuntime:
         entry = self._catalog.by_stable_id(head.type)
         if entry is not None and "addon" in entry.capabilities:
             return self._retry_build_addon(flight, q_name, gs)
+        if entry is not None and "gas" in entry.capabilities:
+            return self._retry_build_gas(flight, q_name, gs)
         pos, slot_name, reason = self._resolve_placement(
             head, gs, attempted=frozenset(flight["attempted"])
         )
@@ -505,6 +579,7 @@ class ProductionRuntime:
             [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
             gs.seq,
         )
+        self._charge(head.type)  # P3：重试重发也要入账
         flight["builder"] = builder.tag
         self._reserve_for_flight(flight, builder.tag)  # 换人重发 → 征用换到新工兵
         flight["frames"] = 0
@@ -533,6 +608,7 @@ class ProductionRuntime:
             [Emission("build", [parent.tag], {"type": head.type, "position": None})],
             gs.seq,
         )
+        self._charge(head.type)  # P3：挂件重发入账
         flight["retries"] = flight.get("retries", 0) + 1
         flight["builder"] = parent.tag
         flight["frames"] = 0
@@ -716,6 +792,7 @@ class ProductionRuntime:
             [Emission("build", [parent.tag], {"type": head.type, "position": None})],
             gs.seq,
         )
+        self._charge(head.type)  # P3
         self._build_flights.setdefault(q_name, []).append({
             "item": head,
             "type": head.type,
@@ -728,8 +805,46 @@ class ProductionRuntime:
         })
         return "emitted"
 
-    def _pick_free_geyser(self, gs: GameState):
-        """找一个未被精炼厂占据的气井（仅主基锚点附近；真机教训：别把精炼厂建敌方气井上）。"""
+    def _retry_build_gas(self, flight: dict, q_name: str, gs: GameState) -> bool:
+        """气矿重试（P4）：换一个没试过的气井重发；候选耗尽才 drop。
+
+        原来气矿会走 _resolve_placement —— 而气矿队列项没有 placement，于是第一次放置失败后
+        直接以"build 缺 placement"丢弃精炼厂订单，即使还有空闲气井（真机上会连锁卡死整条 gas 链）。
+        与挂件重试对称：候选集是"未试过且未被占的气井"，用 flight["attempted_geysers"] 排除。
+        """
+        head = flight["item"]
+        tried = frozenset(flight.get("attempted_geysers") or ())
+        res = check_gas(gs, self._catalog, head.type)
+        geyser = self._pick_free_geyser(gs, exclude=tried) if res.ok else None
+        if geyser is None and res.ok:
+            self._drop(head, f"气矿放置失败：气井候选耗尽（已试 {sorted(tried)}）")
+            self._release_flight(flight)
+            return False
+        builder = self._pick_builder(gs)
+        if not res.ok or builder is None:
+            # 资源不够 / 没工兵：保持 builder=None，下帧继续重试（原因进 flight，便于观测）
+            flight["last_wait"] = self._why(res, "无空闲 SCV 可派去建气矿")
+            return True
+        self._emit(
+            [Emission("build_gas", [builder.tag],
+                      {"type": head.type, "target_unit": geyser.tag})],
+            gs.seq,
+        )
+        self._charge(head.type)  # P3
+        flight["builder"] = builder.tag
+        self._reserve_for_flight(flight, builder.tag)
+        flight["frames"] = 0
+        flight["seen_tags"] = self._type_entity_tags(gs, head.type)
+        flight["attempted_geysers"] = set(tried) | {geyser.tag}
+        flight["expect_pos"] = geyser.position
+        flight["radius"] = 3.0
+        return True
+
+    def _pick_free_geyser(self, gs: GameState, exclude: frozenset[int] = frozenset()):
+        """找一个未被精炼厂占据的气井（仅主基锚点附近；真机教训：别把精炼厂建敌方气井上）。
+
+        exclude = 本 flight 已经试过并失败的气井（P4：重试必须换井，否则永远撞同一个）。
+        """
         buildings = []
         for u in gs.units:
             if u.owner is not Owner.SELF:
@@ -754,7 +869,8 @@ class ProductionRuntime:
                 for r in reserved
             )
 
-        nodes = [u for u in gs.resources if "GEYSER" in u.type_name]
+        nodes = [u for u in gs.resources
+                 if "GEYSER" in u.type_name and u.tag not in exclude]
         if anchor is not None:
             nodes = [u for u in nodes
                      if (u.position.x - anchor.x) ** 2 + (u.position.y - anchor.y) ** 2
@@ -777,16 +893,20 @@ class ProductionRuntime:
                       {"type": head.type, "target_unit": geyser.tag})],
             gs.seq,
         )
-        self._build_flights.setdefault(q_name, []).append({
+        self._charge(head.type)  # P3
+        flight = {
             "item": head,
             "type": head.type,
             "builder": builder.tag,
             "frames": 0,
             "attempted": set(),
+            "attempted_geysers": {geyser.tag},  # P4：重试要换井，不能重撞同一口
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": geyser.position,  # 精炼厂实体应出现在气井位置
             "radius": 3.0,
-        })
+        }
+        self._reserve_for_flight(flight, builder.tag)  # 气矿也是 SCV 在建，一样要征用
+        self._build_flights.setdefault(q_name, []).append(flight)
         return "emitted"
 
     # ---- 输出 ----
