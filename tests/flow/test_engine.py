@@ -4,7 +4,7 @@
 → strategy_elapsed 达标 exit_strategy。确定 + 动作去重。
 """
 from driver.fake import FakeGamePort
-from flow.engine import FlowEngine
+from flow.engine import DEFAULT_MAX_STEP_TRANSITIONS, FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
 from game import GameState, Grid, Owner, Point2, Unit
 
@@ -459,40 +459,50 @@ def test_exit_step_stops_remaining_do_items():
     assert eng._active_step == "s2"
 
 
+def _loopy_engine(loop_limits: dict):
+    """无出口自环 + 可配上限的引擎（直构 manifest 绕过编译期图校验）。
+
+    无出口的环在编译期已被拒（test_manifest.test_cycle_without_exit_rejected，ADR-0021 §4）；
+    运行期兜底必须独立成立，所以这里绕过 parse_strategy 直接构造。
+    """
+    from flow.manifest import FlowAssembly, GroupSpec, StrategyInstance, StrategyManifest
+
+    m = StrategyManifest(
+        id="loopy", version=1, group_slots=["main"], params={}, variables={},
+        initial_step="s1",
+        steps={"s1": {"branches": [
+            {"do": [{"op": "exit_step", "kind": "done", "reason": "LOOP"}]},
+        ]}},
+        edges=[{"from": "s1", "to": "s1", "kind": "done", "reason": "LOOP"}],
+        on_exit="release", loop_limits=loop_limits,
+    )
+    a = FlowAssembly(
+        id="a",
+        groups=[GroupSpec("G1", {"MARINE": {"min": 2, "target": 2, "max": 2}})],
+        strategy_instances=[StrategyInstance("s1", "loopy", {"main": "G1"}, {})],
+    )
+    return FlowEngine(m, a, FakeGamePort(script=[]))
+
+
 def test_loop_limit_caps_step_transitions():
-    """有界环兜底：超过 loop_limits.max_step_transitions → strategy 结束（不无限循环）。"""
-    strategy = """
-id: loopy
-group_slots: [main]
-params: {}
-variables: {}
-initial_step: s1
-steps:
-  - step_id: s1
-    branches:
-      - do: [{op: exit_step, kind: done, reason: LOOP}]
-edges:
-  - {from: s1, to: s1, kind: done, reason: LOOP}
-loop_limits: {max_step_transitions: 2}
-"""
-    assembly = """
-id: a
-groups:
-  - group_id: G1
-    composition:
-      MARINE: {min: 2, target: 2, max: 2}
-strategy_instances:
-  - instance_id: s1
-    strategy_ref: loopy
-    bindings: {main: G1}
-    params: {}
-"""
-    port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    """有界环兜底：超过 loop_limits.max_step_transitions → 以 LOOP_LIMIT 结束（ADR-0021 验收 #4）。"""
+    eng = _loopy_engine({"max_step_transitions": 2})
     for seq in range(5):
         eng.on_game_state(_gs(seq, 2, float(seq)))
     assert eng._step_transition_count == 3  # 第 3 次转移超上限
     assert eng._done is True
+    assert eng.exit_record == {"kind": "failed", "reason": "LOOP_LIMIT", "limit": 2}
+
+
+def test_undeclared_loop_limit_falls_back_to_global_default():
+    """未声明 loop_limits 也绝不无限转移：引擎用 DEFAULT_MAX_STEP_TRANSITIONS 兜底。"""
+    eng = _loopy_engine({})
+    for seq in range(DEFAULT_MAX_STEP_TRANSITIONS + 5):
+        eng.on_game_state(_gs(seq, 2, float(seq)))
+    assert eng._done is True
+    assert eng._step_transition_count == DEFAULT_MAX_STEP_TRANSITIONS + 1
+    assert eng.exit_record["reason"] == "LOOP_LIMIT"
+    assert eng.exit_record["limit"] == DEFAULT_MAX_STEP_TRANSITIONS
 
 
 def test_set_variable_roundtrip_through_when():

@@ -2,7 +2,9 @@
 
 driver→world→flow：engine.on_game_state(GameState) → eval active step → 命中 do →
 group_action 经去重 + Allocator.expand 成 Operation → port.submit_operations。
-exit_step 按边路由（本帧结束，下帧求值新 step）；exit_strategy 结束。
+exit_step 按边路由（本帧结束，下帧求值新 step）；exit_strategy 结束并记 exit_record。
+有界环兜底：step 转移数超 loop_limits.max_step_transitions（未声明则 DEFAULT_MAX_STEP_TRANSITIONS）
+→ 结束并记 exit_record = failed/LOOP_LIMIT（ADR-0021 §4/验收 #4）。
 动作去重（spec-003 §2.1）：相同 (slot,type,action_atom,params) 不重发。
 port 用 duck-typing（任何有 submit_operations 的对象）；flow 不 import driver。
 """
@@ -17,6 +19,10 @@ from flow.allocator import Allocator
 from flow.manifest import FlowAssembly, StrategyManifest, validate_assembly
 from flow.predicates import EvalCtx, eval_when, group_center, point_toward
 from tactical_map.resolver import resolve_action_params
+
+# 全局转移上限（ADR-0021 §4 第 3 条）：strategy 未声明 loop_limits.max_step_transitions 时兜底，
+# 保证"没有任何配置能让引擎无限转移 step"。声明值优先（编译期已校验为正整数）。
+DEFAULT_MAX_STEP_TRANSITIONS = 200
 
 
 class FlowEngine:
@@ -43,6 +49,7 @@ class FlowEngine:
         self._step_entered: float | None = None
         self._last_emitted: dict[tuple, str] = {}  # (slot, type, atom) -> params_key
         self._done = False
+        self.exit_record: dict | None = None  # 结束原因（exit_strategy 的 kind/reason，或 LOOP_LIMIT）
         self._op_seq = 0
 
     # ---- RuntimeSink ----
@@ -78,6 +85,7 @@ class FlowEngine:
                 return  # 本帧结束
             elif op == "exit_strategy":
                 self._done = True
+                self.exit_record = {"kind": a.get("kind"), "reason": a.get("reason")}
                 return
             elif op == "set_variable":
                 self._variables[a["name"]] = _eval_value(a.get("value"), ctx)
@@ -121,9 +129,11 @@ class FlowEngine:
         self._step_transition_count += 1
         self._step_entered = gs.game_time
         self._locals = {}  # 进入新 step：locals 重置（spec-003 §3.2）
-        limit = self._m.loop_limits.get("max_step_transitions")
-        if limit is not None and self._step_transition_count > limit:
-            self._done = True  # 有界环兜底：转移上限（需求文档/spec-004）
+        limit = self._m.loop_limits.get("max_step_transitions", DEFAULT_MAX_STEP_TRANSITIONS)
+        if self._step_transition_count > limit:
+            # 有界环兜底：转移上限（ADR-0021 验收 #4 —— 以 LOOP_LIMIT 失败，不静默停）
+            self._done = True
+            self.exit_record = {"kind": "failed", "reason": "LOOP_LIMIT", "limit": limit}
         # 本帧结束（不本帧求值新 step；下帧求值）
 
 

@@ -8,6 +8,8 @@ V1 用结构化 AST（op/args dict）作 when/do，直接 YAML 解析（无表�
 - do 操作词表：未知 op / 未实现谓词 / 未知谓词 / 未声明 slot / 缺必需参数 / 未声明变量写入
   / exit 之后再有 do 项 —— 全部编译失败（R6；spec-003 验收 #5）
 - edge：端点存在、不重复、exit_step 有匹配边
+- 图级（ADR-0021 §4 + 验收 #3）：不可达 step 拒绝；环必须有出口（出环 edge 或 exit_strategy）
+- loop_limits：键白名单 + 正整数（缺省时引擎用全局默认上限兜底，见 engine.DEFAULT_MAX_STEP_TRANSITIONS）
 """
 from __future__ import annotations
 
@@ -74,6 +76,9 @@ class ActionRequest:
     params: dict  # 参数（透传到 Operation.params）
 
 
+# loop_limits 允许的键（有界环兜底；值必须正整数）
+LOOP_LIMIT_KEYS = frozenset({"max_step_transitions"})
+
 # do 操作词表（spec-003 §5 可写操作 + group_action）
 DO_OPS = frozenset({
     "group_action", "exit_step", "exit_strategy",
@@ -134,6 +139,74 @@ def _validate_when_node(node, where: str, m: StrategyManifest, err) -> None:
         _validate_when_node(a, where, m, err)
 
 
+def _step_successors(m: StrategyManifest) -> dict[str, set[str]]:
+    """step 邻接表（只收两端都是合法 step 的 edge；端点错误由 edge 校验单独报）。"""
+    adj: dict[str, set[str]] = {sid: set() for sid in m.steps}
+    for e in m.edges:
+        f, t = e.get("from"), e.get("to")
+        if f in adj and t in adj:
+            adj[f].add(t)
+    return adj
+
+
+def _reach(adj: dict[str, set[str]], start: str) -> set[str]:
+    """从 start 沿**至少一条边**可达的 step 集合（start 只在有回路时才在结果内）。"""
+    seen: set[str] = set()
+    stack = list(adj.get(start, ()))
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        stack.extend(adj.get(n, ()))
+    return seen
+
+
+def _has_exit_strategy(step: dict) -> bool:
+    """step 的任一分支是否含 exit_strategy（= 该 step 能直接终止 strategy）。"""
+    return any(
+        (a or {}).get("op") == "exit_strategy"
+        for b in step.get("branches", [])
+        for a in (b.get("do") or [])
+    )
+
+
+def _validate_graph(m: StrategyManifest, err) -> None:
+    """图级校验（ADR-0021 §4 + 验收 #3）。
+
+    1. **不可达 step**：非 initial_step 且从 initial_step 无边路径 → 编译失败。
+       声明了却永不执行的 step 是死配置（需求文档红线"不静默"），LLM 生成时高频产孤岛。
+    2. **环必须有出口**：每个环（SCC，含自环）至少要有一个出口 ——
+       指向环外的 edge，**或**环内任一 step 的 exit_strategy。
+       注意 docs/tank_marine_push.yaml 的蛙跳环没有任何出边，靠 tank_hop/inf_hop 的
+       exit_strategy ARRIVED 出环；只查出边会误杀真机验过的样例。
+       loop_limits.max_step_transitions 是**意外死循环的兜底，不算合法出口**（ADR-0021 反例）。
+    """
+    if m.initial_step not in m.steps:
+        return  # initial_step 非法（上游已报错），可达性无从谈起
+    adj = _step_successors(m)
+    reachable = {m.initial_step} | _reach(adj, m.initial_step)
+    for sid in m.steps:
+        if sid not in reachable:
+            err(f"step {sid!r} 不可达：从 initial_step {m.initial_step!r} 无边路径（死配置）")
+
+    reach_of = {sid: _reach(adj, sid) for sid in m.steps}
+    cyclic = {sid for sid in m.steps if sid in reach_of[sid]}  # 能回到自身 = 在环上
+    grouped: set[str] = set()
+    for sid in sorted(cyclic):
+        if sid in grouped:
+            continue
+        scc = {o for o in cyclic if o in reach_of[sid] and sid in reach_of[o]} | {sid}
+        grouped |= scc
+        has_edge_out = any(t not in scc for u in scc for t in adj[u])
+        has_exit_strategy = any(_has_exit_strategy(m.steps[u]) for u in scc)
+        if not has_edge_out and not has_exit_strategy:
+            err(
+                f"环 {sorted(scc)} 无出口：既无指向环外的 edge，也无 exit_strategy"
+                "（ADR-0021 §4/验收 #3；loop_limits 是兜底不是出口）"
+            )
+
+
 def validate_strategy(m: StrategyManifest) -> None:
     """编译期校验（spec-003 验收点 1-5 + spec-004 子集；其余后补）。
 
@@ -156,6 +229,21 @@ def validate_strategy(m: StrategyManifest) -> None:
         if key in seen_edges:
             err(f"重复 edge {key}（同 (from,kind,reason) 路由歧义）")
         seen_edges.add(key)
+        # 死边：没有任何 exit_step 会走这条边（引擎只从 exit_step 路由）。
+        # 除了"死配置不静默"，_validate_graph 的环出口判定也依赖它 ——
+        # 否则一条死边就能假冒"出环 edge"，让无出口的环通过校验。
+        src = m.steps.get(e["from"])
+        if src is not None and not any(
+            (a or {}).get("op") == "exit_step"
+            and a.get("kind") == e.get("kind")
+            and a.get("reason") == e.get("reason")
+            for b in src.get("branches", [])
+            for a in (b.get("do") or [])
+        ):
+            err(
+                f"死 edge {e['from']}→{e['to']} {e.get('kind')}/{e.get('reason')}："
+                f"{e['from']} 没有任何 exit_step 产生这个 kind/reason"
+            )
 
     for sid, step in m.steps.items():
         branches = step.get("branches", [])
@@ -198,6 +286,14 @@ def validate_strategy(m: StrategyManifest) -> None:
                     err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
                 if op == "set_local" and a.get("name") not in locals_declared:
                     err(f"{where}: set_local 写未声明的 local {a.get('name')!r}（本 step 声明：{sorted(locals_declared)}）")
+
+    for lk, lv in (m.loop_limits or {}).items():
+        if lk not in LOOP_LIMIT_KEYS:
+            err(f"loop_limits 未知键 {lk!r}（只允许 {sorted(LOOP_LIMIT_KEYS)}）")
+        elif isinstance(lv, bool) or not isinstance(lv, int) or lv <= 0:
+            err(f"loop_limits.{lk} 必须是正整数（当前 {lv!r}；YAML 的 on/off/yes/no 会解析成 bool）")
+
+    _validate_graph(m, err)
 
     if errors:
         raise AssertionError("strategy 编译校验失败:\n- " + "\n- ".join(errors))
