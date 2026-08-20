@@ -62,7 +62,6 @@ steps:
              params: {position: {param: target}}}
 edges:
   - {from: formup, to: advance, kind: done, reason: FORMED}
-on_exit: release
 loop_limits: {max_step_transitions: 100}
 """
 

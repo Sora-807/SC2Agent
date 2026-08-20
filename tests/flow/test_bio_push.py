@@ -56,7 +56,6 @@ edges:
   - {from: advance, to: retreat, kind: failed, reason: UNITS_LOST}
   - {from: combat, to: retreat, kind: failed, reason: UNITS_LOST}
   - {from: retreat, to: hold, kind: done, reason: SAFE}
-on_exit: release
 """
 
 BIO_ASSEMBLY = """

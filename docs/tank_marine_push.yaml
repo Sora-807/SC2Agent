@@ -99,7 +99,6 @@ strategy:
     - {from: inf_wait, to: inf_hop, kind: done, reason: RESUME}
     - {from: inf_hop, to: threat_gate, kind: done, reason: IN_PLACE}
     - {from: threat_gate, to: tank_hop, kind: done, reason: CLEARED}
-  on_exit: release
   loop_limits: {max_step_transitions: 80}
 
 assembly:

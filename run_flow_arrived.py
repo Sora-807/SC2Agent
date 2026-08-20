@@ -47,7 +47,6 @@ steps:
       - do:
           - {op: group_action, group_slot: main, type: terran/scv, action_atom: move_to, params: {position: [50.0, 50.0]}}
 edges: [{from: formup, to: advance, kind: done, reason: FORMED}]
-on_exit: release
 """
 
 ASSEMBLY = """

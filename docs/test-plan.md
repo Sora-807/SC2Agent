@@ -22,7 +22,7 @@
 - ⏳ ApplyResult 字段（D6）/ GameEvent 目录（D7）：待定。
 
 ## game（modules/game）
-- ✅ 类型构造 + 默认值（Point2/Grid/RawGameState/Unit/GameState/Operation/ActionRequest/QueueItem/Owner）。
+- ✅ 类型构造 + 默认值（Point2/Grid/RawGameState/Unit/GameState/Operation/QueueItem/Owner）。
 - ✅ catalog（`test_catalog.py`）：`terran.json` 加载 + `where(role/capability)` 查询 + 稳定 ID ↔ burnysc2 名双向映射；加载边界校验（stable_id 两段式/role/capability/cost/build_time/重名）。
 - ✅ **挂件条目真机锁定**：实体类型 = 父建筑专属（`BARRACKSREACTOR` 等，通用 `REACTOR` 在游戏里不产出实体）；`build_ability` = 通用建造能力名（addon 缺它加载当场报错）；`build_order_name` = 母建筑订单按钮名（在途确认检测用）。
 

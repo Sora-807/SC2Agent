@@ -76,7 +76,7 @@ def test_operation():
 
 def test_queue_item_defaults():
     qi = QueueItem(op="train", type="terran/marine")
-    assert qi.count == 1 and qi.task is None and qi.when is None
+    assert qi.count == 1 and qi.task is None
     assert qi.op is QueueOp.TRAIN  # 字符串构造自动归一化为枚举成员
     q = Queue(name="opening", items=[qi])
     assert q.items[0].count == 1

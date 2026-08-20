@@ -116,3 +116,53 @@ def test_unknown_stable_id_in_composition_rejected():
     with pytest.raises(ValueError, match="stable id"):
         alloc.create_group("G1", {"MARINE": {"target": 1}})
 
+
+
+# ---- S3 补兵滞回（T3/D6 + H2 边界）----
+
+
+def test_refill_hysteresis_three_intervals():
+    """滞回三区间：[min, target) 不补 / 跌破 min 补回 target / max 硬上限截断。"""
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"min": 3, "target": 5, "max": 5}})
+    alloc.refresh(_gs([_u(i) for i in range(1, 8)]))
+    assert alloc.count("G1", "terran/marine") == 5           # 首次补到 target
+    # 死 1（剩 4，在 [3,5) 区间）→ 不补：不为一个兵去抢 free 池
+    alloc.refresh(_gs([_u(i) for i in range(2, 8)]))
+    assert alloc.count("G1", "terran/marine") == 4
+    # 再死 1（剩 3，仍 >= min）→ 仍不补
+    alloc.refresh(_gs([_u(i) for i in range(3, 8)]))
+    assert alloc.count("G1", "terran/marine") == 3
+    # 再死 1（剩 2，跌破 min）→ 补回 target
+    alloc.refresh(_gs([_u(i) for i in range(4, 9)]))
+    assert alloc.count("G1", "terran/marine") == 5
+
+
+def test_max_caps_lease_size():
+    """max 是硬上限：target 超过 max 时按 max 截断（编译期还会校验 target ≤ max）。"""
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"min": 1, "target": 5, "max": 2}})
+    alloc.refresh(_gs([_u(i) for i in range(1, 8)]))
+    assert alloc.count("G1", "terran/marine") == 2
+
+
+def test_min_omitted_keeps_fill_to_target_behavior():
+    """min 省略 → 下限 = target（跌破就补）：不给旧配置偷偷换语义。"""
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"target": 2}})
+    alloc.refresh(_gs([_u(1), _u(2), _u(3)]))
+    assert alloc.count("G1", "terran/marine") == 2
+    alloc.refresh(_gs([_u(2), _u(3)]))  # 死 1 → 立刻补回 2
+    assert alloc.count("G1", "terran/marine") == 2
+
+
+def test_min_zero_still_fills_empty_group():
+    """H2：min=0 不能变成"永不补兵"（字面 0 会让首次都不填）→ 语义 = 只在空组时补。"""
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"min": 0, "target": 2, "max": 2}})
+    alloc.refresh(_gs([_u(1), _u(2), _u(3)]))
+    assert alloc.count("G1", "terran/marine") == 2      # 空组 → 补
+    alloc.refresh(_gs([_u(2), _u(3)]))                  # 剩 1 > 0 → 不补
+    assert alloc.count("G1", "terran/marine") == 1
+    alloc.refresh(_gs([_u(3)]))                         # 组空了 → 再补
+    assert alloc.count("G1", "terran/marine") == 1

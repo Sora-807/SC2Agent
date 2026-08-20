@@ -15,6 +15,19 @@ from game import GameState, Owner
 from flow.predicates import unit_is_type
 
 
+def _refill_floor(spec: dict, target: int) -> int:
+    """补兵触发下限（S3 滞回；D6 + H2 边界）。
+
+    - min 省略 → 下限 = target（跌破就补，与滞回前行为一致，不给旧配置换语义）
+    - min 给了 → 只有跌破 min 才补回 target（滞回：数量在 [min, target) 不补，
+      避免每死一个兵就抢一次 free 池）
+    - **min = 0 → 下限取 1**（H2）：字面 0 会让 "len(cur) < 0" 永假、连首次都不填，
+      等于静默关掉补兵。0 的意图是"不主动维持"，语义定为"只在空组时补"。
+    """
+    floor = spec.get("min", target)
+    return max(int(floor), 1)
+
+
 @dataclass
 class GroupState:
     group_id: str
@@ -47,12 +60,16 @@ class Allocator:
                 g.leased_by_type[t] = {tag for tag in g.leased_by_type[t] if tag in own}
         leased_all = {tag for g in self._groups.values() for s in g.leased_by_type.values() for tag in s}
         free = own - leased_all
-        # 补到 target（FCFS：按 gs.units 顺序取前 N 个 free）
+        # 补兵（S3 滞回 + FCFS：按 gs.units 顺序取前 N 个 free）
         for g in self._groups.values():
             for stable_id, spec in g.composition.items():
                 cur = g.leased_by_type.setdefault(stable_id, set())
                 target = spec.get("target", spec.get("max", 0))
-                need = target - len(cur)
+                cap = spec.get("max", target)
+                floor = _refill_floor(spec, target)
+                if len(cur) >= floor:
+                    continue  # 滞回区间 [floor, target)：死一个不立刻抢 free 池
+                need = min(target, cap) - len(cur)
                 if need <= 0:
                     continue
                 # 单侧归一：架起后实体名变 SIEGETANKSIEGED，仍匹配 terran/siegetank（T3 语义不变）

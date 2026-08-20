@@ -453,3 +453,22 @@ strategy_instances:
     bindings: {{main: G1}}
     params: {{}}
 """
+
+
+
+def test_removed_on_exit_key_says_where_it_went():
+    """T3/D5：删掉的字段必须留"墓碑" —— 旧文件继续写 on_exit 会报错并说明去哪了，
+    而不是被静默忽略（否则"删字段"等于"悄悄失效"）。"""
+    with pytest.raises(AssertionError, match="on_exit") as e:
+        parse_strategy(VALID + "on_exit: release\n")
+    assert "D5" in str(e.value) or "已删" in str(e.value)
+
+
+def test_unknown_top_level_key_rejected():
+    with pytest.raises(AssertionError, match="顶层未知键"):
+        parse_strategy(VALID + "whatever: 1\n")
+
+
+def test_assembly_unknown_top_level_key_rejected():
+    with pytest.raises(AssertionError, match="顶层未知键"):
+        parse_assembly(_assembly_text("{min: 1, target: 1, max: 1}") + "on_exit: release\n")

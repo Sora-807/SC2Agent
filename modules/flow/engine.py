@@ -1,4 +1,4 @@
-"""flow engine：RuntimeSink；per-frame eval Step 分支 → ActionRequest → 去重 → 展开 → Operation。
+"""flow engine：RuntimeSink；per-frame eval Step 分支 → group_action → 去重 → 展开 → Operation。
 
 driver→world→flow：engine.on_game_state(GameState) → eval active step → 命中 do →
 group_action 经去重 + Allocator.expand 成 Operation → port.submit_operations。

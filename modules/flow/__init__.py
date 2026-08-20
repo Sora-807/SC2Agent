@@ -5,7 +5,6 @@ port 用 duck-typing；测试用 driver.fake.FakeGamePort。
 """
 from flow.engine import FlowEngine
 from flow.manifest import (
-    ActionRequest,
     FlowAssembly,
     GroupSpec,
     StrategyInstance,
@@ -15,7 +14,6 @@ from flow.manifest import (
 )
 
 __all__ = [
-    "ActionRequest",
     "FlowEngine",
     "FlowAssembly",
     "GroupSpec",

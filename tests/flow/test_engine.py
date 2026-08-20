@@ -33,7 +33,6 @@ steps:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [10.0, 10.0]}}
 edges:
   - {from: formup, to: advance, kind: done, reason: FORMED}
-on_exit: release
 loop_limits: {max_step_transitions: 100}
 """
 
@@ -142,7 +141,6 @@ steps:
       - do:
           - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [10.0, 10.0]}}
 edges: [{from: formup, to: advance, kind: done, reason: FORMED}]
-on_exit: release
 """
 
 
@@ -448,7 +446,7 @@ def test_exit_step_stops_remaining_do_items():
             "s2": {"branches": [{"do": []}]},
         },
         edges=[{"from": "s1", "to": "s2", "kind": "done", "reason": "GO"}],
-        on_exit="release", loop_limits={},
+        loop_limits={},
     )
     a = FlowAssembly(
         id="a",
@@ -477,7 +475,7 @@ def _loopy_engine(loop_limits: dict):
             {"do": [{"op": "exit_step", "kind": "done", "reason": "LOOP"}]},
         ]}},
         edges=[{"from": "s1", "to": "s1", "kind": "done", "reason": "LOOP"}],
-        on_exit="release", loop_limits=loop_limits,
+        loop_limits=loop_limits,
     )
     a = FlowAssembly(
         id="a",

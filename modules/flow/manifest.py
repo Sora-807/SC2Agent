@@ -38,7 +38,6 @@ class StrategyManifest:
     initial_step: str
     steps: dict[str, dict]  # step_id -> {branches: [...], locals?: [...]}
     edges: list[dict]
-    on_exit: str
     loop_limits: dict
     definitions: dict = field(default_factory=dict)  # 别名节（T2b）：name -> 值树；when/params 用 {ref: name}
 
@@ -65,16 +64,6 @@ class FlowAssembly:
     production_sequence: list = field(default_factory=list)  # V1：flow 不管，queue 另跑
 
 
-@dataclass(slots=True)
-class ActionRequest:
-    """flow→engine 的 group 级动作（engine 展开 (group_slot,stable_type)→unit_tags 成 Operation）。"""
-
-    group_slot: str  # 槽位名（strategy group_slots 中声明的，如 "main"；bindings[slot]→group_id）
-    stable_type: str  # 兵种类型（如 "terran/marine"；Allocator.expand(group_id, type) 取 unit_tags）
-    action_atom: str  # 操作原子名（OP_CATALOG 中，如 "move_to"/"focus_fire"；编译期校验）
-    params: dict  # 参数（透传到 Operation.params）
-
-
 # loop_limits 允许的键（有界环兜底；值必须正整数）
 LOOP_LIMIT_KEYS = frozenset({"max_step_transitions"})
 
@@ -93,9 +82,38 @@ UNIMPLEMENTED_DO_OPS: dict[str, str] = {
 PARAM_KEYS = frozenset({"type", "default"})
 PARAM_TYPES = frozenset({"int", "float", "point", "bool", "str"})
 
+# strategy / assembly 顶层键白名单：删掉一个字段（如 on_exit）后，旧文件继续写它必须**报错**，
+# 不能静默忽略 —— 否则"删字段"就变成了"悄悄失效"（D5 的反面）。
+STRATEGY_KEYS = frozenset({
+    "id", "version", "group_slots", "params", "variables", "definitions",
+    "initial_step", "steps", "edges", "loop_limits",
+})
+ASSEMBLY_KEYS = frozenset({"id", "groups", "strategy_instances", "production_sequence"})
+
+# 已删除字段 → 提示（写了就报错，并说明去哪了）
+REMOVED_KEYS: dict[str, str] = {
+    "on_exit": "单实例引擎下 release 与 keep_idle 无可观察差异，已删（D5）；"
+               "多实例/hot-swap 轮需要时按 spec-002 恢复",
+}
+
+
+def _check_top_level_keys(d: dict, allowed: frozenset, what: str) -> None:
+    """顶层键白名单（不静默）：未知键报错；已删字段给"去哪了"的提示。"""
+    unknown = sorted(set(d) - allowed)
+    if not unknown:
+        return
+    msgs = [
+        f"{k}（{REMOVED_KEYS[k]}）" if k in REMOVED_KEYS else repr(k)
+        for k in unknown
+    ]
+    raise AssertionError(
+        f"{what} 顶层未知键: " + "、".join(msgs) + f"（允许：{sorted(allowed)}）"
+    )
+
 
 def parse_strategy(yaml_str: str) -> StrategyManifest:
     d = yaml.safe_load(yaml_str)
+    _check_top_level_keys(d, STRATEGY_KEYS, "strategy")
     raw_steps = d["steps"]
     steps = {s["step_id"]: s for s in raw_steps}
     if len(steps) != len(raw_steps):  # dict 覆盖会静默丢 step（T2c #5）
@@ -106,7 +124,7 @@ def parse_strategy(yaml_str: str) -> StrategyManifest:
         id=d["id"], version=d.get("version", 1), group_slots=d["group_slots"],
         params=d.get("params", {}), variables=d.get("variables", {}),
         initial_step=d["initial_step"], steps=steps, edges=d.get("edges", []),
-        on_exit=d.get("on_exit", "keep_idle"), loop_limits=d.get("loop_limits", {}),
+        loop_limits=d.get("loop_limits", {}),
         definitions=d.get("definitions", {}) or {},
     )
     validate_strategy(m)
@@ -115,6 +133,7 @@ def parse_strategy(yaml_str: str) -> StrategyManifest:
 
 def parse_assembly(yaml_str: str) -> FlowAssembly:
     d = yaml.safe_load(yaml_str)
+    _check_top_level_keys(d, ASSEMBLY_KEYS, "assembly")
     groups = [GroupSpec(g["group_id"], g["composition"]) for g in d.get("groups", [])]
     insts = [
         StrategyInstance(si["instance_id"], si["strategy_ref"], si["bindings"], si.get("params", {}))
