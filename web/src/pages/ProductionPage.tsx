@@ -6,14 +6,57 @@
  * 见 plan-backend-view 的缺口记录。骗人的图比没有图更糟。
  */
 import { useMemo, useState } from "react";
+import { sendCommand, type CommandResult } from "../api/commands";
 import { ProjectionChart } from "../charts/ProjectionChart";
 import { Card, Empty, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { CatalogStatic, ProjectionFrame, WorldFrame } from "../contract";
 
+/** 命令反馈：409（世界变了）与 400（请求不合法）要让用户看出区别 */
+function useCommands() {
+  const seq = useFrames((s) => s.seq);
+  const sourceKind = useFrames((s) => s.sourceKind);
+  const [last, setLast] = useState<CommandResult | null>(null);
+  const writable = sourceKind === "api";
+  const run = async (cmd: Parameters<typeof sendCommand>[0]): Promise<void> => {
+    const res = await sendCommand(cmd, seq);
+    setLast(res);
+  };
+  return { run, last, writable, seq };
+}
+
+function CommandBanner(props: { last: CommandResult | null; writable: boolean }) {
+  if (!props.writable) {
+    return (
+      <div className="rounded border border-neutral-800 bg-neutral-900/60 px-2 py-1 text-[11px] text-neutral-500">
+        只读：当前帧源是本地夹具。把帧源切到「后端 API」并启动沙盒会话后可以下命令。
+      </div>
+    );
+  }
+  if (!props.last) return null;
+  if (props.last.ok) {
+    return (
+      <div className="rounded border border-emerald-800 bg-emerald-950/40 px-2 py-1 text-[11px] text-emerald-300">
+        已接受（seq {props.last.accepted_seq}）· 下一 step 生效
+      </div>
+    );
+  }
+  const tone = props.last.reason === "stale" ? "amber" : "red";
+  return (
+    <div className={`rounded border px-2 py-1 text-[11px] ${tone === "amber"
+      ? "border-amber-800 bg-amber-950/40 text-amber-300"
+      : "border-red-800 bg-red-950/40 text-red-300"}`}>
+      {props.last.reason === "stale"
+        ? "观察已过期（R8）：" + props.last.message
+        : props.last.message}
+    </div>
+  );
+}
+
 export function ProductionPage() {
   const { production, projection, economy, catalog, schema, world } = useFrames();
   const [tab, setTab] = useState<"queue" | "catalog">("queue");
+  const cmd = useCommands();
 
   const zhOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -23,6 +66,7 @@ export function ProductionPage() {
 
   return (
     <div className="space-y-3">
+      <CommandBanner last={cmd.last} writable={cmd.writable} />
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <Card
           title="生产队列"
@@ -67,6 +111,7 @@ export function ProductionPage() {
                         <th className="w-8">#</th><th className="w-28">op</th>
                         <th>目标</th><th className="w-12">数量</th>
                         <th className="w-40">放置</th><th className="w-24">状态</th>
+                        <th className="w-16" />
                       </tr>
                     </thead>
                     <tbody>
@@ -90,6 +135,32 @@ export function ProductionPage() {
                               : "—"}
                           </td>
                           <td>{it.status}</td>
+                          <td className="text-right">
+                            {cmd.writable && (
+                              <>
+                                {it.index > 0 && (
+                                  <button
+                                    className="mr-1 rounded border border-neutral-700 px-1 text-[10px]"
+                                    title="上移一位"
+                                    onClick={() => {
+                                      const n = q.items.length;
+                                      const order = [...Array(n).keys()];
+                                      const i = it.index;
+                                      [order[i - 1], order[i]] = [order[i]!, order[i - 1]!];
+                                      void cmd.run({ kind: "queue", op: "reorder",
+                                        body: { name: q.name, order } });
+                                    }}
+                                  >↑</button>
+                                )}
+                                <button
+                                  className="rounded border border-neutral-700 px-1 text-[10px] text-red-400"
+                                  title="从队列移除"
+                                  onClick={() => void cmd.run({ kind: "queue", op: "remove",
+                                    body: { name: q.name, index: it.index } })}
+                                >×</button>
+                              </>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -131,7 +202,26 @@ export function ProductionPage() {
                   {economy.tasks.map((t) => (
                     <tr key={t.task} className={t.actual < t.target ? "text-amber-400" : ""}>
                       <td>{t.task === "mineral" ? "采矿" : t.task === "gas" ? "采气" : "备用"}</td>
-                      <td>{t.quota === null ? <span className="text-neutral-600">按比例</span> : t.quota}</td>
+                      <td>
+                        {cmd.writable ? (
+                          <input
+                            type="number" min={0} max={99}
+                            defaultValue={t.quota ?? ""}
+                            placeholder="比例"
+                            className="w-14 rounded border border-neutral-700 bg-neutral-950 px-1"
+                            title="维持 N 个（目标值，幂等）"
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              const v = Number((e.target as HTMLInputElement).value);
+                              if (Number.isFinite(v) && v >= 0) {
+                                void cmd.run({ kind: "workers", body: { task: t.task, count: v } });
+                              }
+                            }}
+                          />
+                        ) : t.quota === null ? (
+                          <span className="text-neutral-600">按比例</span>
+                        ) : t.quota}
+                      </td>
                       <td>{t.target}</td>
                       <td>{t.actual}</td>
                     </tr>
@@ -232,7 +322,12 @@ export function ProductionPage() {
         </Card>
       ) : (
         <CatalogPicker catalog={catalog} zhOf={zhOf} world={world}
-                       unsupported={schema?.queue.unsupported_ops ?? {}} />
+                       unsupported={schema?.queue.unsupported_ops ?? {}}
+                       writable={cmd.writable}
+                       onAdd={(item) => void cmd.run({
+                         kind: "queue", op: "append",
+                         body: { name: "main", items: [item] },
+                       })} />
       )}
     </div>
   );
@@ -300,6 +395,8 @@ function CatalogPicker(props: {
   zhOf: (id: string | null) => string;
   world: WorldFrame | null;
   unsupported: Record<string, string>;
+  writable: boolean;
+  onAdd: (item: Record<string, unknown>) => void;
 }) {
   const { catalog, world } = props;
   const have = useMemo(() => {
@@ -314,8 +411,20 @@ function CatalogPicker(props: {
   const groups: [string, string][] = [
     ["building", "建筑"], ["combat", "战斗单位"], ["worker", "工兵"], ["upgrade", "升级"],
   ];
+  /** 建筑要 placement：没有 placement 的 build 在编译期就非法（P0 §D2 的边界）。
+   *  这里默认丢到 home 区域自动找位；精确槽位留给 F9 的地图规划。 */
+  const itemFor = (e: CatalogStatic["entries"][number]): Record<string, unknown> | null => {
+    if (e.role === "building") {
+      return { op: "build", type: e.stable_id, count: 1,
+               placement: { kind: "in_region", region: "home" } };
+    }
+    if (e.role === "worker" || e.role === "combat") {
+      return { op: "train", type: e.stable_id, count: 1 };
+    }
+    return null;   // upgrade 走 research，而 research 后端还不支持（不给假按钮）
+  };
   return (
-    <Card title="目录（点击加入队列 —— 需 B6 命令写入面）">
+    <Card title={props.writable ? "目录（点击加入 main 队列）" : "目录（只读：切到后端 API 才能下命令）"}>
       {groups.map(([role, label]) => {
         const rows = catalog.entries.filter((e) => e.role === role);
         if (rows.length === 0) return null;
@@ -326,21 +435,29 @@ function CatalogPicker(props: {
               {rows.map((e) => {
                 const missing = e.prerequisites.filter((p) => !have.has(p));
                 const blocked = missing.length > 0;
+                const item = itemFor(e);
+                const unsupported = item === null
+                  ? props.unsupported["research"] ?? "该角色没有对应的队列 op"
+                  : null;
+                const disabled = blocked || !props.writable || item === null;
                 const why = blocked
                   ? "缺前置：" + missing.map((m) => props.zhOf(m)).join("、")
-                  : e.produced_by
-                    ? "产出建筑 " + props.zhOf(e.produced_by)
-                    : "";
+                  : unsupported
+                    ? "不可用：" + unsupported
+                    : e.produced_by
+                      ? "产出建筑 " + props.zhOf(e.produced_by)
+                      : "";
                 return (
                   <button
                     key={e.stable_id}
-                    disabled
+                    disabled={disabled}
+                    onClick={() => item && props.onAdd(item)}
                     title={why + `｜矿 ${e.cost.minerals} 气 ${e.cost.vespene} 供给 ${e.cost.supply} 时间 ${e.build_time}s`}
                     className={
                       "rounded border px-1.5 py-0.5 text-[11px] " +
-                      (blocked
+                      (disabled
                         ? "border-neutral-800 text-neutral-600"
-                        : "border-neutral-700 text-neutral-300")
+                        : "border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100")
                     }
                   >
                     {e.display_name_zh}
@@ -355,7 +472,8 @@ function CatalogPicker(props: {
         );
       })}
       <div className="mt-1 text-[10px] text-neutral-600">
-        置灰 = 前置不满足（前置来自 catalog，前端不硬编码）。
+        置灰 = 前置不满足 / 只读 / 后端不支持（前置与原因都来自后端，前端不硬编码）。
+        建筑默认丢到 home 区域自动找位 —— 没有 placement 的 build 在编译期就非法。
         不支持的队列 op：{Object.entries(props.unsupported).map(([k, v]) => `${k}（${v}）`).join("；") || "无"}
       </div>
     </Card>

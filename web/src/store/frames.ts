@@ -60,6 +60,8 @@ interface FramesStore extends Frames {
   mode: "live" | "review";
   range: { from: number; to: number };
   position: number;
+  /** 当前帧的 seq —— 命令的 `based_on_seq` 取它（R8） */
+  seq: number;
   markers: TimelineMarker[];
   error: string | null;
   loading: boolean;
@@ -103,7 +105,7 @@ export const useFrames = create<FramesStore>((set, get) => {
     fixtures: [], fixtureKey: null, sourceKind: "fixture",
     api: { ok: false },
     caps: { live: false, seek: true }, mode: "live",
-    range: { from: 0, to: 0 }, position: 0, markers: [],
+    range: { from: 0, to: 0 }, position: 0, seq: 0, markers: [],
     error: null, loading: false,
 
     async init() {
@@ -122,15 +124,16 @@ export const useFrames = create<FramesStore>((set, get) => {
     async attach(kind, fixtureKey) {
       get().detach();
       set({ loading: true, error: null, ...EMPTY_FRAMES });
+      // api 源的帧由后端推，不需要本地夹具索引里有它（`live` 就只在后端存在）
       const meta = get().fixtures.find((f) => f.key === fixtureKey);
-      if (!meta) {
+      if (kind !== "api" && !meta) {
         set({ loading: false, error: `没有夹具 ${fixtureKey}` });
         return;
       }
       let text = "";
-      if (kind !== "api") {          // api 源由后端推帧，不需要本地文件
+      if (kind !== "api") {
         try {
-          text = await loadFixture(meta);
+          text = await loadFixture(meta!);
         } catch (err) {
           set({ loading: false, error: (err as Error).message });
           return;
@@ -151,7 +154,7 @@ export const useFrames = create<FramesStore>((set, get) => {
           live.start();
           src = rev;
         } else {
-          src = JsonlFrameSource.fromJsonl(text, meta.snapshots);
+          src = JsonlFrameSource.fromJsonl(text, meta!.snapshots);
         }
       } catch (err) {
         set({ loading: false, error: (err as Error).message });
@@ -161,7 +164,8 @@ export const useFrames = create<FramesStore>((set, get) => {
       source = src;
       unsubs = [
         src.subscribe("frame/session", (e) => set({ session: e.payload })),
-        src.subscribe("frame/world", (e) => set({ world: e.payload })),
+        // world 帧的 seq 就是"这一刻的世界版本"，命令拿它当 based_on_seq
+        src.subscribe("frame/world", (e) => set({ world: e.payload, seq: e.seq })),
         src.subscribe("frame/flow", (e) => set({ flow: e.payload })),
         src.subscribe("frame/production", (e) => set({ production: e.payload })),
         src.subscribe("frame/economy", (e) => set({ economy: e.payload })),

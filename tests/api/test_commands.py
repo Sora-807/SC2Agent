@@ -159,6 +159,7 @@ def test_unsupported_queue_op_rejected_with_backend_reason(client: TestClient):
     })
     assert r.status_code == 400
     assert "upgrade 数据目录" in r.json()["detail"], "原因应取自后端闭集，不另编文案"
+    assert "暂不支持" in r.json()["detail"]
 
 
 def test_unknown_queue_op_rejected(client: TestClient):

@@ -70,9 +70,9 @@
 | **B0** | `view` 模块 + `tools/worldsim.py` + `tools/make_fixtures.py` ✅**已完成** | 无 | 零 | 夹具改由**真引擎**产出 |
 | **B1** | 显式读模型 `snapshot()` + `RecordingPort` + flow/production/ops 帧 ✅**已完成** | — | — | flow/组/生产的真实状态 |
 | **B2** | `api` 模块:REST 静态面 + 帧源清单 + WS 帧流 + `tools/serve_api.py` ✅**已完成** | B0 | 零 | 前端 `WsFrameSource` 已接通 |
-| **B5** | `ViewRecorder`:把帧写成 JSONL(新增,不改 StateRecorder) | B0 | 零 | 复盘素材;修 `docs/state_trace.jsonl` 过期字段 |
+| **B5** | `view.producer.FrameProducer`(唯一产帧路径) + `view.recorder.ViewRecorder` ✅**已完成** | B0 | 零 | 复盘素材;快照锚点已接时间线 |
 | **B8** | 警报最小版 `view/alerts.py` ✅**已完成**(节拍缓存 ProjectionMonitor 归 B2) | B0 | 零 | `frame/alerts` |
-| **B6** | 命令写入面(队列 op / 会话 / 提案接受),与 agent 同一入口 | B2,T4 | 中 | 前端可写 |
+| **B6** | 命令写入面 + `api.session.OfflineSession` ✅**已完成**(提案接受归 B7) | B2 | 零 | 前端可写;R8 的门落地 |
 | **B7** | 提案存储 + validate 网关 | B6 | 低 | 前端 F7 |
 | **B3** | 会话控制 + 进程分离(解 `start()` 阻塞,`stop()` 真实现) | **T6** | 零 | 前端 F8 的 live |
 | **B4** | `MapInfo` 地形静态面(driver 增量导出 game_info) | **T6** | 零 | 地图页从散点图变地图 |
@@ -80,7 +80,31 @@
 | **B10** | `ObservationPacket`:给 agent 的帧投影(agent 接缝) | B2 | 零 | agent 读面与 UI 同源 |
 | **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
 
-执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 → B6 → B7 ∥ B10 → B3 → B4 → B9`
+执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 ✅ → B6 ✅ → B7 ∥ B10 → B3 → B4 → B9`
+
+### B6 的落地方式与原计划的差异(值得记账)
+
+原计划的 B6 假设"命令打给 live 会话",但真 live 要等 B3(`SC2GamePort.start()` 阻塞在 `run_game()`)。
+所以先做 **`api.session.OfflineSession`**:`tools/worldsim.py` 驱动一套**完整真引擎装配**
+(flow + production + economy + 帧生产 + 一张 lease 表)。三点收益:
+1. 命令写入面现在就能验(而不是等 B3);
+2. 提案审批(B7)有一个能真正 apply 的目标;
+3. 这套装配与 B3 的 live 会话**同构** —— 届时只把 WorldSim 换成真 driver,api 与前端零改动。
+
+它刻意长得像 `JsonlSource`(`info/statics/latest_at/between`),所以 WS 通道不用改:
+前端把帧源切成 `live` 就在看这个会话。live 源在 pump 里**跟随**(新帧一律转发,不受 `rate` 限制;
+`rate` 是回放语义)。
+
+**R8 的门**:所有命令必带 `based_on_seq`,落后超 `MAX_STALE_SEQ=5` 返 **409** 并回报当前 seq
+(409 而不是 400:这不是请求写错了,而是世界变了)。字段设成**必填**而不是"可选、缺了就跳过检查" ——
+后者等于没有这道门。前端把 409/400 的区别显示给用户:前者提示重取最新帧,后者显示后端给的原因。
+
+`remove`/`reorder` 用**下标**而不是对象引用(HTTP 传不了引用),下标是前端在同一帧看到的位置 ——
+配合新鲜度门就足够安全。
+
+**踩坑**:`asyncio.create_task` 在 FastAPI 的**同步** endpoint 里没有运行中的 loop(同步 endpoint
+跑在线程池)。改成 `async def`;并把自动推进做成显式开关(`?autotick=false` + `POST /api/session/tick`),
+否则测试里后台 tick 会和手动 tick 抢,`based_on_seq` 的断言变得不可预测 —— 这个开关顺带成了"单步调试"入口。
 
 **B2 落地要点**:WS 的时间基准是 `game_time`(ADR-0025 §6),控制消息用 `_` 前缀
 (`_hello`/`_eof`/`_error`/`_pong`)与契约的 topic 闭集区分,永不撞名;`_hello` **先于任何帧**

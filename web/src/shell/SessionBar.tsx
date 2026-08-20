@@ -1,4 +1,5 @@
 /** 会话条：帧源选择 + 会话状态 + 回看/回到实时 */
+import { sessionAction } from "../api/commands";
 import { useFrames, type SourceKind } from "../store/frames";
 import { Pill, fmtTime } from "./ui";
 
@@ -20,6 +21,9 @@ export function SessionBar() {
         {fixtures.map((f) => (
           <option key={f.key} value={f.key}>{f.label}</option>
         ))}
+        {api.ok && api.sources?.includes("live") !== true && (
+          <option value="live">live（后端沙盒会话）</option>
+        )}
       </select>
 
       <select
@@ -44,6 +48,22 @@ export function SessionBar() {
       )}
 
       <div className="ml-auto flex gap-2">
+        {api.ok && (
+          <>
+            <button
+              className="rounded border border-emerald-800 bg-emerald-900/30 px-2 py-1 text-xs"
+              title="在后端起一个离线沙盒会话（真引擎 + 假世界），起来后可以下命令"
+              onClick={async () => {
+                await sessionAction("start");
+                if (fixtureKey) await attach("api", "live");
+              }}
+            >启动沙盒</button>
+            {sourceKind === "api" && fixtureKey === "live" && (
+              <button className="rounded border border-neutral-700 px-2 py-1 text-xs"
+                      onClick={() => void sessionAction("stop")}>停止沙盒</button>
+            )}
+          </>
+        )}
         {caps.live ? (
           <button
             className="rounded border border-amber-700 bg-amber-900/30 px-2 py-1 text-xs disabled:opacity-40"

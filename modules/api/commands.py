@@ -59,7 +59,7 @@ class QueueItemIn(BaseModel):
             ) from None
         if op in UNSUPPORTED_QUEUE_OPS:
             # 原因取自后端闭集，不另编文案（前端也是显示这一份）
-            raise ValueError(f"{op.value} 暫不支持：{UNSUPPORTED_QUEUE_OPS[op]}")
+            raise ValueError(f"{op.value} 暂不支持：{UNSUPPORTED_QUEUE_OPS[op]}")
         task = None
         if self.task is not None:
             try:
