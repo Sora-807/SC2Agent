@@ -7,7 +7,7 @@
 import { create } from "zustand";
 import type {
   AlertsFrame, CatalogStatic, EconomyFrame, FlowFrame, MapStatic, OpsFrame, ProductionFrame,
-  ProjectionFrame, ProposalsFrame, SchemaStatic, SessionFrame, WorldFrame,
+  ProjectionFrame, ProposalsFrame, SchemaStatic, SessionFrame, StrategyStatic, WorldFrame,
 } from "../contract";
 import { listFixtures, loadFixture, type FixtureMeta } from "../fixtures";
 import { JsonlFrameSource } from "../source/jsonl";
@@ -40,11 +40,13 @@ interface Frames {
   map: MapStatic | null;
   catalog: CatalogStatic | null;
   schema: SchemaStatic | null;
+  /** 策略图结构（static/strategy）：F4 的图与 F9 的编辑器都靠它 */
+  strategy: StrategyStatic | null;
 }
 
 const EMPTY_FRAMES: Frames = {
   session: null, world: null, flow: null, production: null, economy: null, ops: null, projection: null,
-  alerts: null, proposals: null, map: null, catalog: null, schema: null,
+  alerts: null, proposals: null, map: null, catalog: null, schema: null, strategy: null,
 };
 
 interface FramesStore extends Frames {
@@ -170,6 +172,7 @@ export const useFrames = create<FramesStore>((set, get) => {
         src.subscribe("static/map", (e) => set({ map: e.payload })),
         src.subscribe("static/catalog", (e) => set({ catalog: e.payload })),
         src.subscribe("static/schema", (e) => set({ schema: e.payload })),
+        src.subscribe("static/strategy", (e) => set({ strategy: e.payload })),
       ];
       set({
         sourceKind: kind, fixtureKey, loading: false, caps: src.caps,

@@ -9,6 +9,10 @@ import { z } from "zod";
 
 /**
  * 契约版本。
+ * rev 7：新增 topic `static/strategy` —— 策略图结构（steps/branches/edges/声明节）。
+ *   `frame/flow` 只有"现在在哪个 step"，**图本身不在任何帧里**，F4 的状态图与 F9 的 AST 编辑器
+ *   都没法画。它每个 flow 版本只变一次，所以归静态面；hot-edit（S8）落地后改成事件驱动。
+ *   `branches` **原样带值树**（不摊平）：F4 只要 step/edge，但 F9 的编辑器要完整 AST。
  * rev 6：新增 topic `frame/economy`（ADR-0030 的经济维持器已落地）。
  *   `tasks` 里 **quota / target / actual 三个数都给**：quota 是持久配额（没精炼厂也挂着 ——
  *   这正是 issues P9 的修复点），target 是本帧可达（被节点容量与人数夹紧），actual 是真实人数。
@@ -33,7 +37,7 @@ import { z } from "zod";
  *   `frame/production` 增队列级 `blocked`（后端 T4 已有 `runtime.blocked`：原因 + 起始时间 + 是否已告警）。
  * rev 1：初版（DSL v0.2 之前，签名表尚不存在，schema 降级为空参数表）。
  */
-export const REV = 6 as const;
+export const REV = 7 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -53,6 +57,7 @@ export const zTopic = z.enum([
   "static/map",
   "static/catalog",
   "static/schema",
+  "static/strategy",
   "frame/session",
   "frame/world",
   "frame/flow",
@@ -70,7 +75,9 @@ export type Topic = z.infer<typeof zTopic>;
  * **不参与"可 seek 窗口"的计算** —— 否则环形缓冲淘汰了早期动态帧之后，
  * 静态帧仍会把窗口左端钉在 t=0，时间线就会假装能拖回开局（拿到的却是窗口内最老的动态帧）。
  */
-export const STATIC_TOPICS = ["static/map", "static/catalog", "static/schema"] as const;
+export const STATIC_TOPICS = [
+  "static/map", "static/catalog", "static/schema", "static/strategy",
+] as const;
 export type StaticTopic = (typeof STATIC_TOPICS)[number];
 
 const STATIC_SET: ReadonlySet<string> = new Set<string>(STATIC_TOPICS);
@@ -230,6 +237,40 @@ export const zSchemaStatic = z.object({
 });
 
 /* ---------------- 动态面 ---------------- */
+
+/**
+ * 策略图结构（每个 flow 版本只变一次）。
+ * 与 `frame/flow` 的分工：这里是**图**（不变的结构），那里是**状态**（每帧的位置）。
+ */
+export const zStrategyStatic = z.object({
+  id: z.string(),
+  version: z.number().int(),
+  group_slots: z.array(z.string()),
+  /** 参数/变量的**声明**（type + default）；生效值在 frame/flow */
+  params: z.record(z.string(), z.record(z.string(), z.unknown())),
+  variables: z.record(z.string(), z.record(z.string(), z.unknown())),
+  definitions: z.record(z.string(), z.unknown()),
+  initial_step: z.string(),
+  steps: z.array(
+    z.object({
+      step_id: z.string(),
+      /** 原样的值树：when 的 AST 与 do 的动作列表都不摊平（F9 的编辑器要用） */
+      branches: z.array(z.record(z.string(), z.unknown())),
+    }),
+  ),
+  edges: z.array(
+    z.object({
+      from: z.string(),
+      to: z.string(),
+      /** (kind, reason) 必须与某个 exit_step 匹配（编译期已校验，没有对应的边是死边） */
+      kind: z.string(),
+      reason: z.string(),
+    }),
+  ),
+  loop_limits: z.record(z.string(), z.number().int()),
+  /** slot → group_id：画图时标注每个 slot 落在哪个组 */
+  bindings: z.record(z.string(), z.string()),
+});
 
 export const zSessionFrame = z.object({
   state: z.enum(["未连接", "启动中", "对局中", "已结束", "崩溃"]),
@@ -666,6 +707,7 @@ export const PAYLOADS = {
   "static/map": zMapStatic,
   "static/catalog": zCatalogStatic,
   "static/schema": zSchemaStatic,
+  "static/strategy": zStrategyStatic,
   "frame/session": zSessionFrame,
   "frame/world": zWorldFrame,
   "frame/flow": zFlowFrame,
@@ -681,6 +723,7 @@ export const ENVELOPES = {
   "static/map": envelope("static/map", zMapStatic),
   "static/catalog": envelope("static/catalog", zCatalogStatic),
   "static/schema": envelope("static/schema", zSchemaStatic),
+  "static/strategy": envelope("static/strategy", zStrategyStatic),
   "frame/session": envelope("frame/session", zSessionFrame),
   "frame/world": envelope("frame/world", zWorldFrame),
   "frame/flow": envelope("frame/flow", zFlowFrame),
@@ -696,6 +739,7 @@ export const zAnyEnvelope = z.discriminatedUnion("topic", [
   ENVELOPES["static/map"],
   ENVELOPES["static/catalog"],
   ENVELOPES["static/schema"],
+  ENVELOPES["static/strategy"],
   ENVELOPES["frame/session"],
   ENVELOPES["frame/world"],
   ENVELOPES["frame/flow"],
@@ -715,6 +759,7 @@ export type Cell = z.infer<typeof zCell>;
 export type MapStatic = z.infer<typeof zMapStatic>;
 export type CatalogStatic = z.infer<typeof zCatalogStatic>;
 export type SchemaStatic = z.infer<typeof zSchemaStatic>;
+export type StrategyStatic = z.infer<typeof zStrategyStatic>;
 export type SessionFrame = z.infer<typeof zSessionFrame>;
 export type WorldFrame = z.infer<typeof zWorldFrame>;
 export type FlowFrame = z.infer<typeof zFlowFrame>;

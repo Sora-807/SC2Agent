@@ -123,8 +123,8 @@ describe("契约", () => {
       .toThrow(ContractError);
   });
 
-  it("topic 白名单与 §2 一致（12 个）", () => {
-    expect(zTopic.options.length).toBe(12);
+  it("topic 白名单与 §2 一致（13 个）", () => {
+    expect(zTopic.options.length).toBe(13);
   });
 
   it("前后端 REV 必须一致（契约变更流程 C8 的机械守卫）", () => {
@@ -149,8 +149,8 @@ describe("契约", () => {
     expect([...pyTopics].sort()).toEqual([...zTopic.options].sort());
   });
 
-  it("静态面是 3 个，且与 topic 白名单一致", () => {
-    expect(STATIC_TOPICS.length).toBe(3);
+  it("静态面是 4 个，且与 topic 白名单一致", () => {
+    expect(STATIC_TOPICS.length).toBe(4);
     for (const t of STATIC_TOPICS) {
       expect(zTopic.options).toContain(t);
       expect(isStaticTopic(t)).toBe(true);

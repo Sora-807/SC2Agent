@@ -39,7 +39,9 @@ from view.encode import envelope  # noqa: E402
 from view.jsonl import write_frames  # noqa: E402
 from view.port import OpRing, RecordingPort  # noqa: E402
 from view.schema import AlertsFrame, HunkView, ProposalsFrame, ProposalView  # noqa: E402
-from view.statics import catalog_static, map_static, resource_nodes_from_state, schema_static  # noqa: E402
+from view.statics import (  # noqa: E402
+    catalog_static, map_static, resource_nodes_from_state, schema_static, strategy_static,
+)
 from worldsim import WorldSim  # noqa: E402
 
 CAT = load_terran()
@@ -210,8 +212,10 @@ class SceneRunner:
         # 战斗组租走的工兵、建造征用中的工兵，维持器都自动不碰。
         self.reservations = WorkerReservations()
         self.allocator = Allocator(catalog=CAT, reservations=self.reservations)
+        self._manifest = parse_strategy(strategy)
+        self._assembly = parse_assembly(assembly)
         self.engine = FlowEngine(
-            parse_strategy(strategy), parse_assembly(assembly),
+            self._manifest, self._assembly,
             RecordingPort(self.sink, "flow", self.ring, clock=clock),
             region_layer=layer, catalog=CAT, allocator=self.allocator,
         )
@@ -246,6 +250,7 @@ class SceneRunner:
             self.layer, "bl", resource_nodes=resource_nodes_from_state(gs.resources)))
         self._emit("static/catalog", catalog_static(CAT))
         self._emit("static/schema", schema_static())
+        self._emit("static/strategy", strategy_static(self._manifest, self._assembly))
         self._emit("frame/session", adapt.session_frame(
             "对局中", frame_source="fixture", game_time=self.world.t,
             map_name=self.layer.map_name, my_race="terran", enemy_race=self.race_enemy))

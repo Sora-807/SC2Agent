@@ -21,6 +21,9 @@ from tactical_map.region import RegionLayer
 from view.encode import grid_to_b64
 from view.schema import (
     BigRegionView,
+    EdgeView,
+    StepView,
+    StrategyStatic,
     BuildSlotView,
     CatalogEntryView,
     CatalogStatic,
@@ -179,3 +182,32 @@ def _slot_view(bs) -> BuildSlotView:
 
 def _grid_or_none(g: Grid | None):
     return None if g is None else grid_to_b64(g)
+
+def strategy_static(manifest, assembly) -> StrategyStatic:
+    """StrategyManifest + FlowAssembly → static/strategy。
+
+    纯转发：steps 的 `branches` 值树原样带出（F9 的 AST 编辑器需要完整结构），
+    edges 的 `from` 因为是 Python 保留字，在 schema 里叫 `from_step`、编码时改名。
+    """
+    steps = [
+        StepView(step_id=step_id, branches=list(step.get("branches", [])))
+        for step_id, step in manifest.steps.items()
+    ]
+    edges = [
+        EdgeView(from_step=e["from"], to=e["to"], kind=e["kind"], reason=e["reason"])
+        for e in manifest.edges
+    ]
+    instance = assembly.strategy_instances[0]
+    return StrategyStatic(
+        id=manifest.id,
+        version=int(manifest.version),
+        group_slots=list(manifest.group_slots),
+        params=dict(manifest.params),
+        variables=dict(manifest.variables),
+        definitions=dict(manifest.definitions),
+        initial_step=manifest.initial_step,
+        steps=steps,
+        edges=edges,
+        loop_limits=dict(manifest.loop_limits),
+        bindings=dict(instance.bindings),
+    )

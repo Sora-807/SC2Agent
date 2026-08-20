@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 #: 契约版本。改任何字段 = REV+1 + §2 修订 + 前端同步（红线 C8）。
+#: rev 7：新增 topic `static/strategy` —— 策略图结构（steps/branches/edges/声明节）。
+#:   `frame/flow` 只有"现在在哪个 step"，**图本身不在任何帧里**，F4 的状态图与 F9 的 AST 编辑器
+#:   都没法画。它每个 flow 版本只变一次，所以归静态面；hot-edit（S8）落地后再改成事件驱动。
+#:   刻意**原样下发 branches 的值树**（不摊平）：F4 只需要 step/edge，但 F9 的编辑器需要完整 AST，
+#:   摊平一次就得再补一条通道。
 #: rev 6：新增 topic `frame/economy`（ADR-0030 的经济维持器已落地 → 原 B11 预留转为实装）。
 #:   payload 按 `EconomyKeeper.snapshot()` **实际能产出什么**校准：`emitted` 改成 `emitted_count`
 #:   （维持器只记条数不记内容）、去掉 `retask`（防抖帧未暴露，不为它改人家刚写的文件）。
@@ -27,17 +32,17 @@ from typing import Any
 #:      改增 queue + attempted_slots（摆放调试叠加要画"试过哪几个槽位"）。
 #: rev 3：区域几何改为"一张标签网格 + 索引"（原 leaf[].cells 的 per-region mask 不可扩展）。
 #: rev 2：static/schema 逐字镜像 flow.vocab.dump_vocabulary()；production 队列增 blocked。
-REV = 6
+REV = 7
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
 
 TOPICS = (
-    "static/map", "static/catalog", "static/schema",
+    "static/map", "static/catalog", "static/schema", "static/strategy",
     "frame/session", "frame/world", "frame/flow", "frame/production",
     "frame/economy", "frame/ops", "frame/projection", "frame/alerts", "proposals",
 )
-STATIC_TOPICS = ("static/map", "static/catalog", "static/schema")
+STATIC_TOPICS = ("static/map", "static/catalog", "static/schema", "static/strategy")
 
 
 @dataclass(slots=True)
@@ -213,6 +218,62 @@ class SchemaStatic:
     rules: list[str]
     queue: QueueSchemaView
     target_kinds: list[str]
+
+
+# ---------------- static/strategy ----------------
+
+@dataclass(slots=True)
+class StepView:
+    """一个 step 的原始定义。
+
+    `branches` **原样带值树**（`when` 的 AST、`do` 的动作列表都不摊平）：
+    F4 的状态图只用到 step_id 与出口，但 F9 的 AST 编辑器需要完整结构 ——
+    摊平一次就得再补一条通道，而且两条通道迟早不一致。
+    """
+
+    step_id: str
+    branches: list[dict]
+    # 不带 `locals`：step 局部变量在编译期被拒（UNIMPLEMENTED_STEP_KEYS，与 set_local 对称），
+    # 所以那会是个恒空的死字段。T8 放回 timer/local 时一并加。
+
+
+@dataclass(slots=True)
+class EdgeView:
+    """step 之间的转移边。
+
+    `(kind, reason)` 必须与某个 `exit_step` 匹配（编译期已校验：没有对应 exit_step 的边是死边）。
+    UI 在边上显示 reason —— 这就是 ADR-0023 §2.4 要的"悬停显示切换原因"。
+    """
+
+    from_step: str
+    to: str
+    kind: str
+    reason: str
+
+    RENAME = {"from_step": "from"}
+
+
+@dataclass(slots=True)
+class StrategyStatic:
+    """策略图结构（每个 flow 版本只变一次）。
+
+    与 `frame/flow` 的分工：这里是**图**（不变的结构），那里是**状态**（每帧的位置）。
+    合在一起才画得出"当前在哪个节点、从哪条边过来的、还有哪些没走过"。
+    """
+
+    id: str
+    version: int
+    group_slots: list[str]
+    #: 参数/变量的**声明**（type + default），不是运行时的值（值在 frame/flow）
+    params: dict[str, dict]
+    variables: dict[str, dict]
+    definitions: dict[str, Any]
+    initial_step: str
+    steps: list[StepView]
+    edges: list[EdgeView]
+    loop_limits: dict[str, int]
+    #: assembly 侧：实例绑定（slot → group_id），画图时标注每个 slot 落在哪个组
+    bindings: dict[str, str]
 
 
 # ---------------- frame/session ----------------

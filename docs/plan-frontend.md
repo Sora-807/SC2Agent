@@ -46,6 +46,7 @@
 | rev | 变更 | 原因 |
 |---|---|---|
 | 1 | 初版 | DSL v0.2 之前,签名表尚不存在,`static/schema` 降级为空参数表 |
+| 7 | 新增 topic `static/strategy`(steps/branches/edges/声明节) | F4 的图**不在任何帧里**:`frame/flow` 只有"现在在哪个 step",图本身从来没下发过。只靠转移历史推图会看不见"一次都没走过的 step"。归静态面(每个 flow 版本只变一次);hot-edit(S8)落地后改事件驱动。`branches` 原样带值树 —— F4 只要 step/edge,但 F9 的 AST 编辑器要完整结构,摊平一次就得再补通道 |
 | 6 | 新增 topic `frame/economy`;`tasks` 给 **quota / target / actual 三个数** | ADR-0030 的经济维持器落地。维持器的 `snapshot()` 给"可达目标"(受节点容量与人数夹紧),持久配额在 policy 里。只给 target 的话,"精炼厂没建好时气目标 0"会让用户以为 `assign_workers` 的意图又蒸发了 —— 恰好与 issues P9 的修复相反,所以两个数都要给 |
 | 5 | `static/schema.forbidden` 定为**开放分组表**(`Record<组名, Record<op, 原因>>`),不枚举分组名 | 后端给 `forbidden` 加了 `composite_actions`(assign_workers 需扇出层,ADR-0030 D1)与 `step_keys` 两组。后端因为"整块转发"自动就有了;前端 zod 写成封闭对象会**静默 strip** 新分组,编辑器就以为那些 op 可用。这才是 rev 2"逐字镜像、不加工"该有的样子:连分组名都不枚举 |
 | 4 | `frame/flow` 增 `eval_diagnostics`;`items[].status` 收窄为 队首阻塞/未处理 并删 `resolved_point`;`in_flight[]` 删 `timeout_frames`/`confirmed`、增 `queue`/`attempted_slots` | B1 落地时按后端**实际能产出什么**校准:① 引擎本来就在记求值诊断("条件其实没求出来"),不暴露等于丢功能;② 队首门控语义下已发出的项已出队或进 `in_flight`,队列里不可能有"已发出";③ `timeout_frames` 要在前端复制一份魔法公式、`confirmed` 恒 false(在途的都还没确认),而 `attempted_slots` 正是摆放调试叠加要的 |
@@ -297,7 +298,7 @@ interface AlertsFrame {
 | 校验 | zod(运行期校帧) | 契约漂移当场报错而不是渲染出错值 |
 | 地图 | Canvas2D 分层合成 | 400 单位 @1Hz 绰绰有余;grid 走 offscreen ImageData;WebGL 属过早优化 |
 | 曲线 | uPlot | 逐秒长曲线,小且快 |
-| 图 | React Flow + ELK | 有环小图(step 5-20),需交互编辑 |
+| 图 | **手写 SVG + 分层布局**(原定 React Flow + ELK) | 实际策略图只有 2~5 个节点;那两个依赖加起来 ~1.4MB,为这点规模不值。手写反而更可控:回边画绕行弧、边上直接标退出原因、当前节点脉冲动画。F9 的编辑器若需要拖拽再评估 |
 | 样式 | Tailwind | 密集信息面板,原子类迭代快 |
 | 测试 | vitest(组件/契约) | 组件是纯函数 → 夹具进、快照出 |
 
@@ -443,7 +444,7 @@ interface Proposal {
 | F1 | 外壳 + 时间线 + 帧源切换 | F0 | 无 | shell、JsonlFrameSource、RingBuffer、只读回看模式 |
 | F2 | 地图渲染 ✅**已完成** | F0 | 无(terrain 降级) | 分层 canvas、footprint、区域标签网格、插值、选中检查器、摆放调试叠加 |
 | F3 | 生产页 + 投影图 ✅**已完成** | F0 | 无 | 队列(队首阻塞/掉项审计)、投影曲线+Gantt 泳道、经济维持器面板、目录选择器(按前置置灰) |
-| F4 | Flow 状态图(只读) | F0 | 无 | React Flow + ELK、分支/转移/退出原因 |
+| F4 | Flow 状态图(只读) ✅**已完成** | F0 | 无(需 `static/strategy`) | **手写 SVG + 分层布局**(改了选型,见下)、分支 AST 渲染、转移历史、回边可见 |
 | F5 | 调试页 ✅**已完成** | F2 | — | 命令流水(按 origin/动作筛)、求值诊断、掉项审计、警报、原始帧检查器;摆放叠加已在地图页 |
 | F6 | 概览页组装 ✅**已完成** | F1-F4 | — | 六面板 + 可折叠(localStorage) + 点击跳完整页 + 内嵌地图与投影 |
 | F7 | 对话栏 + 提案审批 | F1,F3 | B7 | 消息流、提案卡、三种 diff、双投影对比 |

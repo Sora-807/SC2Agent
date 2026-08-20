@@ -34,43 +34,6 @@ export function MapPage() {
   );
 }
 
-export function FlowPage() {
-  const flow = useFrames((s) => s.flow);
-  const schema = useFrames((s) => s.schema);
-  return (
-    <Stub
-      stage="F4"
-      title="Flow 状态图"
-      will={[
-        "ELK 布局 + React Flow 渲染 steps/edges（有环图）",
-        "当前节点旋转进度；边悬停显示退出原因",
-        "转移历史链、transition_count/limit 进度、exit_record 终态卡",
-        "点击节点展开内部分支与本帧命中路径",
-      ]}
-    >
-      <Card title="该页数据已到位">
-        <ul className="list-inside list-disc text-neutral-300">
-          <li>策略实例 {flow?.strategies.length ?? 0} 个（V1 恒 1；帧为列表形状，多实例可长）</li>
-          <li>当前 step {flow?.strategies.at(0)?.active_step ?? "—"}，转移历史 {flow?.strategies.at(0)?.transitions.length ?? 0} 条</li>
-          <li>
-            谓词 {Object.keys(schema?.predicates ?? {}).length} 个
-            （其中 value 型 {Object.values(schema?.predicates ?? {}).filter((p) => p.kind === "value").length} 个可放参数位）·
-            运算符 {Object.keys(schema?.operators ?? {}).length} 个 ·
-            动作原子 {Object.keys(schema?.actions ?? {}).length} 个
-          </li>
-          <li>
-            不可用共 {schema
-              ? Object.values(schema.forbidden).reduce((n, ops) => n + Object.keys(ops).length, 0)
-              : 0} 项，分 {Object.keys(schema?.forbidden ?? {}).length} 组
-            （编辑器置灰并显示后端给的原因；分组名不枚举，后端新增自动流通）
-          </li>
-          <li>节点形态 {Object.keys(schema?.node_forms ?? {}).length} 种 · 编译规则 {schema?.rules.length ?? 0} 条（编辑器侧栏直接用）</li>
-        </ul>
-      </Card>
-    </Stub>
-  );
-}
-
 export function PlanningPage() {
   return (
     <Stub
