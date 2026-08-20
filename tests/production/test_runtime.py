@@ -91,8 +91,8 @@ def test_build_head_blocked_by_minerals_then_emits():
     assert op.unit_tags == [2]  # 派空闲 SCV
     assert op.params["type"] == "terran/supplydepot"  # stable ID 直达 driver（catalog 解析）
     assert op.params["position"] == [1.5, 1.5]  # pos_mark spot
-    assert len(rt.queue("open").items) == 1  # 在途确认中，未出队
-    # 实体出现 → 确认建造开始 → 出队
+    assert len(rt._build_flights.get("open", [])) == 1  # 在途确认中（flight 在列表里）
+    # 实体出现 → 确认建造开始 → flight 出列表
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"), _u(3, "SUPPLYDEPOT", x=1.5, y=1.5, progress=0.1)], minerals=100))
     assert rt.queue("open").items == []
 
@@ -106,12 +106,12 @@ def test_build_placement_failure_retries_next_slot():
     gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
     assert port.submitted[0].params["position"] == [2.5, 2.5]  # s1
-    # 之后 31 帧：SCV 无 build order、无实体 → 第 30 帧判失败、第 31 帧重发 s2
-    for _ in range(31):
+    # 之后 91 帧：SCV 无 build order、无实体 → 第 90 帧判失败、第 91 帧重发 s2
+    for _ in range(91):
         rt.on_game_state(gs)  # 命令已消失（FakeUnit 无 orders）
     assert len(port.submitted) == 2
     assert port.submitted[1].params["position"] == [5.5, 2.5]  # s2
-    assert len(rt.queue("open").items) == 1  # 仍在途
+    assert len(rt._build_flights.get("open", [])) == 1  # 仍在途（flight 在列表里）
 
 
 def test_build_confirm_matches_position_not_type_count():
@@ -124,14 +124,14 @@ def test_build_confirm_matches_position_not_type_count():
     gs0 = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs0)
     assert port.submitted[0].params["position"] == [2.5, 2.5]  # s1
-    for _ in range(31):
-        rt.on_game_state(gs0)  # 无实体无 build order → 第 30 帧判失败 → 重发 s2
+    for _ in range(91):
+        rt.on_game_state(gs0)  # 无实体无 build order → 第 90 帧判失败 → 重发 s2
     assert port.submitted[1].params["position"] == [5.5, 2.5]  # s2（预期报告位 (6.0,3.0)）
     # s1 位置出现 depot 实体（类型相同、位置不匹配）→ 不能确认
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
                           _u(9, "SUPPLYDEPOT", x=2.5, y=2.5, progress=0.1)], minerals=400))
-    assert len(rt.queue("q").items) == 1  # 仍在途
-    # s2 位置实体出现 → 位置匹配 → 确认出队
+    assert len(rt._build_flights.get("q", [])) == 1  # 仍在途（flight 在列表里）
+    # s2 位置实体出现 → 位置匹配 → 确认出列表
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
                           _u(10, "SUPPLYDEPOT", x=6.0, y=3.0, progress=0.1)], minerals=400))
     assert rt.queue("q").items == []
@@ -147,9 +147,9 @@ def test_build_dropped_when_candidates_exhausted():
     ])
     gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=400)
     rt.on_game_state(gs)
-    assert len(port.submitted) == 1  # 发出 spot
-    for _ in range(32):
-        rt.on_game_state(gs)  # 放置失败（第 30 帧判定，重试时候选耗尽）
+    assert len(port.submitted) == 2  # build + train（贪心并行：都发出了）
+    for _ in range(92):
+        rt.on_game_state(gs)  # 放置失败（第 90 帧判定，重试时候选耗尽）
     assert any("耗尽" in r for _, r in rt.dropped)
     assert len(port.submitted) == 2 and port.submitted[1].action == "train"  # 后续项继续
 
@@ -228,7 +228,7 @@ def test_train_skips_barracks_building_addon():
 
 
 def test_head_blocking_holds_back_later_items():
-    """队首阻塞 → 后面的项不越队（P0：队首按 constraint 门控）。"""
+    """贪心并行：build 阻塞不卡后续项（train 可以先出——不同生产槽并行）。"""
     port = _Port()
     rt = _runtime(port)
     rt.submit_queue("open", [
@@ -236,8 +236,10 @@ def test_head_blocking_holds_back_later_items():
         QueueItem(op="train", type="terran/scv"),
     ])
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=50))
-    assert port.submitted == []  # build 阻塞 → train 也被按住
-    assert len(rt.queue("open").items) == 2
+    # 新行为：贪心并行 → build 阻塞(50<100) 但 train 不被阻塞(50>=50) → train 先出
+    assert len(port.submitted) == 1
+    assert port.submitted[0].action == "train"
+    assert len(rt.queue("open").items) == 1  # build 仍在队列
 
 
 def test_assign_workers_immediate_and_expanded():
@@ -359,8 +361,8 @@ def test_addon_built_by_parent_not_scv():
     assert op.unit_tags == [3]  # 兵营自建，不是 SCV(2)
     assert op.params["type"] == "terran/reactor"
     assert op.params["position"] is None  # 挂件无目标能力：SC2 吸附母建筑右下 2×2（真机教训）
-    assert len(rt.queue("q").items) == 1  # 在途确认
-    # BARRACKSREACTOR 实体出现 → 确认 → 出队
+    assert len(rt._build_flights.get("q", [])) == 1  # 在途确认（flight 在列表里）
+    # BARRACKSREACTOR 实体出现 → 确认 → flight 出列表
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
                           _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "BARRACKSREACTOR", x=10.0, y=7.0, progress=0.1)],
                          minerals=150, vespene=150))
@@ -435,18 +437,18 @@ def test_addon_retry_wait_does_not_burn_retries():
              minerals=200, vespene=200)
     rt.on_game_state(gs)
     assert len(port.submitted) == 1  # 发出挂件
-    for _ in range(30):
-        rt.on_game_state(gs)  # 无订单无实体 → 第 30 帧判失败 → 转重试
-    assert rt._build_flight["q"]["builder"] is None
+    for _ in range(90):
+        rt.on_game_state(gs)  # 无订单无实体 → 第 90 帧判失败 → 转重试
+    assert rt._build_flights["q"][0]["builder"] is None
     poor = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), _u(3, "BARRACKS", x=8.0, y=8.0)],
                minerals=200, vespene=0)
     for _ in range(60):
         rt.on_game_state(poor)  # 缺气等待 60 帧：不重发、不计次数、不丢弃
-    assert rt._build_flight.get("q") is not None
-    assert rt._build_flight["q"].get("retries", 0) == 0
+    assert rt._build_flights.get("q") is not None
+    assert rt._build_flights["q"][0].get("retries", 0) == 0
     rt.on_game_state(gs)  # 气够了 → 实际重发一次（retries=1）
     assert len(port.submitted) == 2
-    assert rt._build_flight["q"]["retries"] == 1
+    assert rt._build_flights["q"][0]["retries"] == 1
 
 
 def test_gas_build_targets_free_geyser():

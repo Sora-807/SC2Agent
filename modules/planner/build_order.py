@@ -3,7 +3,7 @@
 对齐 P0：production_sequence = 模块实例列表（instance_id/module_ref/version/params）；
 每个 module_ref → op 序列（参数化）。expand() 把整个 production_sequence 展平成 op 序列供仿真消费。
 
-Op 词表（V1）：build / train / assign_workers（research/cancel/morph 后补）。
+Op 词表（V1）：build / train / assign_workers / research（cancel/morph 后补）。
 type 用稳定 ID（如 "terran/factory"），仿真只数建筑数不放置（position 归 live runtime）。
 """
 from __future__ import annotations
@@ -31,6 +31,11 @@ class Train(Op):
 class AssignWorkers(Op):
     task: str                       # "mineral" / "gas"
     count: int
+
+
+@dataclass
+class Research(Op):
+    type: str                       # 稳定 ID "terran/infantryweapons1"
 
 
 @dataclass

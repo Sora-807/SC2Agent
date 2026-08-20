@@ -17,6 +17,7 @@ strategy:
   group_slots: [inf, armor]
   params:
     target: {type: point, default: [127.5, 119.5]}   # 敌方主矿
+    garrison_pos: {type: point, default: [60.0, 40.0]}  # 主矿入口驻扎点（runtime 按 CC+敌方方向算）
     inf_hold_dist: {type: float, default: 12.0}       # R1：步兵脱队判定距离（> tank_cover，正常蛙跳不触发）
     tank_cover: {type: float, default: 10.4}          # R2/R3：架起射程 13 × 80%
     hold_secs: {type: float, default: 3.0}            # R1：步兵停顿时长
@@ -25,8 +26,16 @@ strategy:
     min_inf: {type: int, default: 20}
     min_tank: {type: int, default: 4}
   variables: {}
-  initial_step: formup
+  initial_step: garrison
   steps:
+    # 驻扎主矿入口：枪兵每帧前往 garrison_pos 防守，凑齐 20+4 → formup
+    - step_id: garrison
+      branches:
+        - when: {op: and, args: [{op: ">=", args: [{op: group_count, args: [inf, MARINE]}, {param: min_inf}]}, {op: ">=", args: [{op: group_count, args: [armor, SIEGETANK]}, {param: min_tank}]}]}
+          do: [{op: exit_step, kind: done, reason: READY}]
+        - do:
+            - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: {param: garrison_pos}}}
+
     - step_id: formup
       branches:
         - when: {op: and, args: [{op: ">=", args: [{op: group_count, args: [inf, MARINE]}, {param: min_inf}]}, {op: ">=", args: [{op: group_count, args: [armor, SIEGETANK]}, {param: min_tank}]}]}
@@ -81,6 +90,7 @@ strategy:
             - {op: group_action, group_slot: inf, type: MARINE, action_atom: attack_move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [armor]}, {param: target}, {param: tank_cover}]}}}
 
   edges:
+    - {from: garrison, to: formup, kind: done, reason: READY}
     - {from: formup, to: tank_hop, kind: done, reason: FORMED}
     - {from: tank_hop, to: siege_gate, kind: done, reason: IN_PLACE}
     - {from: siege_gate, to: inf_hop, kind: done, reason: SIEGED}

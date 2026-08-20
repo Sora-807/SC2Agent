@@ -44,6 +44,8 @@ class SimState:
     buildings: dict[str, int] = field(default_factory=dict)   # 稳定 ID -> count（已建成）
     units: dict[str, int] = field(default_factory=dict)       # 稳定 ID -> count（已训成）
     in_flight: list[InFlight] = field(default_factory=list)
+    addons: dict[str, int] = field(default_factory=dict)      # 母建筑稳定 ID -> 反应堆数（+1 训练槽/反应堆）
+    research_completed: set[str] = field(default_factory=set)  # 已完成升级稳定 ID
 
     def to_point(self) -> ProjectionPoint:
         """导出为 ProjectionPoint（曲线快照）。"""

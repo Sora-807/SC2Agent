@@ -98,7 +98,7 @@ def test_cost_dataclass():
 def test_role_enum():
     assert Role.WORKER == "worker"
     assert Role("combat") is Role.COMBAT
-    assert [r.value for r in Role] == ["worker", "combat", "building"]
+    assert [r.value for r in Role] == ["worker", "combat", "building", "upgrade"]
 
 
 def test_gamestate_owner_enum():

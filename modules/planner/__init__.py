@@ -9,7 +9,7 @@ P1：数据模型 + derive_from（从 GameState 派生 SimState）。
 from planner.curve import ProjectionCurve, ProjectionEvent, ProjectionPoint
 from planner.sim_state import InFlight, SimState, derive_from
 from planner.build_order import (
-    Op, Build, Train, AssignWorkers,
+    Op, Build, Train, AssignWorkers, Research,
     ProductionModuleInstance, expand, register_module,
 )
 from planner.economy import DEFAULT_ECON, EconomyParams
@@ -19,7 +19,7 @@ from planner import module_defs  # noqa: F401  导入即注册内置 production 
 __all__ = [
     "ProjectionCurve", "ProjectionEvent", "ProjectionPoint",
     "SimState", "InFlight", "derive_from",
-    "Op", "Build", "Train", "AssignWorkers",
+    "Op", "Build", "Train", "AssignWorkers", "Research",
     "ProductionModuleInstance", "expand", "register_module",
     "EconomyParams", "DEFAULT_ECON", "Planner",
 ]

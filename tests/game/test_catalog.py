@@ -39,7 +39,7 @@ def test_where_role():
     assert workers[0].stable_id == "terran/scv"
     assert workers[0].role is Role.WORKER
     buildings = cat.where(role=Role.BUILDING)
-    assert len(buildings) == 8  # CC + SupplyDepot + Barracks + Reactor + TechLab + Refinery + Factory + FactoryTechLab
+    assert len(buildings) == 11  # CC + Depot + Barracks + Reactor + TechLab + Refinery + Factory + FactoryTechLab + EngineeringBay + Armory + FactoryReactor
     stable_ids = {e.stable_id for e in buildings}
     assert "terran/commandcenter" in stable_ids
     assert "terran/supplydepot" in stable_ids

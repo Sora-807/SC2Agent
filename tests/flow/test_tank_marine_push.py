@@ -53,7 +53,10 @@ def test_tank_marine_loop_two_rounds_then_arrived():
     port = FakeGamePort(script=[])
     eng = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port)
 
-    # formup：20 步兵 + 4 坦克就绪 → FORMED → tank_hop
+    # garrison：20+4 就绪 → READY → formup（garrison 不发 op——when 条件满足直接退出）
+    eng.on_game_state(_gs(0, Point2(0, 0), Point2(0, 0)))
+    assert eng._active_step == "formup"
+    # formup：就绪 → FORMED → tank_hop
     eng.on_game_state(_gs(0, Point2(0, 0), Point2(0, 0)))
     assert eng._active_step == "tank_hop"
 

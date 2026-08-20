@@ -38,37 +38,24 @@ class WorkerAllocator:
         return [u for u in gs.units if u.owner is Owner.SELF and u.type_name in names]
 
     def _nodes(self, gs: GameState, gas: bool, base_pos) -> list:
-        """资源节点：gas=True 取气井，否则取矿脉（来自 world 拆出的 gs.resources）。
+        """资源节点：gas=True 取精炼厂（SELF REFINERY），否则取矿脉（gs.resources MINERALFIELD）。
 
-        只取主基锚点 NODE_RADIUS 内的节点（真机教训：全图取节点会把农民派去送死）；
-        气井只取已建精炼厂的（裸气井不能采）；判定 = 气井 2.5 距离内有己方建筑。
-        base_pos=None 时不过滤（测试/无区域层场景）。
+        gas gather 目标 = 精炼厂 building tag（不是气井）：精炼厂建筑 3 SCV 能采；
+        gather(气井) 只 1 SCV 挤得进（气井点被精炼厂占）——真机踩坑（1/精炼厂、气≈0）。
+        order 目标 = 精炼厂 tag（gather(refinery)→order.target=refinery）→ _saturation/检测一致。
+        只取主基锚点 NODE_RADIUS 内的；base_pos=None 不过滤。
         """
-        def _is_node(u) -> bool:
-            return ("GEYSER" in u.type_name) if gas else u.type_name.startswith("MINERALFIELD")
-
-        nodes = [u for u in gs.resources if _is_node(u)]
+        if gas:
+            ref = [u for u in gs.units
+                   if u.owner is Owner.SELF and u.type_name == "REFINERY"
+                   and u.build_progress >= 1.0]
+        else:
+            ref = [u for u in gs.resources if u.type_name.startswith("MINERALFIELD")]
         if base_pos is not None:
-            nodes = [u for u in nodes
-                     if (u.position.x - base_pos.x) ** 2 + (u.position.y - base_pos.y) ** 2
-                     <= NODE_RADIUS ** 2]
-        if not gas:
-            return nodes
-        buildings = []
-        for u in gs.units:
-            if u.owner is not Owner.SELF:
-                continue
-            e = self._catalog.by_burnysc2_name(u.type_name)
-            if e is not None and e.size is not None:
-                buildings.append(u)
-
-        def _has_refinery(geyser) -> bool:
-            return any(
-                (b.position.x - geyser.position.x) ** 2 + (b.position.y - geyser.position.y) ** 2 < 6.25
-                for b in buildings
-            )
-
-        return [u for u in nodes if _has_refinery(u)]
+            ref = [u for u in ref
+                   if (u.position.x - base_pos.x) ** 2 + (u.position.y - base_pos.y) ** 2
+                   <= NODE_RADIUS ** 2]
+        return ref
 
     def _saturation(self, workers: list, nodes: list) -> dict[int, int]:
         """节点 tag -> 正在采集它的 SCV 数（从 orders 的 target_tag 派生，无内部状态）。"""

@@ -85,12 +85,12 @@ def test_enemy_workers_not_used():
     assert e == []  # catalog role=worker 但只派己方
 
 def test_gas_requires_refinery_on_geyser():
-    """裸气井不能采：只有已建精炼厂的气井才派工。"""
-    geysers = [_res(20, "VESPENEGEYSER"), _res(21, "VESPENEGEYSER")]
-    refinery = _u(99, "REFINERY")
-    refinery.position = Point2(0, 0)  # 与气井同点 → 视为已建精炼厂
+    """gas 节点 = 精炼厂 building：无精炼厂不派；2 精炼厂各饱和 3。"""
     scvs = [_u(i) for i in range(1, 7)]
-    e = ALLOC.assign(_gs(scvs, [geysers[0]]), WorkerTask.GAS, 6)
-    assert e == []  # 无精炼厂的气井 → 不派
-    e2 = ALLOC.assign(_gs(scvs + [refinery], geysers), WorkerTask.GAS, 6)
-    assert len(e2) == 6  # 两个有精炼厂的气井 → 各饱和 3
+    e = ALLOC.assign(_gs(scvs, []), WorkerTask.GAS, 6)
+    assert e == []  # 无精炼厂 → 不派
+    r1 = _u(98, "REFINERY"); r1.position = Point2(0, 0)
+    r2 = _u(99, "REFINERY"); r2.position = Point2(5, 0)
+    e2 = ALLOC.assign(_gs(scvs + [r1, r2], []), WorkerTask.GAS, 6)
+    assert len(e2) == 6  # 两个精炼厂 → 各饱和 3
+    assert {x.params["target_unit"] for x in e2} == {98, 99}  # 目标=精炼厂 tag

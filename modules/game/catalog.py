@@ -35,6 +35,7 @@ KNOWN_CAPABILITIES: frozenset[str] = frozenset({
     "supply",     # 提供补给（如 补给站）
     "addon",      # 挂件（反应堆/科技实验室；由母建筑自建，贴右下 2×2）
     "gas",        # 气矿建筑（精炼厂；建在气井上）
+    "research",   # 研究升级（工程站/军械库；planner Research op 的产建筑）
 })
 
 
@@ -47,6 +48,7 @@ class Role(str, Enum):
     WORKER = "worker"      # 工兵：采矿/建造/修理（如 SCV）
     COMBAT = "combat"      # 战斗单位：攻击/施法/运输（如 机枪兵、医疗运输机）
     BUILDING = "building"  # 建筑：生产/供给（如 指挥中心、补给站）
+    UPGRADE = "upgrade"    # 升级（如 步兵武器1/装甲1；planner Research op 产出，不占 GameState 实体）
 
 
 @dataclass(frozen=True, slots=True)

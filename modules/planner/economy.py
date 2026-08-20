@@ -21,7 +21,7 @@ class EconomyParams:
         if self.supply_provided is None:
             # Terran 默认（P5 校准）
             object.__setattr__(self, "supply_provided", {
-                "terran/commandcenter": 15,
+                "terran/commandcenter": 13,
                 "terran/supplydepot": 8,
             })
 

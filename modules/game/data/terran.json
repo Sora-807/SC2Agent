@@ -236,5 +236,96 @@
     "variants": [
       "SIEGETANKSIEGED"
     ]
+  },
+  "terran/engineeringbay": {
+    "burnysc2_name": "ENGINEERINGBAY",
+    "display_name_zh": "工程站",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 125,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 35,
+    "size": 3,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/commandcenter"
+    ]
+  },
+  "terran/armory": {
+    "burnysc2_name": "ARMORY",
+    "display_name_zh": "军械库",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 43,
+    "size": 3,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/factory"
+    ]
+  },
+  "terran/factoryreactor": {
+    "burnysc2_name": "FACTORYREACTOR",
+    "display_name_zh": "工厂反应堆",
+    "role": "building",
+    "capabilities": [
+      "addon"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factory"
+    ],
+    "size": 2,
+    "build_ability": "BUILD_REACTOR",
+    "build_order_name": "Reactor"
+  },
+  "terran/infantryweapons1": {
+    "burnysc2_name": "INFANTRYWEAPONSLEVEL1",
+    "display_name_zh": "步兵武器 1 级",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 79,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay"
+    ]
+  },
+  "terran/infantryarmor1": {
+    "burnysc2_name": "INFANTRYARMORLEVEL1",
+    "display_name_zh": "步兵装甲 1 级",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 79,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay"
+    ]
   }
 }

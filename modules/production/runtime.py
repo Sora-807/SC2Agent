@@ -51,7 +51,7 @@ class ProductionRuntime:
         self._workers = WorkerAllocator(catalog)
         self._op_seq = 0
         self.dropped: list[tuple[QueueItem, str]] = []  # 被丢弃项 + 原因（R7 审计）
-        self._build_flight: dict[str, dict] = {}  # queue_name -> 在途建造确认状态
+        self._build_flights: dict[str, list[dict]] = {}  # queue_name -> [在途建造确认状态]（多并行）
         # 本帧已被下过令的单位 tag（跨队列去重：burnysc2 同帧同单位命令被去重丢单——真机踩坑）
         self._frame_busy: set[int] = set()
 
@@ -91,52 +91,80 @@ class ProductionRuntime:
             self._drain(q, gs)
 
     def _drain(self, q: Queue, gs: GameState) -> None:
-        while q.items:
-            head = q.items[0]
-            # 在途建造确认（build 发出后不立即出队：等实体出现 / 放置失败换位重试）
-            if q.name in self._build_flight:
-                flight = self._build_flight[q.name]
-                if flight["builder"] is not None:
-                    outcome = self._confirm_build(q.name, head, gs)
-                    if outcome == "started":
-                        head.count -= 1
-                        if head.count <= 0:
-                            q.items.pop(0)
-                    break  # 本帧完成一个建造确认（failed/waiting 也 break，下帧继续）
+        # Phase 1: 确认所有在途建造（多并行：遍历 flights 列表）
+        flights = self._build_flights.get(q.name)
+        if flights:
+            still_pending = []
+            for flight in flights:
+                if flight.get("builder") is not None:
+                    outcome = self._confirm_build(flight, gs)
+                    if outcome == "waiting":
+                        still_pending.append(flight)
+                    elif outcome == "failed":
+                        # _confirm_build 已设 builder=None；下帧再重试
+                        # （不在本帧重试——避免同帧 failed→retry→failed 循环）
+                        still_pending.append(flight)
+                    # started: 不保留（确认完成）
                 else:
-                    # 重试子状态：换候选位重发；资源不足则继续等
-                    if not self._retry_build(head, q.name, gs):
-                        q.items.pop(0)  # 候选位耗尽 → 丢弃
-                        continue  # 丢弃项不占预算，继续 drain 后续项
-                    break
+                    # builder=None → 重试（上帧 failed 后本帧重试）
+                    if self._retry_build(flight, q.name, gs):
+                        still_pending.append(flight)
+                    # else: _retry_build 已 drop，不保留
+            self._build_flights[q.name] = still_pending
+
+        # Phase 2: 贪心处理队列项（emit 后不 break → 并行建造）
+        pending_min = 0  # 本帧已扣矿（防同帧多并行超支：SC2 对矿不足命令静默拒绝）
+        pending_gas = 0
+        i = 0
+        while i < len(q.items):
+            head = q.items[i]
             if head.op in UNSUPPORTED_QUEUE_OPS:
                 self.dropped.append((head, UNSUPPORTED_QUEUE_OPS[head.op]))
-                q.items.pop(0)
+                q.items.pop(i)
                 continue
             if head.op is QueueOp.ASSIGN_WORKERS:
                 self._do_assign_workers(head, gs)
-                q.items.pop(0)  # 无门控，立即消费
+                q.items.pop(i)
                 continue
-            # 结果三态：emitted=已发（占本帧预算）；consumed=已丢弃（不占预算，继续）；blocked=等待
             if head.op is QueueOp.BUILD:
+                # 本地资源预检（gs 是帧快照，不反映同帧已扣的矿）
+                entry = self._catalog.by_stable_id(head.type) if head.type else None
+                if entry is not None:
+                    if gs.minerals - pending_min < entry.cost.minerals:
+                        i += 1
+                        continue
+                    if gs.vespene - pending_gas < entry.cost.vespene:
+                        i += 1
+                        continue
                 outcome = self._try_build(head, q.name, gs)
                 if outcome == "blocked":
-                    break  # 队首阻塞（等资源/前置/工兵/放置位）
+                    i += 1  # 资源/前置/工兵/放置位不足 → 跳过试下一项
+                    continue
                 if outcome == "consumed":
-                    q.items.pop(0)
-                    continue  # 丢弃项不占预算，继续 drain 后续项
-                break  # emitted：转入在途确认，本帧结束此队列
+                    q.items.pop(i)
+                    continue
+                # emitted: 扣本地资源，count--，出队或留队
+                if entry is not None:
+                    pending_min += entry.cost.minerals
+                    pending_gas += entry.cost.vespene
+                head.count -= 1
+                if head.count <= 0:
+                    q.items.pop(i)
+                else:
+                    i += 1
+                continue  # 不 break → 继续下一项（并行！）
             if head.op is QueueOp.TRAIN:
                 outcome = self._try_train(head, gs)
                 if outcome == "blocked":
-                    break  # 队首阻塞
+                    i += 1
+                    continue
                 head.count -= 1
                 if head.count <= 0:
-                    q.items.pop(0)
-                if outcome == "emitted":
-                    break  # 每帧一训（count>1 → 训练队列排队）
+                    q.items.pop(i)
+                else:
+                    i += 1
                 continue
-            break  # 未知 op（词表外）→ 阻塞保护
+            i += 1  # 未知 op → 跳过
 
     # ---- 单项执行 ----
 
@@ -204,7 +232,8 @@ class ProductionRuntime:
             [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
             gs.seq,
         )
-        self._build_flight[q_name] = {
+        self._build_flights.setdefault(q_name, []).append({
+            "item": head,
             "type": head.type,
             "builder": builder.tag,
             "frames": 0,
@@ -212,7 +241,7 @@ class ProductionRuntime:
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）
             "radius": 1.5,
-        }
+        })
         return "emitted"
 
     # ---- 在途建造确认（真机教训：SC2 放置失败时命令静默消失）----
@@ -230,20 +259,19 @@ class ProductionRuntime:
         return frozenset(u.tag for u in gs.units
                          if u.owner is Owner.SELF and u.type_name == name)
 
-    def _confirm_build(self, q_name: str, head: QueueItem, gs: GameState) -> str:
+    def _confirm_build(self, flight: dict, gs: GameState) -> str:
         """在途建造：started（实体出现）/ failed（放置失败或超时 → 转重试）/ waiting。
 
         真机教训（ops check）：SC2 对非法放置位静默丢弃命令——实体不出现、
         builder 的 build order 消失。以此作为失败信号换候选位重试。
+        caller 管理 flights 列表，本方法只返回状态（不 pop）。
         """
-        flight = self._build_flight[q_name]
         flight["frames"] += 1
         new_entities = self._type_entity_tags(gs, flight["type"]) - flight["seen_tags"]
         if new_entities:
             expect = flight.get("expect_pos")
             if expect is None:
-                # 挂件：无放置位，按类型计数确认（队列串行，同类型在途只有一项）
-                self._build_flight.pop(q_name)
+                # 挂件：无放置位，按类型计数确认
                 return "started"
             radius2 = flight.get("radius", 1.5) ** 2
             matched = any(
@@ -252,10 +280,8 @@ class ProductionRuntime:
                 for u in gs.units
             )
             if matched:
-                self._build_flight.pop(q_name)
                 return "started"
             # 类型计数误报（同类型其他在途实体晚到）→ 不算，继续等本放置位实体
-            # （真机教训 full_flow.log：误确认 → 丢补给站 → 供给卡死 49 枪兵）
         name = self._catalog.burnysc2_name_for(flight["type"])
         builder = next((u for u in gs.units if u.tag == flight["builder"]), None)
         if builder is None:
@@ -276,7 +302,9 @@ class ProductionRuntime:
         # 超时按 build_time 换算（~5.6 帧/游戏秒 ×2 余量；挂件反应堆 36s ≈ 202 帧，
         # 旧固定 120 帧在完工前误判失败——真机踩坑）
         timeout = max(120, int(build_time * 5.6 * 2))
-        if flight["frames"] >= 30 and not has_build_order:
+        # SCV 走到建造位需要时间（远位 11+ 格 ≈ 3-5s）；30 帧(5s)太短 → 误判失败 → 换位重试 → 循环
+        # 改为 90 帧(16s)：足够走到任何建造位；真正失败的命令（位置非法被 SC2 静默拒绝）也不会持续 16s
+        if flight["frames"] >= 90 and not has_build_order:
             flight["builder"] = None  # 命令已消失且无实体 → 放置失败 → 转重试
             return "failed"
         if flight["frames"] >= timeout:
@@ -284,22 +312,21 @@ class ProductionRuntime:
             return "failed"
         return "waiting"
 
-    def _retry_build(self, head: QueueItem, q_name: str, gs: GameState) -> bool:
+    def _retry_build(self, flight: dict, q_name: str, gs: GameState) -> bool:
         """重试子状态：换下一个候选位重发。
 
         返回 True = 项保留（已重发或资源暂时不够继续等）；False = 候选耗尽已丢弃。
         挂件走独立分支（无放置位：重选母建筑重发；候选 = 空闲母建筑数，重试上限防永久阻塞）。
         """
-        flight = self._build_flight[q_name]
+        head = flight["item"]
         entry = self._catalog.by_stable_id(head.type)
         if entry is not None and "addon" in entry.capabilities:
-            return self._retry_build_addon(head, q_name, gs)
+            return self._retry_build_addon(flight, q_name, gs)
         pos, slot_name, reason = self._resolve_placement(
             head, gs, attempted=frozenset(flight["attempted"])
         )
         if pos is None or slot_name is None:
             self._drop(head, reason or f"放置失败：候选位耗尽（已试 {sorted(flight['attempted'])}）")
-            self._build_flight.pop(q_name)
             return False
         res = check_build(gs, self._catalog, head.type, pos)
         builder = self._pick_builder(gs)
@@ -317,17 +344,16 @@ class ProductionRuntime:
         flight["radius"] = 1.5
         return True
 
-    def _retry_build_addon(self, head: QueueItem, q_name: str, gs: GameState) -> bool:
+    def _retry_build_addon(self, flight: dict, q_name: str, gs: GameState) -> bool:
         """挂件重试：重选空闲母建筑重发（无放置位概念）。
 
         只在实际重发时计一次重试（资源/母建筑不足的等待帧不计——真机踩坑：等待帧
         也会烧重试次数导致 3 帧内误丢弃）；超过 6 次实际重发丢弃防永久阻塞。
         返回 True = 项保留（已重发或暂缺继续等）；False = 已丢弃。
         """
-        flight = self._build_flight[q_name]
+        head = flight["item"]
         if flight.get("retries", 0) >= 6:
             self._drop(head, "挂件重发超过 6 次（母建筑候选耗尽）")
-            self._build_flight.pop(q_name)
             return False
         res = check_addon(gs, self._catalog, head.type)
         parent = self._pick_parent_for_addon(gs, head.type) if res.ok else None
@@ -432,7 +458,7 @@ class ProductionRuntime:
             occupied = occupied_cells(gs, self._catalog)
             # 在途建造预留：命令已发但实体未出现的放置位不能被别的项重选
             # （真机教训 full_flow.log：未预留 → 重选已下单位 → SC2 静默拒绝 → 丢补给站）
-            for f in self._build_flight.values():
+            for f in (f for flights in self._build_flights.values() for f in flights):
                 ep = f.get("expect_pos")
                 if ep is None or f.get("builder") is None:
                     continue
@@ -518,7 +544,8 @@ class ProductionRuntime:
             [Emission("build", [parent.tag], {"type": head.type, "position": None})],
             gs.seq,
         )
-        self._build_flight[q_name] = {
+        self._build_flights.setdefault(q_name, []).append({
+            "item": head,
             "type": head.type,
             "builder": parent.tag,
             "frames": 0,
@@ -526,7 +553,7 @@ class ProductionRuntime:
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_addon_reported(parent),  # 并行挂件也按位置确认（防互认）
             "radius": 1.5,
-        }
+        })
         return "emitted"
 
     def _pick_free_geyser(self, gs: GameState):
@@ -542,7 +569,8 @@ class ProductionRuntime:
         from production.worker import NODE_RADIUS
 
         # 在途精炼厂预留的气井（命令已发、实体未出现）不能重选（SC2 会静默拒绝第二个）
-        reserved = [f["expect_pos"] for f in self._build_flight.values()
+        reserved = [f["expect_pos"] for flights in self._build_flights.values()
+                    for f in flights
                     if f.get("expect_pos") is not None and f.get("builder") is not None]
 
         def _taken(geyser) -> bool:
@@ -575,7 +603,8 @@ class ProductionRuntime:
                       {"type": head.type, "target_unit": geyser.tag})],
             gs.seq,
         )
-        self._build_flight[q_name] = {
+        self._build_flights.setdefault(q_name, []).append({
+            "item": head,
             "type": head.type,
             "builder": builder.tag,
             "frames": 0,
@@ -583,7 +612,7 @@ class ProductionRuntime:
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": geyser.position,  # 精炼厂实体应出现在气井位置
             "radius": 3.0,
-        }
+        })
         return "emitted"
 
     # ---- 输出 ----

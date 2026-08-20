@@ -13,9 +13,9 @@ Planner.project(gs, seq, until) → ProjectionCurve：
 from __future__ import annotations
 
 from game import GameState
-from game.catalog import Catalog
+from game.catalog import Catalog, Role
 
-from planner.build_order import AssignWorkers, Build, Op, Train, expand
+from planner.build_order import AssignWorkers, Build, Op, Research, Train, expand
 from planner.curve import ProjectionCurve, ProjectionEvent
 from planner.economy import DEFAULT_ECON, EconomyParams
 from planner.sim_state import InFlight, SimState, derive_from
@@ -35,9 +35,11 @@ class Planner:
         curve = ProjectionCurve()
         stalled_recorded: set[int] = set()   # 已记卡点事件的 op id（每 op 只记首次卡）
         while st.t < until:
-            # 1. 收入
+            # 1. 收入（气收入按精炼厂数量封顶：3 工/精炼厂；无精炼厂→气工空转 0 收入）
             st.minerals += st.mineral_workers * self._econ.mineral_per_scv_per_sec
-            st.gas += st.gas_workers * self._econ.gas_per_scv_per_sec
+            refineries = st.buildings.get("terran/refinery", 0)
+            effective_gas = min(st.gas_workers, refineries * 3)
+            st.gas += effective_gas * self._econ.gas_per_scv_per_sec
             # 2. 推进在途
             for f in st.in_flight:
                 f.progress += 1
@@ -46,6 +48,8 @@ class Planner:
             if done:
                 self._apply_completed(st, done, curve)
                 st.in_flight = [f for f in st.in_flight if f.progress < f.build_time]
+            # 3b. 供给守卫：队首 Train 即将卡人口 → 自动插入补给站（尽可能晚）
+            self._supply_guard(queue, st, curve)
             # 4. 消费队列（可行性门控）
             while queue:
                 ok, reason = self._feasible(queue[0], st)
@@ -63,6 +67,38 @@ class Planner:
             curve.points.append(st.to_point())
             st.t += 1
         return curve
+
+    # ---- 供给守卫：队首即将卡人口 / 缺 depot 前置 → 自动插补给站（尽可能晚插入）----
+    def _supply_guard(self, queue: list, st: SimState, curve: ProjectionCurve) -> None:
+        """两种触发条件（都只在无在途 depot 时插，避免重复）：
+
+        1) Train 即将卡人口：supply_used + supply_cost > supply_cap → 插 depot（尽可能晚）
+        2) Build 前置含 supplydepot 但未建：插 depot（barracks/factory 等需 depot 前置）
+        depot 自身不消耗 supply（cost.supply=0），不会自激递归。
+        """
+        if not queue:
+            return
+        op = queue[0]
+        need_inject = False
+        if isinstance(op, Train):
+            e = self._catalog.by_stable_id(op.type)
+            if e is not None and e.cost.supply > 0:
+                if st.supply_used + e.cost.supply > st.supply_cap and st.supply_cap < 200:
+                    need_inject = True
+        elif isinstance(op, Build):
+            e = self._catalog.by_stable_id(op.type)
+            if e is not None and "terran/supplydepot" in e.prerequisites:
+                if st.buildings.get("terran/supplydepot", 0) < 1:
+                    need_inject = True
+        if not need_inject:
+            return
+        if any(f.type == "terran/supplydepot" for f in st.in_flight):
+            return  # 已有在途 depot → 等
+        depot_entry = self._catalog.by_stable_id("terran/supplydepot")
+        if depot_entry is None or st.minerals < depot_entry.cost.minerals:
+            return  # 攒矿后下帧再插
+        queue.insert(0, Build("terran/supplydepot"))
+        curve.events.append(ProjectionEvent("started", "terran/supplydepot", st.t, "auto-supply"))
 
     # ---- 可行性门控（资源/前置/产槽/builder）----
     def _feasible(self, op: Op, st: SimState) -> tuple[bool, str | None]:
@@ -95,15 +131,32 @@ class Planner:
                     return (False, "前置没")
             if e.produced_by:
                 producers = st.buildings.get(e.produced_by, 0)
+                reactor_bonus = st.addons.get(e.produced_by, 0)
                 busy = sum(1 for f in st.in_flight
                            if f.kind == "train" and f.producer == e.produced_by)
-                if producers - busy <= 0:
+                if producers + reactor_bonus - busy <= 0:
                     return (False, "无产槽")
             return (True, None)
+        if isinstance(op, Research):
+            e = self._catalog.by_stable_id(op.type)
+            if e is None:
+                return (False, f"未知型 {op.type}")
+            if st.minerals < e.cost.minerals:
+                return (False, "缺矿")
+            if st.gas < e.cost.vespene:
+                return (False, "缺气")
+            for p in e.prerequisites:
+                if st.buildings.get(p, 0) < 1:
+                    return (False, "前置没")
+            if e.produced_by:
+                producers = st.buildings.get(e.produced_by, 0)
+                busy = sum(1 for f in st.in_flight
+                           if f.kind == "research" and f.producer == e.produced_by)
+                if producers - busy <= 0:
+                    return (False, "无研究槽")
+            return (True, None)
         if isinstance(op, AssignWorkers):
-            other = st.mineral_workers if op.task == "gas" else st.gas_workers
-            if st.idle_workers + other < op.count:
-                return (False, "无idle")
+            # best-effort：有多少派多少，不卡（真机 steward 也是自适应不卡）
             return (True, None)
         return (False, "未知 op")
 
@@ -113,10 +166,12 @@ class Planner:
             e = self._catalog.by_stable_id(op.type)
             st.minerals -= e.cost.minerals
             st.gas -= e.cost.vespene
-            if st.idle_workers >= 1:
-                st.idle_workers -= 1
-            else:
-                st.mineral_workers -= 1
+            if e is not None and "addon" not in e.capabilities:
+                # 常规建筑：拉 SCV 建造（挂件由母建筑自建，不拉 SCV）
+                if st.idle_workers >= 1:
+                    st.idle_workers -= 1
+                else:
+                    st.mineral_workers -= 1
             st.in_flight.append(InFlight(op.type, "build", e.build_time, 0.0, None))
         elif isinstance(op, Train):
             e = self._catalog.by_stable_id(op.type)
@@ -124,31 +179,54 @@ class Planner:
             st.gas -= e.cost.vespene
             st.supply_used += e.cost.supply
             st.in_flight.append(InFlight(op.type, "train", e.build_time, 0.0, e.produced_by))
+        elif isinstance(op, Research):
+            e = self._catalog.by_stable_id(op.type)
+            st.minerals -= e.cost.minerals
+            st.gas -= e.cost.vespene
+            st.in_flight.append(InFlight(op.type, "research", e.build_time, 0.0, e.produced_by))
         elif isinstance(op, AssignWorkers):
-            need = op.count
-            from_idle = min(st.idle_workers, need)
+            # best-effort：派 min(count, 可用) 个；可用 = idle + 另一采集池
+            other = st.mineral_workers if op.task == "gas" else st.gas_workers
+            available = st.idle_workers + other
+            move = min(op.count, available)
+            from_idle = min(st.idle_workers, move)
             st.idle_workers -= from_idle
-            need -= from_idle
+            rest = move - from_idle  # 从另一池拉
             if op.task == "gas":
-                st.mineral_workers -= need
-                st.gas_workers += op.count
+                st.mineral_workers -= rest
+                st.gas_workers += move
             else:
-                st.gas_workers -= need
-                st.mineral_workers += op.count
+                st.gas_workers -= rest
+                st.mineral_workers += move
 
     def _apply_completed(self, st: SimState, done: list[InFlight], curve: ProjectionCurve) -> None:
         for f in done:
             if f.kind == "build":
-                st.buildings[f.type] = st.buildings.get(f.type, 0) + 1
-                st.supply_cap += self._econ.supply_provided.get(f.type, 0)
-                st.mineral_workers += 1   # builder 回矿
+                e = self._catalog.by_stable_id(f.type)
+                is_addon = e is not None and "addon" in e.capabilities
+                if is_addon and e is not None and e.produced_by:
+                    # 挂件落成：反应堆给母建筑 +1 训练槽（techlab 不加槽但已计 buildings）
+                    st.buildings[f.type] = st.buildings.get(f.type, 0) + 1
+                    if "BUILD_REACTOR" in (e.build_ability or ""):
+                        st.addons[e.produced_by] = st.addons.get(e.produced_by, 0) + 1
+                else:
+                    st.buildings[f.type] = st.buildings.get(f.type, 0) + 1
+                    st.supply_cap += self._econ.supply_provided.get(f.type, 0)
+                    st.mineral_workers += 1   # builder 回矿
+            elif f.kind == "research":
+                st.research_completed.add(f.type)
             else:  # train
                 st.units[f.type] = st.units.get(f.type, 0) + 1
+                # 新训练的 worker 自动去采矿（匹配真机 steward 行为）
+                e = self._catalog.by_stable_id(f.type)
+                if e is not None and e.role == Role.WORKER:
+                    st.mineral_workers += 1
+                    st.total_workers += 1
             curve.events.append(ProjectionEvent("completed", f.type, st.t, None))
 
     @staticmethod
     def _op_label(op: Op) -> str | None:
-        if isinstance(op, (Build, Train)):
+        if isinstance(op, (Build, Train, Research)):
             return op.type
         if isinstance(op, AssignWorkers):
             return f"assign_{op.task}"

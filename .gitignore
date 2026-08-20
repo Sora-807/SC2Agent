@@ -19,3 +19,4 @@ docs/state_trace.jsonl
 # OS
 Thumbs.db
 .DS_Store
+.zcode/

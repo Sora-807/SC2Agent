@@ -31,14 +31,16 @@ spawns:
       depot14: {pos: [42.5, 38.5], size: 2, kind: supply}
       depot15: {pos: [44.5, 38.5], size: 2, kind: supply}
       depot16: {pos: [46.5, 38.5], size: 2, kind: supply}
-      rax1: {pos: [42.5, 42.5], size: 3, kind: production}
-      rax2: {pos: [45.5, 44.5], size: 3, kind: production}
-      rax3: {pos: [48.5, 41.5], size: 3, kind: production}
-      rax4: {pos: [51.5, 43.5], size: 3, kind: production}
-      rax1_addon: {pos: [44.5, 41.5], size: 2, kind: addon}
-      rax2_addon: {pos: [47.5, 43.5], size: 2, kind: addon}
-      rax3_addon: {pos: [50.5, 40.5], size: 2, kind: addon}
-      rax4_addon: {pos: [53.5, 42.5], size: 2, kind: addon}
+      # rax1-2 真机 can_place+挂件2×2+空地评分扫描（CC 东侧/补给网格上方，STAIR_OPEN=96 最高分）
+      # 旧位 [42.5,42.5]+[45.5,44.5] 在 NW 形成对角楼梯墙 → 集合点卡缝（与 TR 同一 bug）
+      rax1: {pos: [55.5, 33.5], size: 3, kind: production}
+      rax2: {pos: [58.5, 35.5], size: 3, kind: production}
+      rax3: {pos: [53.5, 39.5], size: 3, kind: production}
+      rax4: {pos: [56.5, 41.5], size: 3, kind: production}
+      rax1_addon: {pos: [57.5, 32.5], size: 2, kind: addon}
+      rax2_addon: {pos: [60.5, 34.5], size: 2, kind: addon}
+      rax3_addon: {pos: [55.5, 38.5], size: 2, kind: addon}
+      rax4_addon: {pos: [58.5, 40.5], size: 2, kind: addon}
       # factory1 真机 can_place+挂件2×2 双锁定（CC 西侧/补给网格南侧，避开 NE ramp 路径不堵门）
       factory1: {pos: [40.5, 29.5], size: 3, kind: production}
       factory1_addon: {pos: [42.5, 28.5], size: 2, kind: addon}
@@ -62,14 +64,17 @@ spawns:
       depot14: {pos: [133.5, 113.5], size: 2, kind: supply}
       depot15: {pos: [135.5, 113.5], size: 2, kind: supply}
       depot16: {pos: [137.5, 113.5], size: 2, kind: supply}
-      rax1: {pos: [117.5, 110.5], size: 3, kind: production}
-      rax2: {pos: [120.5, 112.5], size: 3, kind: production}
-      rax3: {pos: [123.5, 109.5], size: 3, kind: production}
-      rax4: {pos: [126.5, 111.5], size: 3, kind: production}
-      rax1_addon: {pos: [119.5, 109.5], size: 2, kind: addon}
-      rax2_addon: {pos: [122.5, 111.5], size: 2, kind: addon}
-      rax3_addon: {pos: [125.5, 108.5], size: 2, kind: addon}
-      rax4_addon: {pos: [128.5, 110.5], size: 2, kind: addon}
+      # rax1-2 真机 can_place+挂件2×2+空地评分扫描（CC 东侧/工厂北侧，STAIR_OPEN=80 高分，不与 factory 重叠）
+      # 旧位 [117.5,110.5]+[120.5,112.5] 在 SW 象限形成对角楼梯墙 → 集合点卡缝 250+tick
+      rax1: {pos: [138.5, 120.5], size: 3, kind: production}
+      rax2: {pos: [141.5, 122.5], size: 3, kind: production}
+      # rax3-4 NW 象限（CC 西北侧，开阔区域，用于工程站/军械库）
+      rax3: {pos: [113.5, 121.5], size: 3, kind: production}
+      rax4: {pos: [116.5, 123.5], size: 3, kind: production}
+      rax1_addon: {pos: [140.5, 119.5], size: 2, kind: addon}
+      rax2_addon: {pos: [143.5, 121.5], size: 2, kind: addon}
+      rax3_addon: {pos: [115.5, 120.5], size: 2, kind: addon}
+      rax4_addon: {pos: [118.5, 122.5], size: 2, kind: addon}
       # factory1 真机 can_place+挂件2×2 双锁定（CC 东侧/补给网格上方，避开 SW ramp 路径不堵门）
       factory1: {pos: [135.5, 118.5], size: 3, kind: production}
       factory1_addon: {pos: [137.5, 117.5], size: 2, kind: addon}
