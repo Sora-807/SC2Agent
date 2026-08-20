@@ -40,14 +40,28 @@ describe("夹具", () => {
         expect(lines.length).toBeGreaterThan(0);
       });
 
-      it("seq 单调、game_time 非负", () => {
+      it("seq 非递减、game_time 非负；seq = 世界版本号（同一 tick 的多个 topic 共享它）", () => {
+        // 契约 §2.1：world/flow/production/ops 的 seq 用 GameState.seq。
+        // 所以同一 tick 的几个 topic **seq 相同** —— 帧内顺序由流的顺序给，不靠 seq 排。
         let prev = -1;
         for (const line of lines) {
           const env = parseEnvelopeLine(line);
-          expect(env.seq).toBeGreaterThan(prev);
+          expect(env.seq).toBeGreaterThanOrEqual(prev);
           expect(env.game_time).toBeGreaterThanOrEqual(0);
           prev = env.seq;
         }
+      });
+
+      it("同一 game_time 的帧共享 seq（说明它是世界版本号而不是信封计数器）", () => {
+        const bySeq = new Map<number, Set<string>>();
+        for (const line of lines) {
+          const env = parseEnvelopeLine(line);
+          if (env.topic.startsWith("static/")) continue;
+          if (!bySeq.has(env.seq)) bySeq.set(env.seq, new Set());
+          bySeq.get(env.seq)!.add(env.topic);
+        }
+        const shared = [...bySeq.values()].filter((s) => s.size > 1);
+        expect(shared.length, "至少有些 tick 会同时产出多个 topic").toBeGreaterThan(0);
       });
 
       it("覆盖三个静态面 + 核心动态面", () => {

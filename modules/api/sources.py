@@ -83,7 +83,9 @@ class JsonlSource:
             first = next((f for f in self.frames if f["topic"] == topic), None)
             if first is not None:
                 chosen[topic] = first
-        return sorted(chosen.values(), key=lambda f: f["seq"])
+        # 保持**流的顺序**（dict 记插入序）：同一 tick 里多个 topic 共享 GameState.seq，
+        # 按 seq 排会得到任意顺序，而静态面必须先到（前端要先拿到地图与目录）。
+        return list(chosen.values())
 
     def between(self, after: float, until: float, topics: set[str] | None = None) -> list[dict]:
         """`(after, until]` 区间内的帧（WS 按节拍推送用）。"""

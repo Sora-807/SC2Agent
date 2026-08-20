@@ -235,7 +235,8 @@ class OfflineSession:
             if topics is not None and f["topic"] not in topics:
                 continue
             chosen.setdefault(f["topic"], f)
-        return sorted(chosen.values(), key=lambda f: f["seq"])
+        # 同 `JsonlSource`：保持流的顺序，不按 seq 排（同 tick 的 seq 相同）
+        return list(chosen.values())
 
     def between(self, after: float, until: float,
                 topics: set[str] | None = None) -> list[dict]:

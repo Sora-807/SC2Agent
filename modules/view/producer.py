@@ -191,8 +191,18 @@ class FrameProducer:
     # ---- 内部 ----
 
     def _env(self, topic: str, gs: GameState, payload) -> dict:
-        self._seq += 1
-        return envelope(topic, seq=self._seq, game_time=gs.game_time, payload=payload,
+        """信封的 `seq` = **`GameState.seq`**（契约 §2.1 原文），不是自增计数器。
+
+        这不是风格问题：`seq` 是"世界的版本号"，命令的新鲜度门（R8）就靠
+        `session.seq - based_on_seq` 判断。用自增计数器的话，观察包给出的 seq 会远大于
+        世界 seq，差值恒为负 —— **R8 的门对 agent 就永久失效了**（真机上表现为
+        "agent 拿几分钟前的观察下命令也照样被接受"）。
+
+        代价是同一 tick 里多个 topic 共享同一个 seq。这没问题：帧内顺序由**流的顺序**给
+        （JSONL 的行序 / WS 的发送序），不靠 seq 排。
+        """
+        self._seq += 1   # 仅用于内部计数与诊断，不进信封
+        return envelope(topic, seq=gs.seq, game_time=gs.game_time, payload=payload,
                         wall_ms=1_700_000_000_000 + int(gs.game_time * 1000))
 
 
