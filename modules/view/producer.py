@@ -19,7 +19,7 @@ from view import adapt
 from view.alerts import AlertService
 from view.encode import envelope
 from view.projection import project_queue
-from view.schema import AlertsFrame
+from view.schema import AlertsFrame, ProposalsFrame
 from view.statics import (
     catalog_static,
     map_static,
@@ -67,12 +67,16 @@ class FrameProducer:
     projection_every: float = PROJECTION_EVERY
     ops_every: float = OPS_EVERY
     alerts: AlertService | None = None
+    #: 提案存储（B7）。给了就在内容变化时发 `proposals` 帧 —— 只在变化时发，
+    #: 否则每帧一条会把 WS 刷满（提案是事件驱动的，不是周期性的）。
+    proposals: Any = None
     include_grids: bool = False
 
     _seq: int = 0
     _proj_at: float = field(default=-1e18)
     _ops_at: float = field(default=-1e18)
     _grids_sent: bool = False
+    _proposals_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         if self.alerts is None:
@@ -137,6 +141,14 @@ class FrameProducer:
         fired = self.alerts.evaluate(gs, production=prod_snap, curve=curve)
         if fired:
             out.append(self._env("frame/alerts", gs, AlertsFrame(alerts=fired)))
+
+        if self.proposals is not None:
+            rows = self.proposals.list()
+            # 指纹 = id+状态：提案的展示内容只在这两者变化时需要重推
+            fp = "|".join(f"{r['id']}:{r['status']}" for r in rows)
+            if fp != self._proposals_fingerprint:
+                self._proposals_fingerprint = fp
+                out.append(self._env("proposals", gs, ProposalsFrame(proposals=rows)))
 
         if self.ring is not None and gs.game_time - self._ops_at >= self.ops_every:
             self._ops_at = gs.game_time

@@ -719,4 +719,6 @@ class ProposalView:
 
 @dataclass(slots=True)
 class ProposalsFrame:
-    proposals: list[ProposalView] = field(default_factory=list)
+    #: 允许直接放 `ProposalStore.list()` 的 dict 列表（它已经是契约形态；
+    #: 再套一层 dataclass 只是为了让类型检查开心，实际会多一次无意义的搬运）
+    proposals: list[ProposalView] | list[dict] = field(default_factory=list)

@@ -27,6 +27,8 @@ from view.encode import to_json
 from view.schema import REV, TOPICS
 from view.statics import schema_static
 
+from view.proposals import ProposalStore
+
 from api.commands import CommandResult, QueueCommand, WorkerCommand
 from api.session import OfflineSession, StaleObservation
 from api.sources import SourceRegistry
@@ -48,10 +50,18 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
     #: 离线沙盒会话。惰性创建：没人访问 `source=live` 就不建，也就不烧 CPU。
     app.state.session = None
     app.state.session_task = None
+    #: 提案存储（B7）。落盘在帧源目录旁边 —— 提案的价值一半在历史，追加日志天然保留。
+    app.state.proposals = ProposalStore(load_terran(),
+                                        path=Path(frame_dir or DEFAULT_FRAME_DIR).parent
+                                        / "proposals.jsonl")
 
     def _session(create: bool = True) -> OfflineSession | None:
         if app.state.session is None and create:
             app.state.session = OfflineSession(load_terran())
+            # 提案要能算双投影、要能 apply → 必须认识会话；
+            # 反过来会话的帧生产器要认识提案 → 提案变化时会发 `proposals` 帧
+            app.state.proposals.session = app.state.session
+            app.state.session.producer.proposals = app.state.proposals
         return app.state.session
 
     def _resolve(source_id: str):
@@ -143,6 +153,9 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
         if sess is not None:
             sess.state = "已结束"
         app.state.session = None
+        # 也要断开提案对会话的引用：否则停掉会话后新建的提案会基于**死会话**的世界
+        # 算 anchor（拿到一个永远不会再变的 game_time），P5 的失效判断就失效了。
+        app.state.proposals.session = None
         return {"state": "未连接"}
 
     # ---- 命令写入面（B6）：UI 与 agent 共用同一入口 ----
@@ -196,6 +209,53 @@ def create_app(frame_dir: Path | str | None = None) -> FastAPI:
     @app.get("/api/sources/{source_id}/jsonl", response_class=PlainTextResponse)
     def jsonl(source_id: str) -> str:
         return _source(source_id).path.read_text(encoding="utf-8")
+
+    # ---- 提案（B7）：agent 的唯一产出面 ----
+
+    @app.get("/api/proposals")
+    def proposals_list() -> list[dict]:
+        return app.state.proposals.list()
+
+    @app.post("/api/proposals")
+    def proposals_create(body: dict) -> dict:
+        """新建提案。**校验不通过也存**（§6 P2：不可接受，但必须可见 —— agent 要学、用户要诊断）。"""
+        try:
+            return app.state.proposals.create(body).to_json()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/proposals/{pid}/preview")
+    def proposals_preview(pid: str, horizon: float = Query(120.0, gt=0, le=600)) -> dict:
+        """双投影：当前队列 vs 提案后的队列 —— 接受前先看未来。"""
+        try:
+            return app.state.proposals.preview_pair(pid, horizon=horizon)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @app.post("/api/proposals/{pid}/accept")
+    def proposals_accept(pid: str, body: dict | None = None) -> dict:
+        payload = body or {}
+        try:
+            p = app.state.proposals.accept(
+                pid, hunk_ids=payload.get("hunk_ids"), comment=payload.get("comment_zh"))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            # 409：不是请求写错了，而是提案的状态/校验不允许接受
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return p.to_json()
+
+    @app.post("/api/proposals/{pid}/reject")
+    def proposals_reject(pid: str, body: dict) -> dict:
+        try:
+            p = app.state.proposals.reject(pid, str(body.get("comment_zh") or ""))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return p.to_json()
 
     # ---- WS ----
 
