@@ -91,30 +91,3 @@ export function PlanningPage() {
     </Stub>
   );
 }
-
-export function DebugPage() {
-  const { world, production, session } = useFrames();
-  return (
-    <Stub
-      stage="F5"
-      title="调试"
-      will={[
-        "命令流水：op_id/seq/action/unit_tags/params/origin → apply → landing（确认/超时/换位重试）",
-        "摆放调试叠加层",
-        "原始帧检查器（唯一允许显示 burnysc2 名的地方）",
-        "掉项审计表",
-      ]}
-    >
-      <Card title="现状">
-        <ul className="list-inside list-disc text-neutral-300">
-          <li>帧源 {session?.frame_source ?? "—"}</li>
-          <li>掉项 {production?.dropped.length ?? 0} 条已在帧里</li>
-          <li className="text-amber-400">
-            ops 的 apply/landing 在后端 B9（D6 ApplyResult / D7 GameEvent）之前恒 null —— 面板将显示"未知"而非空白
-          </li>
-          <li>当前帧单位 {world?.units.length ?? 0} 个</li>
-        </ul>
-      </Card>
-    </Stub>
-  );
-}

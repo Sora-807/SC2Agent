@@ -12,8 +12,9 @@ import { Timeline } from "./shell/Timeline";
 import { useRoute } from "./shell/route";
 import { Overview } from "./pages/Overview";
 import { MapPage } from "./pages/MapPage";
+import { DebugPage } from "./pages/DebugPage";
 import { ProductionPage } from "./pages/ProductionPage";
-import { DebugPage, FlowPage, PlanningPage } from "./pages/Stubs";
+import { FlowPage, PlanningPage } from "./pages/Stubs";
 import { useFrames } from "./store/frames";
 
 export function App() {

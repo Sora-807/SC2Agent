@@ -6,7 +6,7 @@
  */
 import { create } from "zustand";
 import type {
-  AlertsFrame, CatalogStatic, EconomyFrame, FlowFrame, MapStatic, ProductionFrame,
+  AlertsFrame, CatalogStatic, EconomyFrame, FlowFrame, MapStatic, OpsFrame, ProductionFrame,
   ProjectionFrame, ProposalsFrame, SchemaStatic, SessionFrame, WorldFrame,
 } from "../contract";
 import { listFixtures, loadFixture, type FixtureMeta } from "../fixtures";
@@ -33,6 +33,7 @@ interface Frames {
   flow: FlowFrame | null;
   production: ProductionFrame | null;
   economy: EconomyFrame | null;
+  ops: OpsFrame | null;
   projection: ProjectionFrame | null;
   alerts: AlertsFrame | null;
   proposals: ProposalsFrame | null;
@@ -42,7 +43,7 @@ interface Frames {
 }
 
 const EMPTY_FRAMES: Frames = {
-  session: null, world: null, flow: null, production: null, economy: null, projection: null,
+  session: null, world: null, flow: null, production: null, economy: null, ops: null, projection: null,
   alerts: null, proposals: null, map: null, catalog: null, schema: null,
 };
 
@@ -162,6 +163,7 @@ export const useFrames = create<FramesStore>((set, get) => {
         src.subscribe("frame/flow", (e) => set({ flow: e.payload })),
         src.subscribe("frame/production", (e) => set({ production: e.payload })),
         src.subscribe("frame/economy", (e) => set({ economy: e.payload })),
+        src.subscribe("frame/ops", (e) => set({ ops: e.payload })),
         src.subscribe("frame/projection", (e) => set({ projection: e.payload })),
         src.subscribe("frame/alerts", (e) => set({ alerts: e.payload })),
         src.subscribe("proposals", (e) => set({ proposals: e.payload })),
