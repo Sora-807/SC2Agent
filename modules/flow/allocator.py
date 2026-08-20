@@ -2,6 +2,9 @@
 
 按 spec-006 接口预留（count/expand/create_group/refresh）；V1 简实现，无 share/pool_key 仲裁。
 已 lease 的单位不参与重分配；补到 target 从 free 池取；单位死亡从 lease 移除。
+
+词汇（T1/D1）：composition 键与 count/expand 的 type 参数一律是 **stable id**（如 "terran/marine"）；
+gs 单位是 burnysc2 实体名（含 SIEGETANKSIEGED 这类形态变体），匹配统一走 catalog 单侧归一。
 """
 from __future__ import annotations
 
@@ -9,22 +12,31 @@ from dataclasses import dataclass, field
 
 from game import GameState, Owner
 
-from flow.predicates import _normalize_type
+from flow.predicates import unit_is_type
 
 
 @dataclass
 class GroupState:
     group_id: str
-    composition: dict  # type -> {min, target, max}
-    leased_by_type: dict = field(default_factory=dict)  # type -> set[tag]
+    composition: dict  # stable_id -> {min, target, max}
+    leased_by_type: dict = field(default_factory=dict)  # stable_id -> set[tag]
 
 
 class Allocator:
-    def __init__(self, catalog=None) -> None:
+    def __init__(self, catalog) -> None:
+        if catalog is None:
+            raise ValueError("Allocator 需要 catalog：composition 用 stable id，匹配 gs 实体名需翻译（T1/D1）")
         self._groups: dict[str, GroupState] = {}
-        self._catalog = catalog  # 形态变体归一化（None 时 _normalize_type 透传；T3）
+        self._catalog = catalog
 
     def create_group(self, group_id: str, composition: dict) -> None:
+        """建组。composition 键必须是 catalog 已登记的 stable id（未知键构造期即报错，不静默漏 lease）。"""
+        unknown = [k for k in composition if self._catalog.by_stable_id(k) is None]
+        if unknown:
+            raise ValueError(
+                f"group {group_id!r} 的 composition 含未登记的 stable id {unknown}"
+                "（authoring 侧只用 stable id，如 terran/marine；burnysc2 名不再接受）"
+            )
         self._groups[group_id] = GroupState(group_id, composition, {})
 
     def refresh(self, gs: GameState) -> None:
@@ -37,34 +49,33 @@ class Allocator:
         free = own - leased_all
         # 补到 target（FCFS：按 gs.units 顺序取前 N 个 free）
         for g in self._groups.values():
-            for type_name, spec in g.composition.items():
-                cur = g.leased_by_type.setdefault(type_name, set())
+            for stable_id, spec in g.composition.items():
+                cur = g.leased_by_type.setdefault(stable_id, set())
                 target = spec.get("target", spec.get("max", 0))
                 need = target - len(cur)
                 if need <= 0:
                     continue
-                # 单位侧归一：架起后 type_name 变 SIEGETANKSIEGED 仍匹配主名 SIEGETANK（T3）
+                # 单侧归一：架起后实体名变 SIEGETANKSIEGED，仍匹配 terran/siegetank（T3 语义不变）
                 cands = [u.tag for u in gs.units
-                         if _normalize_type(self._catalog, u.type_name) == type_name
-                         and u.owner == Owner.SELF and u.tag in free]
+                         if u.owner == Owner.SELF and u.tag in free
+                         and unit_is_type(self._catalog, u.type_name, stable_id)]
                 take = set(cands[:need])
                 cur |= take
                 free -= take
 
-    def count(self, group_id: str, type_name: str | None = None) -> int:
+    def count(self, group_id: str, stable_id: str | None = None) -> int:
         g = self._groups.get(group_id)
         if g is None:
             return 0
-        if type_name is None:
+        if stable_id is None:
             return sum(len(s) for s in g.leased_by_type.values())
-        # 输入归一：调用方传变体名时也归一到主名键（leased_by_type 按主名键存；T3）
-        return len(g.leased_by_type.get(_normalize_type(self._catalog, type_name), set()))
+        return len(g.leased_by_type.get(stable_id, set()))  # 键就是 stable id，直查（无输入归一）
 
-    def expand(self, group_id: str, type_name: str) -> list[int]:
+    def expand(self, group_id: str, stable_id: str) -> list[int]:
         g = self._groups.get(group_id)
         if g is None:
             return []
-        return sorted(g.leased_by_type.get(_normalize_type(self._catalog, type_name), set()))
+        return sorted(g.leased_by_type.get(stable_id, set()))
 
     def expand_all(self, group_id: str) -> list[int]:
         """group 内所有类型已 lease 的 unit_tag（供 group_center 等空间谓词用）。"""

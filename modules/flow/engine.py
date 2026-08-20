@@ -28,6 +28,12 @@ DEFAULT_MAX_STEP_TRANSITIONS = 200
 class FlowEngine:
     def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port,
                  region_layer=None, catalog=None) -> None:
+        if catalog is None:
+            raise ValueError(
+                "FlowEngine 需要 catalog（game.catalog.load_terran()）：flow authoring 只用 stable id"
+                "（如 terran/marine），引擎靠 catalog 把 gs 的 burnysc2 实体名（含 SIEGETANKSIEGED 这类"
+                "形态变体）翻译回 stable id 才能匹配（T1 词汇统一，D1）"
+            )
         validate_assembly(manifest, assembly)  # R6：绑定/引用错误在构造期拒绝
         self._m = manifest
         self._port = port

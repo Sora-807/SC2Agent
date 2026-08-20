@@ -203,7 +203,7 @@ class Catalog:
 
     def normalize_burnysc2_name(self, name: str) -> str:
         """burnysc2 名归一（T3）：变体名（如 SIEGETANKSIEGED）→ 主名（SIEGETANK）；
-        主名/未知名原样返回。无 catalog 场景由调用方 None 透传处理（见 flow._normalize_type）。"""
+        主名/未知名原样返回。消费方见 flow.predicates.unit_is_type（stable id → 主名单侧归一）。"""
         return self._variant_index.get(name, name)
 
 

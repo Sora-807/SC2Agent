@@ -6,8 +6,11 @@ group_hp_ratio/arrived/region_center）+ 动作去重 + exit_strategy。
 from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
+from game.catalog import load_terran
 from game import GameState, Grid, Owner, Point2, Unit
 from tactical_map import BigRegion, RegionLayer
+
+CAT = load_terran()
 
 BIO_STRATEGY = """
 id: bio_push_test
@@ -28,21 +31,21 @@ steps:
       - when: {op: "<", args: [{op: group_hp_ratio, args: [main]}, 0.4]}
         do: [{op: exit_step, kind: failed, reason: UNITS_LOST}]
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: attack_move_to, params: {position: [50.0, 50.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: attack_move_to, params: {position: [50.0, 50.0]}}
   - step_id: combat
     branches:
       - when: {op: "==", args: [{op: enemy_count_near, args: [{op: group_center, args: [main]}, 12]}, 0]}
         do: [{op: exit_step, kind: done, reason: ENEMY_CLEARED}]
-      - when: {op: "<", args: [{op: group_count, args: [main, MARINE]}, 6]}
+      - when: {op: "<", args: [{op: group_count, args: [main, terran/marine]}, 6]}
         do: [{op: exit_step, kind: failed, reason: UNITS_LOST}]
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: focus_fire, params: {target_unit: 200}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: focus_fire, params: {target_unit: 200}}
   - step_id: retreat
     branches:
       - when: {op: arrived, args: [main, {op: region_center, args: [main_base]}, 8]}
         do: [{op: exit_step, kind: done, reason: SAFE}]
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [50.0, 50.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [50.0, 50.0]}}
   - step_id: hold
     branches:
       - do: [{op: exit_strategy, kind: done, reason: SAFE}]
@@ -61,7 +64,7 @@ id: bio_assembly
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 6, target: 6, max: 6}
+      terran/marine: {min: 6, target: 6, max: 6}
 strategy_instances:
   - instance_id: s1
     strategy_ref: bio_push_test
@@ -94,7 +97,7 @@ def test_bio_push_full_tactical_chain():
         big_regions={"main_base": BigRegion(stable_id="main_base", anchor=Point2(50, 50))},
     )
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(BIO_STRATEGY), parse_assembly(BIO_ASSEMBLY), port, region_layer=layer)
+    eng = FlowEngine(parse_strategy(BIO_STRATEGY), parse_assembly(BIO_ASSEMBLY), port, region_layer=layer, catalog=CAT)
 
     M = [(100 + i, (0, 0), 45.0) for i in range(6)]  # 6 marines @ (0,0) hp45
     Mlow = [(t, (0, 0), 10.0) for t, _, _ in M]  # 低血

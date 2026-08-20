@@ -21,7 +21,7 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [armor, SIEGETANK]}, {param: min_tanks}]}
+      - when: {op: ">=", args: [{op: group_count, args: [armor, terran/siegetank]}, {param: min_tanks}]}
         do: [{op: exit_strategy, kind: done, reason: FORMED}]
       - do: []
 """
@@ -36,7 +36,7 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: armor, type: SIEGETANK, action_atom: move_to, params: {position: [10.0, 10.0]}}
+          - {op: group_action, group_slot: armor, type: terran/siegetank, action_atom: move_to, params: {position: [10.0, 10.0]}}
 """
 
 # assembly 的 strategy_ref 必须与加载的 strategy id 一致（validate_assembly 校验）；
@@ -46,7 +46,7 @@ id: tank_assembly
 groups:
   - group_id: G1
     composition:
-      SIEGETANK: {min: 4, target: 4, max: 4}
+      terran/siegetank: {min: 4, target: 4, max: 4}
 strategy_instances:
   - instance_id: s1
     strategy_ref: __REF__
@@ -85,13 +85,13 @@ def test_formup_counts_sieged_as_siegetank_with_catalog():
     assert eng._done is True  # 架起态归一为 SIEGETANK，formup 门达标 → exit_strategy
 
 
-def test_formup_without_catalog_misses_sieged_tanks():
-    """不传 catalog（回归基线）：架起态不计入 SIEGETANK → formup 等待，不 done。"""
+def test_catalog_is_required_at_construction():
+    """T1/D1：catalog 必传 —— 没有 catalog 就无法把 stable id 翻译成实体名，
+    旧的"不传 catalog 则静默漏计架起态"回归基线被这条构造期报错取代（不静默）。"""
+    import pytest
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(FORMUP_STRATEGY), parse_assembly(_assembly("tank_formup")), port)
-    eng.on_game_state(_gs(0, _four_sieged()))
-    assert eng._done is False
-    assert eng._active_step == "formup"
+    with pytest.raises(ValueError, match="catalog"):
+        FlowEngine(parse_strategy(FORMUP_STRATEGY), parse_assembly(_assembly("tank_formup")), port)
 
 
 def test_group_action_targets_sieged_tanks_with_catalog():
@@ -105,12 +105,14 @@ def test_group_action_targets_sieged_tanks_with_catalog():
     assert sorted(moves[0].unit_tags) == [200, 201, 202, 203]  # 4 辆全命中
 
 
-def test_group_action_without_catalog_skips_sieged_tanks():
-    """不传 catalog：expand 漏架起态 → 空 group no-op（回归基线）。"""
+def test_unknown_stable_id_in_composition_rejected_at_construction():
+    """composition 误写 burnysc2 名（旧词汇）→ 构造期报错，不再静默漏 lease（T1/D1）。"""
+    import pytest
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(ADVANCE_STRATEGY), parse_assembly(_assembly("tank_advance")), port)
-    eng.on_game_state(_gs(0, _four_sieged()))
-    assert port.submitted == []
+    bad = _ARMOR_ASSEMBLY.replace("__REF__", "tank_advance").replace(
+        "terran/siegetank: {min: 4", "SIEGETANK: {min: 4")
+    with pytest.raises(ValueError, match="stable id"):
+        FlowEngine(parse_strategy(ADVANCE_STRATEGY), parse_assembly(bad), port, catalog=CAT)
 
 
 def test_mixed_sieged_and_unsieged_counted_together():

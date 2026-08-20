@@ -13,6 +13,7 @@ from loguru import logger
 
 from driver.sc2_adapter import SC2GamePort
 from flow.engine import FlowEngine
+from game.catalog import load_terran
 from flow.manifest import parse_assembly, parse_strategy
 from game import Owner
 from sc2.data import Difficulty, Race
@@ -44,7 +45,7 @@ steps:
       - when: {op: arrived, args: [main, [50.0, 50.0], 8.0]}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
       - do:
-          - {op: group_action, group_slot: main, type: SCV, action_atom: move_to, params: {position: [50.0, 50.0]}}
+          - {op: group_action, group_slot: main, type: terran/scv, action_atom: move_to, params: {position: [50.0, 50.0]}}
 edges: [{from: formup, to: advance, kind: done, reason: FORMED}]
 on_exit: release
 """
@@ -54,7 +55,7 @@ id: arrive_assembly
 groups:
   - group_id: G1
     composition:
-      SCV: {min: 4, target: 4, max: 4}
+      terran/scv: {min: 4, target: 4, max: 4}
 strategy_instances:
   - instance_id: s1
     strategy_ref: scv_arrived
@@ -94,7 +95,8 @@ def main() -> None:
         map_name="LadderMap", race=Race.Terran, difficulty=Difficulty.Easy,
         sink=None, game_time_limit=120, realtime=False,
     )
-    engine = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port)
+    engine = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port,
+                        catalog=load_terran())
     port.set_sink(LoopSink(engine))
     port.start("arrived-1")
     log(f"=== done: engine._done={engine._done} ===")

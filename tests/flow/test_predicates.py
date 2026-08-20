@@ -2,8 +2,11 @@
 import pytest
 
 from game import GameState, Grid, Owner, Point2, Unit
+from game.catalog import load_terran
 from flow.predicates import EvalCtx, UNIMPLEMENTED_PREDICATE_OPS, eval_when
 from tactical_map import load_region_layer
+
+CAT = load_terran()
 
 LAYER_YAML = """
 map_name: p
@@ -55,7 +58,7 @@ def _gs(units, game_time=10.0):
 
 
 def _ctx(gs=None, alloc=None, bindings=None, params=None, variables=None, layer=None,
-         start=0.0, entered=5.0, catalog=None):
+         start=0.0, entered=5.0, catalog=CAT):
     return EvalCtx(
         gs=gs or _gs([]), allocator=alloc or FakeAllocator(), bindings=bindings or {},
         params=params or {}, variables=variables or {}, strategy_start=start,
@@ -89,10 +92,10 @@ def test_const_param_var_nodes():
 
 
 def test_group_count_with_and_without_type():
-    alloc = FakeAllocator({"G1": {"MARINE": {1, 2}, "SCV": {3}}})
+    alloc = FakeAllocator({"G1": {"terran/marine": {1, 2}, "terran/scv": {3}}})
     ctx = _ctx(alloc=alloc, bindings={"main": "G1"})
     assert eval_when({"op": "group_count", "args": ["main"]}, ctx) == 3
-    assert eval_when({"op": "group_count", "args": ["main", "MARINE"]}, ctx) == 2
+    assert eval_when({"op": "group_count", "args": ["main", "terran/marine"]}, ctx) == 2
     assert eval_when({"op": "group_count", "args": ["main", "MEDIVAC"]}, ctx) == 0
     assert eval_when({"op": "group_count", "args": ["unbound"]}, ctx) == 0
 
@@ -137,7 +140,7 @@ def test_logic_ops():
 
 def test_arrived_true_false_empty():
     gs = _gs([_u(1, 0, 0), _u(2, 2, 0)])
-    alloc = FakeAllocator({"G1": {"MARINE": {1, 2}}})
+    alloc = FakeAllocator({"G1": {"terran/marine": {1, 2}}})
     ctx = _ctx(gs=gs, alloc=alloc, bindings={"main": "G1"})
     node = {"op": "arrived", "args": ["main", [5.0, 0.0], 5.0]}  # 中心 (1,0) 距 (5,0)=4
     assert eval_when(node, ctx) is True
@@ -148,7 +151,7 @@ def test_arrived_true_false_empty():
 
 def test_group_center_and_distance_between():
     gs = _gs([_u(1, 0, 0), _u(2, 2, 0), _u(3, 6, 0), _u(4, 10, 0)])
-    alloc = FakeAllocator({"A": {"MARINE": {1, 2}}, "B": {"MARINE": {3, 4}}})
+    alloc = FakeAllocator({"A": {"terran/marine": {1, 2}}, "B": {"terran/marine": {3, 4}}})
     ctx = _ctx(gs=gs, alloc=alloc, bindings={"a": "A", "b": "B"})
     assert eval_when({"op": "group_center", "args": ["a"]}, ctx) == Point2(1.0, 0.0)
     assert eval_when({"op": "group_center", "args": ["b"]}, ctx) == Point2(8.0, 0.0)
@@ -176,7 +179,7 @@ def test_enemy_count_near():
 
 def test_group_hp_ratio():
     gs = _gs([_u(1, 0, 0, hp=45.0), _u(2, 1, 0, hp=15.0)])
-    alloc = FakeAllocator({"G1": {"MARINE": {1, 2}}})
+    alloc = FakeAllocator({"G1": {"terran/marine": {1, 2}}})
     ctx = _ctx(gs=gs, alloc=alloc, bindings={"main": "G1"})
     assert eval_when({"op": "group_hp_ratio", "args": ["main"]}, ctx) == pytest.approx(2 / 3)
     empty = _ctx(alloc=FakeAllocator({"G1": {}}), bindings={"main": "G1"})
@@ -221,19 +224,17 @@ def test_point_toward_none_and_point_name_via_layer():
 def test_unit_count():
     gs = _gs([_u(1, 0, 0), _u(2, 0, 0), _u(3, 0, 0, owner=Owner.ENEMY), _u(4, 0, 0, type_name="SCV")])
     ctx = _ctx(gs=gs)
-    assert eval_when({"op": "unit_count", "args": ["MARINE"]}, ctx) == 2  # 只数 SELF
-    assert eval_when({"op": "unit_count", "args": ["SCV"]}, ctx) == 1
+    assert eval_when({"op": "unit_count", "args": ["terran/marine"]}, ctx) == 2  # 只数 SELF
+    assert eval_when({"op": "unit_count", "args": ["terran/scv"]}, ctx) == 1
 
 
 def test_unit_count_normalizes_variants():
-    """形态变体归一（T3）：unit_count 传 catalog 时把架起态（SIEGETANKSIEGED）计为主名 SIEGETANK；
-    不传 catalog 时架起态漏计（回归对照）。"""
-    from game.catalog import load_terran
-    cat = load_terran()
+    """形态变体归一（T1/T3）：架起态实体（SIEGETANKSIEGED）计入 terran/siegetank；
+    burnysc2 名不再是 authoring 词汇（传主名/变体名都算未登记 → 0）。"""
     gs = _gs([_u(1, 0, 0, type_name="SIEGETANK"), _u(2, 0, 0, type_name="SIEGETANKSIEGED")])
-    assert eval_when({"op": "unit_count", "args": ["SIEGETANK"]}, _ctx(gs=gs, catalog=cat)) == 2
-    assert eval_when({"op": "unit_count", "args": ["SIEGETANKSIEGED"]}, _ctx(gs=gs, catalog=cat)) == 2
-    assert eval_when({"op": "unit_count", "args": ["SIEGETANK"]}, _ctx(gs=gs)) == 1  # 无 catalog 漏计
+    assert eval_when({"op": "unit_count", "args": ["terran/siegetank"]}, _ctx(gs=gs)) == 2
+    assert eval_when({"op": "unit_count", "args": ["SIEGETANK"]}, _ctx(gs=gs)) == 0
+    assert eval_when({"op": "unit_count", "args": ["SIEGETANKSIEGED"]}, _ctx(gs=gs)) == 0
 
 
 # ---- 区域归属谓词（ADR-0029 消费方）----
@@ -241,7 +242,7 @@ def test_unit_count_normalizes_variants():
 
 def test_group_center_in_region():
     layer = _layer()
-    alloc = FakeAllocator({"G1": {"MARINE": {1, 2}}})
+    alloc = FakeAllocator({"G1": {"terran/marine": {1, 2}}})
     # 组中心在 main_base（左下两列）→ True；在 field → False；无 layer → False
     gs_in = _gs([_u(1, 0.5, 0.5), _u(2, 1.5, 0.5)])
     ctx = _ctx(gs=gs_in, alloc=alloc, bindings={"main": "G1"}, layer=layer)
@@ -268,26 +269,24 @@ def test_has_building():
     ready_depot = _u(6, 1.5, 0.5, type_name="SUPPLYDEPOT", progress=1.0)
     outside = _u(7, 3.5, 3.5, type_name="SUPPLYDEPOT", progress=1.0)
     ctx = _ctx(gs=_gs([depot, ready_depot, outside]), layer=layer)
-    assert eval_when({"op": "has_building", "args": ["SUPPLYDEPOT"]}, ctx) is True
-    assert eval_when({"op": "has_building", "args": ["SUPPLYDEPOT", None, True]}, ctx) is True
-    assert eval_when({"op": "has_building", "args": ["SUPPLYDEPOT", "main_base"]}, ctx) is True
-    assert eval_when({"op": "has_building", "args": ["SUPPLYDEPOT", "field"]}, ctx) is True
-    assert eval_when({"op": "has_building", "args": ["BARRACKS"]}, ctx) is False
+    assert eval_when({"op": "has_building", "args": ["terran/supplydepot"]}, ctx) is True
+    assert eval_when({"op": "has_building", "args": ["terran/supplydepot", None, True]}, ctx) is True
+    assert eval_when({"op": "has_building", "args": ["terran/supplydepot", "main_base"]}, ctx) is True
+    assert eval_when({"op": "has_building", "args": ["terran/supplydepot", "field"]}, ctx) is True
+    assert eval_when({"op": "has_building", "args": ["terran/barracks"]}, ctx) is False
     only_partial = _ctx(gs=_gs([depot]))
-    assert eval_when({"op": "has_building", "args": ["SUPPLYDEPOT", None, True]}, only_partial) is False
+    assert eval_when({"op": "has_building", "args": ["terran/supplydepot", None, True]}, only_partial) is False
 
 
 def test_has_building_normalizes_variants():
-    """形态变体归一（T3）：has_building 走同一归一路径，架起态实体按主名匹配。
+    """形态变体归一（T1/T3）：has_building 走同一条 unit_is_type 路径，架起态实体按 stable id 匹配。
     借 SIEGETANK 变体验证通路（建筑一般无变体，但逻辑一致）。"""
-    from game.catalog import load_terran
-    cat = load_terran()
     sieged = _u(1, 0, 0, type_name="SIEGETANKSIEGED", progress=1.0)
-    ctx = _ctx(gs=_gs([sieged]), catalog=cat)
-    assert eval_when({"op": "has_building", "args": ["SIEGETANK"]}, ctx) is True
-    assert eval_when({"op": "has_building", "args": ["SIEGETANK", None, True]}, ctx) is True
-    # 无 catalog：SIEGETANKSIEGED != SIEGETANK → 不匹配
-    assert eval_when({"op": "has_building", "args": ["SIEGETANK"]}, _ctx(gs=_gs([sieged]))) is False
+    ctx = _ctx(gs=_gs([sieged]))
+    assert eval_when({"op": "has_building", "args": ["terran/siegetank"]}, ctx) is True
+    assert eval_when({"op": "has_building", "args": ["terran/siegetank", None, True]}, ctx) is True
+    # 未登记的类型名（burnysc2 名/拼错）→ False，不静默匹配
+    assert eval_when({"op": "has_building", "args": ["SIEGETANKSIEGED"]}, ctx) is False
 
 
 # ---- 词表边界 ----

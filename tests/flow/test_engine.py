@@ -6,7 +6,10 @@
 from driver.fake import FakeGamePort
 from flow.engine import DEFAULT_MAX_STEP_TRANSITIONS, FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
+from game.catalog import load_terran
 from game import GameState, Grid, Owner, Point2, Unit
+
+CAT = load_terran()
 
 STRATEGY_YAML = """
 id: simple_push
@@ -27,7 +30,7 @@ steps:
       - when: {op: ">=", args: [{op: strategy_elapsed}, {const: 5.0}]}
         do: [{op: exit_strategy, kind: done, reason: SAFE}]
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [10.0, 10.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [10.0, 10.0]}}
 edges:
   - {from: formup, to: advance, kind: done, reason: FORMED}
 on_exit: release
@@ -39,7 +42,7 @@ id: test_assembly
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 4, target: 4, max: 4}
+      terran/marine: {min: 4, target: 4, max: 4}
 strategy_instances:
   - instance_id: s1
     strategy_ref: simple_push
@@ -62,7 +65,7 @@ def _gs(seq: int, marine_count: int, game_time: float) -> GameState:
 
 def test_formup_waits_then_advances_move_once_then_exit():
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(STRATEGY_YAML), parse_assembly(ASSEMBLY_YAML), port)
+    eng = FlowEngine(parse_strategy(STRATEGY_YAML), parse_assembly(ASSEMBLY_YAML), port, catalog=CAT)
     # seq0-3 兵力<4 formup 等待；seq4 达4 exit_step→advance；seq5-6 advance elapsed<5 发 move（去重一条）；seq7 elapsed>=5 exit；seq8 done
     for seq, mc, t in [(0, 2, 0.0), (1, 2, 0.5), (2, 3, 1.0), (3, 3, 1.5),
                        (4, 4, 2.0), (5, 4, 3.0), (6, 4, 4.0), (7, 4, 5.0), (8, 4, 6.0)]:
@@ -78,7 +81,7 @@ def test_formup_waits_then_advances_move_once_then_exit():
 
 def test_no_emit_while_formup_waiting():
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(STRATEGY_YAML), parse_assembly(ASSEMBLY_YAML), port)
+    eng = FlowEngine(parse_strategy(STRATEGY_YAML), parse_assembly(ASSEMBLY_YAML), port, catalog=CAT)
     for seq, mc, t in [(0, 1, 0.0), (1, 2, 0.5), (2, 3, 1.0)]:
         eng.on_game_state(_gs(seq, mc, t))
     assert port.submitted == []  # formup 等待，不发 op
@@ -112,7 +115,7 @@ initial_step: a
 steps:
   - step_id: a
     branches:
-      - do: [{op: group_action, group_slot: main, type: MARINE, action_atom: fly_to, params: {position: [1,1]}}]
+      - do: [{op: group_action, group_slot: main, type: terran/marine, action_atom: fly_to, params: {position: [1,1]}}]
 edges: []
 """
     with pytest.raises(AssertionError):
@@ -137,7 +140,7 @@ steps:
       - when: {op: arrived, args: [main, [10.0, 10.0], 3.0]}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [10.0, 10.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [10.0, 10.0]}}
 edges: [{from: formup, to: advance, kind: done, reason: FORMED}]
 on_exit: release
 """
@@ -159,7 +162,7 @@ id: arrive_assembly
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: arrive_test
@@ -171,7 +174,7 @@ strategy_instances:
 def test_arrived_spatial_predicate():
     """formup→advance；advance 用 arrived(main,[10,10],3)：兵接近目标到 3 内→exit。"""
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(ARRIVED_STRATEGY), parse_assembly(ARRIVED_ASSEMBLY), port)
+    eng = FlowEngine(parse_strategy(ARRIVED_STRATEGY), parse_assembly(ARRIVED_ASSEMBLY), port, catalog=CAT)
     # 2 marines 接近 [10,10]：seq0 [0,0] formup→advance；seq1 [4,4] advance move（去重 1 条）；seq2 [8,8] arrived→exit
     eng.on_game_state(_gs_arrive(0, [(0, 0), (0, 0)]))
     eng.on_game_state(_gs_arrive(1, [(4, 4), (4, 4)]))
@@ -200,14 +203,14 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: main_base}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: main_base}}
 """
     assembly = """
 id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: named_target
@@ -215,7 +218,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, region_layer=layer)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, region_layer=layer, catalog=CAT)
     eng.on_game_state(_gs(0, 2, 0.0))
     assert len(port.submitted) == 1
     op = port.submitted[0]
@@ -236,16 +239,16 @@ steps:
     branches:
       - when: {op: "<", args: [{op: game_time}, {const: 3.0}]}
         do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [10.0, 10.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [10.0, 10.0]}}
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [20.0, 20.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [20.0, 20.0]}}
 """
     assembly = """
 id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: chg
@@ -253,7 +256,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, catalog=CAT)
     for seq, t in [(0, 0.0), (1, 1.0), (2, 2.0), (3, 3.0), (4, 4.0)]:
         eng.on_game_state(_gs(seq, 2, t))
     moves = [o for o in port.submitted if o.action == "move_to"]
@@ -275,14 +278,14 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [20.0, 0.0], 5.0]}}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [20.0, 0.0], 5.0]}}}
 """
     assembly = """
 id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: pt
@@ -290,7 +293,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, catalog=CAT)
     units = [Unit(tag=100 + i, type_name="MARINE", position=Point2(0.0, 0.0), owner=Owner.SELF,
                   hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0) for i in range(2)]
     g = Grid(1, 1, [[0]])
@@ -314,14 +317,14 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [100.0, 0.0], 10.0]}}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: {op: point_toward, args: [{op: group_center, args: [main]}, [100.0, 0.0], 10.0]}}}
 """
     assembly = """
 id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: q
@@ -329,7 +332,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, catalog=CAT)
 
     def gs(cx):
         units = [Unit(tag=100 + i, type_name="MARINE", position=Point2(cx, 0.0), owner=Owner.SELF,
@@ -359,16 +362,16 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1.0, 1.0]}}
-          - {op: group_action, group_slot: main, type: SCV, action_atom: move_to, params: {position: [2.0, 2.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [1.0, 1.0]}}
+          - {op: group_action, group_slot: main, type: terran/scv, action_atom: move_to, params: {position: [2.0, 2.0]}}
 """
     assembly = """
 id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 1, target: 1, max: 1}
-      SCV: {min: 1, target: 1, max: 1}
+      terran/marine: {min: 1, target: 1, max: 1}
+      terran/scv: {min: 1, target: 1, max: 1}
 strategy_instances:
   - instance_id: s1
     strategy_ref: multi
@@ -376,7 +379,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, catalog=CAT)
     units = [
         Unit(tag=1, type_name="MARINE", position=Point2(0, 0), owner=Owner.SELF,
              hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0),
@@ -402,14 +405,14 @@ steps:
   - step_id: go
     branches:
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1.0, 1.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [1.0, 1.0]}}
 """
     assembly = """
 id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: emptyg
@@ -417,7 +420,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, catalog=CAT)
     eng.on_game_state(_gs(0, 0, 0.0))  # 没有任何 MARINE
     assert port.submitted == []
     assert not eng._done  # 引擎照常运行，不崩
@@ -436,10 +439,10 @@ def test_exit_step_stops_remaining_do_items():
         initial_step="s1",
         steps={
             "s1": {"branches": [{"do": [
-                {"op": "group_action", "group_slot": "main", "type": "MARINE",
+                {"op": "group_action", "group_slot": "main", "type": "terran/marine",
                  "action_atom": "move_to", "params": {"position": [1.0, 1.0]}},
                 {"op": "exit_step", "kind": "done", "reason": "GO"},
-                {"op": "group_action", "group_slot": "main", "type": "MARINE",
+                {"op": "group_action", "group_slot": "main", "type": "terran/marine",
                  "action_atom": "move_to", "params": {"position": [2.0, 2.0]}},
             ]}]},
             "s2": {"branches": [{"do": []}]},
@@ -449,11 +452,11 @@ def test_exit_step_stops_remaining_do_items():
     )
     a = FlowAssembly(
         id="a",
-        groups=[GroupSpec("G1", {"MARINE": {"min": 2, "target": 2, "max": 2}})],
+        groups=[GroupSpec("G1", {"terran/marine": {"min": 2, "target": 2, "max": 2}})],
         strategy_instances=[StrategyInstance("s1", "exitstop", {"main": "G1"}, {})],
     )
     port = FakeGamePort(script=[])
-    eng = FlowEngine(m, a, port)
+    eng = FlowEngine(m, a, port, catalog=CAT)
     eng.on_game_state(_gs(0, 2, 0.0))
     assert len(port.submitted) == 1  # exit 之后的第二条 move 被跳过
     assert eng._active_step == "s2"
@@ -478,10 +481,10 @@ def _loopy_engine(loop_limits: dict):
     )
     a = FlowAssembly(
         id="a",
-        groups=[GroupSpec("G1", {"MARINE": {"min": 2, "target": 2, "max": 2}})],
+        groups=[GroupSpec("G1", {"terran/marine": {"min": 2, "target": 2, "max": 2}})],
         strategy_instances=[StrategyInstance("s1", "loopy", {"main": "G1"}, {})],
     )
-    return FlowEngine(m, a, FakeGamePort(script=[]))
+    return FlowEngine(m, a, FakeGamePort(script=[]), catalog=CAT)
 
 
 def test_loop_limit_caps_step_transitions():
@@ -518,7 +521,7 @@ steps:
     branches:
       - when: {op: "==", args: [{var: stage}, {const: 1}]}
         do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [9.0, 9.0]}}
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: move_to, params: {position: [9.0, 9.0]}}
           - {op: exit_strategy, kind: done, reason: SAFE}
       - do:
           - {op: set_variable, name: stage, value: {const: 1}}
@@ -528,7 +531,7 @@ id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 2, target: 2, max: 2}
+      terran/marine: {min: 2, target: 2, max: 2}
 strategy_instances:
   - instance_id: s1
     strategy_ref: varflow
@@ -536,7 +539,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, catalog=CAT)
     eng.on_game_state(_gs(0, 2, 0.0))  # stage 0 → else → set stage=1
     assert port.submitted == []
     eng.on_game_state(_gs(1, 2, 1.0))  # stage 1 → 命中 → move + exit
@@ -575,7 +578,7 @@ id: a
 groups:
   - group_id: G1
     composition:
-      MARINE: {min: 1, target: 1, max: 1}
+      terran/marine: {min: 1, target: 1, max: 1}
 strategy_instances:
   - instance_id: s1
     strategy_ref: ewatch
@@ -583,7 +586,7 @@ strategy_instances:
     params: {}
 """
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, region_layer=layer)
+    eng = FlowEngine(parse_strategy(strategy), parse_assembly(assembly), port, region_layer=layer, catalog=CAT)
     eng.on_game_state(_gs(0, 1, 0.0))  # 无敌人
     assert not eng._done
     units = [

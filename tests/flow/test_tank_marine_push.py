@@ -16,7 +16,10 @@ import yaml
 from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
+from game.catalog import load_terran
 from game import GameState, Grid, Owner, Point2, Unit
+
+CAT = load_terran()
 
 _DOC = Path(__file__).resolve().parent.parent.parent / "docs" / "tank_marine_push.yaml"
 _DATA = yaml.safe_load(_DOC.read_text(encoding="utf-8"))
@@ -51,7 +54,7 @@ def _ops(port, action):
 
 def test_tank_marine_loop_two_rounds_then_arrived():
     port = FakeGamePort(script=[])
-    eng = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port)
+    eng = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port, catalog=CAT)
 
     # garrison：20+4 就绪 → READY → formup（garrison 不发 op——when 条件满足直接退出）
     eng.on_game_state(_gs(0, Point2(0, 0), Point2(0, 0)))

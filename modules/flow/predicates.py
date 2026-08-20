@@ -61,16 +61,21 @@ class EvalCtx:
     strategy_start: float
     step_entered: float
     region_layer: RegionLayer | None = None  # 区域模型（名字→锚点/归属，ADR-0029）
-    catalog: object = None  # game.Catalog（形态变体归一化；None 透传，T3）
+    catalog: object = None  # game.Catalog（stable id ↔ 实体名翻译；T1 起由 FlowEngine 必传）
 
 
-def _normalize_type(catalog, type_name: str) -> str:
-    """形态变体归一化（T3）：catalog 为 None 时原样返回（离线/单测兼容）；
-    有 catalog 时把变体名（如 SIEGETANKSIEGED）归一到主名（SIEGETANK），
-    使架起后实体仍算作原组成员。主名/未知名原样返回（宽容，不报错）。"""
-    if catalog is None:
-        return type_name
-    return catalog.normalize_burnysc2_name(type_name)
+def unit_is_type(catalog, unit_type_name: str, stable_id: str) -> bool:
+    """gs 单位（burnysc2 实体名，可能是形态变体）是否属于 authoring 的 stable id 类型（T1/D1）。
+
+    authoring 侧只有 stable id（terran/siegetank）；gs 侧是 burnysc2 名且可能是变体
+    （SIEGETANKSIEGED）。方向固定为"stable id → 主名，单位名归一到主名后比较"，
+    单侧归一，不再有"把 stable id 当 burnysc2 名再归一"的兼容路径。
+    未知 stable id → False（构造期 create_group/validate_assembly 已拒，此为兜底）。
+    """
+    want = catalog.burnysc2_name_for(stable_id)
+    if want is None:
+        return False
+    return catalog.normalize_burnysc2_name(unit_type_name) == want
 
 
 def eval_when(node, ctx: EvalCtx):
@@ -237,9 +242,8 @@ def _p_region_center(ctx: EvalCtx, name) -> Point2 | None:
 
 
 def _p_unit_count(ctx: EvalCtx, type_name) -> int:
-    want = _normalize_type(ctx.catalog, type_name)  # 双侧归一：架起态仍计为主名（T3）
     return sum(1 for u in ctx.gs.units
-               if _normalize_type(ctx.catalog, u.type_name) == want and u.owner is Owner.SELF)
+               if u.owner is Owner.SELF and unit_is_type(ctx.catalog, u.type_name, type_name))
 
 
 def _p_group_center_in_region(ctx: EvalCtx, slot, region) -> bool:
@@ -259,9 +263,8 @@ def _p_enemy_visible_in(ctx: EvalCtx, region) -> bool:
 
 def _p_has_building(ctx: EvalCtx, type_name, region=None, ready=False) -> bool:
     layer = ctx.region_layer
-    want = _normalize_type(ctx.catalog, type_name)  # 双侧归一（T3）
     for u in ctx.gs.units:
-        if u.owner is not Owner.SELF or _normalize_type(ctx.catalog, u.type_name) != want:
+        if u.owner is not Owner.SELF or not unit_is_type(ctx.catalog, u.type_name, type_name):
             continue
         if ready and u.build_progress < 1.0:
             continue

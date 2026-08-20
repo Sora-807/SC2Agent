@@ -50,7 +50,7 @@ initial_step: formup
 steps:
   - step_id: formup
     branches:
-      - when: {op: ">=", args: [{op: group_count, args: [main, MARINE]}, {param: min_marines}]}
+      - when: {op: ">=", args: [{op: group_count, args: [main, terran/marine]}, {param: min_marines}]}
         do: [{op: exit_step, kind: done, reason: FORMED}]
       - do: []
   - step_id: advance
@@ -58,7 +58,7 @@ steps:
       - when: {op: arrived, args: [main, {param: target}, 8.0]}
         do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
       - do:
-          - {op: group_action, group_slot: main, type: MARINE, action_atom: attack_move_to,
+          - {op: group_action, group_slot: main, type: terran/marine, action_atom: attack_move_to,
              params: {position: {param: target}}}
 edges:
   - {from: formup, to: advance, kind: done, reason: FORMED}
@@ -73,7 +73,7 @@ id: macro_assembly
 groups:
   - group_id: G1
     composition:
-      MARINE: {{min: 50, target: 50, max: 50}}
+      terran/marine: {{min: 50, target: 50, max: 50}}
 strategy_instances:
   - instance_id: s1
     strategy_ref: macro_push
@@ -152,6 +152,7 @@ class FullFlowSink:
             parse_assembly(_assembly([self._enemy.x, self._enemy.y])),
             self._port,
             region_layer=layer,
+            catalog=load_terran(),  # T1：flow authoring 全 stable id，引擎靠 catalog 翻译实体名
         )
         log(f"[setup] CC={cc} 模板出生点={layout.origin} 敌方主矿={self._enemy}")
         log(f"[setup] macro 队列 = 补给站×8 精炼厂×2 兵营×4 枪兵×8（自卫）SCV×12；反应堆×4 独立并行队列；枪兵维持补到 50（固定位顺序摆放）")
