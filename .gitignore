@@ -20,5 +20,9 @@ docs/state_trace.jsonl
 Thumbs.db
 .DS_Store
 .zcode/
-# 运行时数据（提案日志、录制的帧）—— 不进版本库
+# 运行时数据（提案日志、录制的帧、agent 工作区与 trace）—— 不进版本库
 runtime/
+traces/
+
+# 密钥（用户提供的 BaseAgent .env，复制进来供本地测试；绝不入库）
+.env

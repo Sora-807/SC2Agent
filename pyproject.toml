@@ -12,6 +12,9 @@ dependencies = [
     # uvicorn 不自带 WS 实现：缺了它 WS 升级会被拒（"No supported WebSocket library"）。
     # 真机验过：pytest 的 TestClient 走 ASGI 直连不需要它，但真起服必须有。
     "websockets>=14",
+    # agent 层（vendor/agentic 用；见 vendor/agentic/NOTICE.md）
+    "openai>=2.0",
+    "python-dotenv>=1.0",
 ]
 
 # 不作为可安装包构建；modules/ 作为源根（pytest pythonpath=modules）
@@ -19,7 +22,7 @@ dependencies = [
 package = false
 
 [tool.pytest.ini_options]
-pythonpath = ["modules"]
+pythonpath = ["modules", "vendor", "."]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
