@@ -572,3 +572,56 @@ def test_gas_skips_inflight_reserved_geyser():
     build_ops = [o for o in port.submitted if o.action == "build_gas"]
     assert len(build_ops) == 2
     assert build_ops[-1].params["target_unit"] == 11  # 避开在途预留的 10 号气井
+
+
+# ---- ADR-0030 第 3/4 步：建造工征用 + assign_workers 写目标 ----
+
+
+def test_build_reserves_builder_until_confirmed():
+    """发出 build 时征用建造工（谁都不许动），实体出现确认后释放回矿池（ADR-0030 D3.3 / issues P14）。"""
+    from production.economy import WorkerReservations
+
+    res = WorkerReservations()
+    port = _Port()
+    rt = ProductionRuntime(CAT, port, region_layer=_layer(), reservations=res)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                   placement=PlacementExact("spot"))])
+    units = [_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")]
+    rt.on_game_state(_gs(units, minerals=200))
+    assert len(port.submitted) == 1 and port.submitted[0].action == "build"
+    assert res.tags() == frozenset({2}), "建造工必须在征用中"
+    # 实体出现 → 确认完成 → 释放
+    depot = _u(9, "SUPPLYDEPOT", x=2.0, y=2.0)
+    for _ in range(2):
+        rt.on_game_state(_gs(units + [depot], minerals=200))
+    assert res.tags() == frozenset(), "确认完成后应释放建造工"
+
+
+def test_build_does_not_steal_a_reserved_worker():
+    """已被别的 flight 征用的 SCV 不会被再次派去建造（_pick_builder 排除征用中）。"""
+    from production.economy import WorkerReservations
+
+    res = WorkerReservations()
+    res.reserve("other/build#1", 2)
+    port = _Port()
+    rt = ProductionRuntime(CAT, port, region_layer=_layer(), reservations=res)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                   placement=PlacementExact("spot"))])
+    units = [_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"), _u(3, "SCV")]
+    rt.on_game_state(_gs(units, minerals=200))
+    assert port.submitted and port.submitted[0].unit_tags == [3]
+
+
+def test_assign_workers_queue_item_writes_target_when_keeper_present():
+    """ADR-0030 D2.2：有维持器时 assign_workers 队列项 = 写目标（幂等、意图不蒸发，修 P9）。"""
+    from production.economy import EconomyKeeper
+
+    keeper = EconomyKeeper(CAT, _Port())
+    port = _Port()
+    rt = ProductionRuntime(CAT, port, region_layer=_layer(), economy=keeper)
+    rt.submit_queue("q", [QueueItem(op="assign_workers", task="gas", count=3)])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")]))
+    assert keeper.policy.gas_workers == 3, "队列项应把目标写进维持器"
+    assert port.submitted == [], "写目标不该立刻发命令（扇出是维持器的事）"
+    assert rt.queue("q").items == [], "写完即出队（幂等，不需要门控）"
+    assert rt.dropped == [], "更不该被当成失败丢弃"

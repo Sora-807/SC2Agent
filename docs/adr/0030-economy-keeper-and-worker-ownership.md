@@ -129,13 +129,27 @@
 
 ## 落地顺序
 
-1. `WorkerPoolPort` + Allocator 实现 + 注入（D3.4/D3.5）—— 需与 B1 协调 `engine.py`。
-   （协议已落在 `modules/game/ports.py`；缺 Allocator 侧实现与会话装配注入。）
+1. ✅ `WorkerPoolPort` + Allocator 实现 + 注入（D3.4/D3.5）。协议在 `game/ports.py`；`Allocator` 实现
+   `unleased_workers/reserve/release/reserved_tags`，并在 `refresh` 里把**征用中的单位排除出 free 池**
+   —— 战斗组抢不走正在盖房子的 SCV（issues P14 的结构性修法）。`FlowEngine(..., allocator=None)` 支持注入。
 2. ✅ `production/economy.py` 维持器 + 目标值语义（D2/D4）+ 离线验收 1-8。
-   **实现细化**：征用登记先独立成 `WorkerReservations` 对象（可被生产运行时与 Allocator 共同持有），
-   而不是一开始就塞进 Allocator 内部 —— 这样第 2 步不必碰任何有争议的文件，第 1/3 步再把它接进 lease 表。
-   气优先于矿在 `_targets` 里落地：先扣 `gas` 与 `reserve_idle`，剩下的人数才是矿的上限
-   （否则人不够时矿会先把人占满、气目标永远补不齐）；`reserve_idle` 因此才有真实行为。
-3. 生产运行时改走征用（D3.3）+ 离线测 4；`worker._pick_worker` 的 `rest[0]` 兜底删除。
-4. `assign_workers` 队列项改写目标（D2.2）+ 离线测 3；flow 侧编译期拦截放开（D1.3）。
-5. 删 `steward`（验收 9）+ 补性能护栏（验收 8）。
+   **实现细化**：征用登记独立成 `WorkerReservations` 对象，由会话装配同时交给 Allocator 与生产运行时
+   （flow 不 import production，反之亦然）。气优先于矿落在 `_targets`：先扣 `gas` 与 `reserve_idle`，
+   剩下的人数才是矿的上限（否则人不够时矿先占满人、气目标永远补不齐）；`reserve_idle` 因此才有真实行为。
+3. ✅ 生产运行时改走征用（D3.3）：`_pick_builder` 排除征用中；发 build 即征用，确认/丢弃/换人时释放。
+   顺带修 P7（`WorkerAllocator._idle` 忽略 `skip`，会 stop 掉本帧刚派去建造的 SCV）。
+   `worker._pick_worker` 的 `rest[0]` 兜底**暂留**：旧的一次性 `assign_workers` 路径还在用它，
+   等脚本全部迁到维持器后一起删。
+4. 🟡 `assign_workers` 队列项改写目标（D2.2）✅；**flow 侧编译期拦截仍关着**（D1.3 待接线）——
+   flow 的 `do` 要发经济意图，还缺一层复合意图路由（把 `assign_workers` 从 Operation 流里截下来交给维持器）。
+   在那之前保持编译期拒绝是诚实的：能写但静默失效比写不了更糟。
+5. 🟡 删 `steward` ✅（`run_tank_marine_push.py` 的手写采矿维持循环已删，改为每帧 tick 维持器）；
+   性能护栏 ✅（离线 300 单位 < 2 ms）。**验收 9 仍需真机对照**。
+   `run_full_flow.py` 的 steward 尚未迁移（旧脚本，等 tank 脚本真机验过再动）。
+
+## 真机验证要点（T6 时看）
+
+- tick 日志新增 `eco={目标, 征用, 本帧差量}`：稳定态的「本帧差量」应为 0（幂等），
+  只在新兵进场 / 矿采空 / 配额变化时非 0。
+- 气工应在第 1 座精炼厂完工后到 3、第 2 座后到 6（macro 队列现在写的是**目标值** 3 → 6，不是各派 3 个）。
+- 建造期间被征用的 SCV 不应出现在 gather 命令里；建完立刻回矿。

@@ -94,3 +94,15 @@ def test_gas_requires_refinery_on_geyser():
     e2 = ALLOC.assign(_gs(scvs + [r1, r2], []), WorkerTask.GAS, 6)
     assert len(e2) == 6  # 两个精炼厂 → 各饱和 3
     assert {x.params["target_unit"] for x in e2} == {98, 99}  # 目标=精炼厂 tag
+
+
+def test_idle_respects_skip():
+    """P7：本帧已被派去建造的 SCV 不该被 IDLE 顺手 stop 掉（同帧同单位命令会被去重丢单）。"""
+    minerals = [_u(10, "MINERALFIELD", owner=Owner.NEUTRAL)]
+    scvs = [_u(1, "SCV", orders=[Order(ability="Gather", target_tag=10)]),
+            _u(2, "SCV", orders=[Order(ability="Gather", target_tag=10)])]
+    gs = _gs(scvs, resources=minerals)
+    all_stopped = ALLOC.assign(gs, WorkerTask.IDLE, 2)
+    assert {e.unit_tags[0] for e in all_stopped} == {1, 2}
+    kept = ALLOC.assign(gs, WorkerTask.IDLE, 2, skip=frozenset({1}))
+    assert {e.unit_tags[0] for e in kept} == {2}

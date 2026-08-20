@@ -59,11 +59,20 @@ class GroupState:
 
 
 class Allocator:
-    def __init__(self, catalog) -> None:
+    """组 lease 表 + 工兵所有权（ADR-0030 D3：三方共用一张表）。
+
+    同时实现 game.ports.WorkerPoolPort —— 生产（建造征用）与经济维持器（采矿领地）都从这里取人，
+    但它们不许 import flow，所以按端口 duck-typing 消费。
+    reservations = 短期独占登记（duck-typed：reserve/release/tags），具体类是
+    production.economy.WorkerReservations，由会话装配同时交给这里和生产运行时（flow 不 import production）。
+    """
+
+    def __init__(self, catalog, reservations=None) -> None:
         if catalog is None:
             raise ValueError("Allocator 需要 catalog：composition 用 stable id，匹配 gs 实体名需翻译（T1/D1）")
         self._groups: dict[str, GroupState] = {}
         self._catalog = catalog
+        self._reservations = reservations
 
     def create_group(self, group_id: str, composition: dict) -> None:
         """建组。composition 键必须是 catalog 已登记的 stable id（未知键构造期即报错，不静默漏 lease）。"""
@@ -82,7 +91,9 @@ class Allocator:
             for t in list(g.leased_by_type):
                 g.leased_by_type[t] = {tag for tag in g.leased_by_type[t] if tag in own}
         leased_all = {tag for g in self._groups.values() for s in g.leased_by_type.values() for tag in s}
-        free = own - leased_all
+        # 征用中的单位（正在盖房子的 SCV）不进 free 池 —— 否则战斗组会把它抢走
+        # （issues P14 的结构性修法，ADR-0030 D3.3）
+        free = own - leased_all - self.reserved_tags()
         # 补兵（S3 滞回 + FCFS：按 gs.units 顺序取前 N 个 free）
         for g in self._groups.values():
             for stable_id, spec in g.composition.items():
@@ -148,6 +159,35 @@ class Allocator:
                 "leased_tags": sorted({tag for s in g.leased_by_type.values() for tag in s}),
             })
         return out
+
+    # ---- WorkerPoolPort（game.ports；生产与经济维持器消费，ADR-0030 D3.4）----
+
+    def unleased_workers(self, gs: GameState) -> list[int]:
+        """没被任何组租用、也没被征用的工兵 tag —— 经济维持器的领地（ADR-0030 D3.2）。
+
+        战术要专用工兵就照常声明一个组（terran/scv: N），这里一租，维持器自动不再碰那些人；
+        组解散后它们又回到这个列表。所有权边界就是这张 lease 表本身，不需要第二套机制。
+        """
+        names = frozenset(e.burnysc2_name for e in self._catalog.where(role="worker"))
+        leased = {tag for g in self._groups.values()
+                  for s in g.leased_by_type.values() for tag in s}
+        reserved = self.reserved_tags()
+        return [u.tag for u in gs.units
+                if u.owner == Owner.SELF and u.type_name in names
+                and u.tag not in leased and u.tag not in reserved]
+
+    def reserve(self, owner: str, tag: int) -> bool:
+        """短期独占征用（建造）。会话没装配 reservations 时返回 False（= 不支持征用）。"""
+        if self._reservations is None:
+            return False
+        return bool(self._reservations.reserve(owner, tag))
+
+    def release(self, owner: str) -> None:
+        if self._reservations is not None:
+            self._reservations.release(owner)
+
+    def reserved_tags(self) -> frozenset[int]:
+        return self._reservations.tags() if self._reservations is not None else frozenset()
 
     def expand_all(self, group_id: str) -> list[int]:
         """group 内所有类型已 lease 的 unit_tag（供 group_center 等空间谓词用）。"""

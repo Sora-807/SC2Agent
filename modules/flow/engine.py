@@ -32,7 +32,7 @@ TRANSITION_HISTORY = 20
 
 class FlowEngine:
     def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port,
-                 region_layer=None, catalog=None) -> None:
+                 region_layer=None, catalog=None, allocator=None) -> None:
         if catalog is None:
             raise ValueError(
                 "FlowEngine 需要 catalog（game.catalog.load_terran()）：flow authoring 只用 stable id"
@@ -46,7 +46,9 @@ class FlowEngine:
             raise AssertionError("地图名字校验失败:\n- " + "\n- ".join(name_problems))
         self._m = manifest
         self._port = port
-        self._alloc = Allocator(catalog=catalog)  # catalog 透传给 Allocator（形态变体归一化，T3）
+        # Allocator 可由会话装配注入（ADR-0030 D3.5）：它同时是生产/经济的工兵所有权表（WorkerPoolPort），
+        # 三方必须共用同一个实例；不注入就自建，保持既有用法与测试不变。
+        self._alloc = allocator if allocator is not None else Allocator(catalog=catalog)
         self._region_layer = region_layer  # 区域模型（map 名→坐标，ADR-0029）
         self._catalog = catalog  # 透传给 EvalCtx（谓词层归一化，T3）
         for g in assembly.groups:

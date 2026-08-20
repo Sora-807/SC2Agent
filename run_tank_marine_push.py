@@ -28,8 +28,10 @@ from game import QueueItem, Owner, Point2
 from game.catalog import load_terran
 from game.production import PlacementExact, PlacementInRegion
 from driver.sc2_adapter import SC2GamePort
+from flow.allocator import Allocator
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
+from production.economy import EconomyKeeper, WorkerReservations
 from production.runtime import ProductionRuntime
 from sc2.data import Difficulty, Race
 from tactical_map import instantiate_spawn, load_ladder_map, spawn_layout_nearest
@@ -65,7 +67,7 @@ class TankFullFlowSink:
         self._engine: FlowEngine | None = None
         self._enemy: Point2 | None = None
         self._cc: Point2 | None = None
-        self._steward_seq = 0
+        self._maintain_seq = 0
         self._bot = None
 
     def on_game_state(self, raw) -> None:
@@ -74,8 +76,9 @@ class TankFullFlowSink:
             self._setup(gs)
         if self._runtime is not None:
             self._runtime.on_game_state(gs)
+            self._economy.on_game_state(gs)  # 采矿常驻收敛（ADR-0030）：只发差量
             self._engine.on_game_state(gs)
-            self._steward(raw, gs)
+            self._maintain(raw, gs)
             self._verify(raw, gs)
 
     def on_session_event(self, event) -> None:
@@ -99,7 +102,15 @@ class TankFullFlowSink:
             return orig_submit(ops)
 
         self._port.submit_operations = logging_submit  # type: ignore[method-assign]
-        self._runtime = ProductionRuntime(load_terran(), self._port, region_layer=layer)
+        # ADR-0030 会话装配：一张 lease 表（Allocator=WorkerPoolPort）+ 征用登记 + 经济维持器，
+        # 三方（战斗组 / 生产建造 / 采矿）共用同一份所有权，flow 与 production 都不互相 import。
+        cat = load_terran()
+        self._reservations = WorkerReservations()
+        self._alloc = Allocator(cat, reservations=self._reservations)
+        self._economy = EconomyKeeper(cat, self._port, region_layer=layer,
+                                     pool=self._alloc, reservations=self._reservations)
+        self._runtime = ProductionRuntime(cat, self._port, region_layer=layer,
+                                         reservations=self._reservations, economy=self._economy)
         # 三队列并行：SCV训练(CC槽) / 建筑(SCV建造) / 军队(兵营/工厂槽) 互不阻塞
         # 真机校准：开局 8 SCV + CC 13 supply（非标准 12/15）
         self._runtime.submit_queue("scv", [
@@ -110,9 +121,11 @@ class TankFullFlowSink:
             QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),
             QueueItem(op="build", type="terran/barracks", placement=PlacementInRegion("home")),
             QueueItem(op="build", type="terran/refinery"),
+            # ADR-0030 D2：assign_workers 现在是**目标值**（维持 N 个），不是"再派 N 个" ——
+            # 所以第二条是 6 而不是 3；目标持久，精炼厂还在施工也不会蒸发（原 P9）。
             QueueItem(op="assign_workers", task="gas", count=3),
             QueueItem(op="build", type="terran/refinery"),
-            QueueItem(op="assign_workers", task="gas", count=3),
+            QueueItem(op="assign_workers", task="gas", count=6),
             QueueItem(op="build", type="terran/barracks", placement=PlacementInRegion("home")),
             QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),
             QueueItem(op="build", type="terran/factory", placement=PlacementExact("factory1")),
@@ -143,7 +156,8 @@ class TankFullFlowSink:
             parse_assembly(_assembly_yaml(self._enemy, garrison)),
             self._port,
             region_layer=layer,
-            catalog=load_terran(),  # T3 归一化：架起坦克 SIEGETANKSIEGED 仍算 SIEGETANK 组
+            catalog=cat,  # T3 归一化：架起坦克 SIEGETANKSIEGED 仍算 SIEGETANK 组
+            allocator=self._alloc,  # 与生产/经济共用所有权表（ADR-0030 D3.5）
         )
         self._bot = self._port._bot
         self._bot._apply_failures = []
@@ -151,33 +165,17 @@ class TankFullFlowSink:
         log(f"[setup] 3队列并行: scv(CC槽×12) + macro(建筑depot×5 兵营×2+反应堆×2 气矿×2 工厂+科技实验室 工程站 军械库) + army(机枪×20 坦克×4)；"
             f"维持：步兵<20 + 坦克<4（formup 内）")
 
-    def _steward(self, raw, gs) -> None:
-        """演示粘合：空闲 SCV→矿/气 + 补给维持 + 步兵/坦克维持（formup 内补训）。"""
-        if raw.seq - self._steward_seq < 10:
+    def _maintain(self, raw, gs) -> None:
+        """演示粘合：补给维持 + 步兵/坦克维持（formup 内补训）。
+
+        矿/气派工已交给 EconomyKeeper（ADR-0030），这里只剩生产侧的维持。
+        """
+        if raw.seq - self._maintain_seq < 10:
             return
-        self._steward_seq = raw.seq
-        # 矿/气派工（气工检测用精炼厂距离而非 target_tag——SC2 Harvest order 不带 target_tag）
-        idle = [u for u in gs.units
-                if u.owner is Owner.SELF and u.type_name == "SCV" and not u.orders]
-        if idle:
-            refineries = [u for u in gs.units
-                          if u.owner is Owner.SELF and u.type_name == "REFINERY" and u.build_progress >= 1.0]
-            if refineries:
-                ref_pos = [u.position for u in refineries]
-                gas_workers = sum(1 for u in gs.units
-                                  if u.owner is Owner.SELF and u.type_name == "SCV"
-                                  and any((u.position.x - r.x) ** 2 + (u.position.y - r.y) ** 2 < 25
-                                          for r in ref_pos))
-                total_scvs = sum(1 for u in gs.units
-                                 if u.owner is Owner.SELF and u.type_name == "SCV")
-                mineral_workers = total_scvs - gas_workers
-                # 只在矿工充足时派气（>10 矿工 + <6 气工），否则全派矿
-                task = "gas" if (gas_workers < 6 and mineral_workers > 10) else "mineral"
-            else:
-                task = "mineral"
-            self._runtime.submit_queue("steward", [
-                QueueItem(op="assign_workers", task=task, count=len(idle)),
-            ])
+        self._maintain_seq = raw.seq
+        # 矿/气派工已交给 EconomyKeeper（ADR-0030）：每帧收敛，新兵自动进矿、
+        # 采空自动回收、气矿建好自动补满 —— 原来这里那段手写维持循环（steward 队列）已删。
+
         macro_q = self._runtime.queue("macro")
         army_qs = [self._runtime.queue(n) for n in ("army_rax", "army_fac")]
         formup = self._engine._active_step == "formup"
@@ -242,6 +240,8 @@ class TankFullFlowSink:
                            f"{gs.game_time - v['since']:.0f}s", v["reason"])
                        for k, v in self._runtime.blocked.items()}
             stalls = [m for _, m in self._runtime.stalls][-2:]
+            eco = self._economy.snapshot(gs)
+            eco_brief = {"目标": eco["targets"], "征用": len(eco["reserved"]), "本帧差量": eco["last_ops"]}
             # 坦克训练诊断：两条军队产线队列状态 + 工厂 orders
             army_items = [(n, [(i.op.value, i.type, i.count) for i in q.items])
                           for n in ("army_rax", "army_fac")
@@ -287,7 +287,7 @@ class TankFullFlowSink:
                 f"supply={gs.supply_used}/{gs.supply_cap} depot={depots} refinery={refinery_count} factory={factory} techlab={techlab} "
                 f"scv={scvs} marine={marines} tank={tanks} sieged={sieged} scv_sample={scv_sample} army_q={army_items} fac_orders={factory_orders} {leased}{gc}step={step} "
                 f"done={self._engine._done} tank_orders={tank_orders} apply_failures={fails[-3:]} "
-                f"flight={flight} dropped={dropped} blocked={blocked} stalls={stalls}")
+                f"flight={flight} dropped={dropped} blocked={blocked} stalls={stalls} eco={eco_brief}")
             # 建筑位置快照（每 100 帧 = 10 游戏秒）：实际落位 vs base_layout 计划位对照
             if raw.seq % 100 == 0:
                 bldgs = sorted(

@@ -237,3 +237,57 @@ def test_snapshot_exposes_targets_and_reservations():
     assert snap["targets"]["gas"] == 2
     assert snap["reserved"] == {"production/build#1": 9}
     assert len(snap["nodes"]) == 4
+
+
+
+# ---- ADR-0030 第 1/3 步：三方共用一张 lease 表（端到端）----
+
+
+def test_allocator_implements_worker_pool_port():
+    """Allocator 就是 WorkerPoolPort：无主工兵 = 全部 - 组租用 - 征用。"""
+    from flow.allocator import Allocator
+
+    res = WorkerReservations()
+    alloc = Allocator(CAT, reservations=res)
+    alloc.create_group("G1", {"terran/scv": {"min": 2, "target": 2, "max": 2}})
+    gs = _gs([_scv(i) for i in range(1, 6)], _patches(2), seq=0)
+    alloc.refresh(gs)
+    leased = set(alloc.expand("G1", "terran/scv"))
+    assert len(leased) == 2
+    unleased = set(alloc.unleased_workers(gs))
+    assert unleased == {1, 2, 3, 4, 5} - leased
+    # 征用一个 → 立刻退出维持器领地
+    tag = sorted(unleased)[0]
+    assert alloc.reserve("production/build#1", tag)
+    assert tag not in set(alloc.unleased_workers(gs))
+    alloc.release("production/build#1")
+    assert tag in set(alloc.unleased_workers(gs))
+
+
+def test_reserved_builder_cannot_be_leased_by_a_group():
+    """P14 的结构性修法：正在盖房子的 SCV 不进 free 池，战斗组抢不走。"""
+    from flow.allocator import Allocator
+
+    res = WorkerReservations()
+    alloc = Allocator(CAT, reservations=res)
+    alloc.create_group("G1", {"terran/scv": {"min": 3, "target": 3, "max": 3}})
+    gs = _gs([_scv(i) for i in range(1, 4)], _patches(1), seq=0)
+    res.reserve("production/build#1", 2)  # 2 号正在建造
+    alloc.refresh(gs)
+    assert 2 not in alloc.expand("G1", "terran/scv")
+    assert set(alloc.expand("G1", "terran/scv")) == {1, 3}  # 只租到 2 个（够不到 target）
+
+
+def test_keeper_and_allocator_share_one_reservation_table():
+    """会话装配：Allocator 与维持器共用同一份 WorkerReservations —— 一处征用，两处都看得见。"""
+    from flow.allocator import Allocator
+
+    res = WorkerReservations()
+    alloc = Allocator(CAT, reservations=res)
+    port = _Port()
+    k = EconomyKeeper(CAT, port, pool=alloc, reservations=res)
+    gs = _gs([_scv(1), _scv(2)], _patches(2), seq=0)
+    alloc.refresh(gs)
+    assert alloc.reserve("production/build#7", 2)
+    k.on_game_state(gs)
+    assert [t for t, _n in port.gathers()] == [1], "被征用的 2 号维持器不该碰"

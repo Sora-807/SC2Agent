@@ -60,9 +60,17 @@ def _placement_dict(p) -> dict | None:
 class ProductionRuntime:
     """生产运行时：命名队列集合 + 队首门控 drain + 工具操作（P0 生产模块安排）。"""
 
-    def __init__(self, catalog: Catalog, port, region_layer=None) -> None:
+    def __init__(self, catalog: Catalog, port, region_layer=None,
+                 reservations=None, economy=None) -> None:
         self._catalog = catalog
         self._port = port  # duck-typed：submit_operations（同 flow engine）
+        # 工兵征用登记（ADR-0030 D3.3）：与 flow.Allocator / EconomyKeeper 共用同一个实例，
+        # 建造期间那个 SCV 既不会被战斗组 lease、也不会被维持器改派（issues P14 的结构性修法）。
+        self._reservations = reservations
+        # 经济维持器（ADR-0030 D2.2）：有它时 assign_workers 队列项 = 写目标（幂等、意图不蒸发）；
+        # 没有它时退回旧的一次性 WorkerAllocator 展开（脚本迁移完再删）。
+        self._economy = economy
+        self._flight_seq = 0  # 征用 owner 编号（production/build#N）
         self._region_layer = region_layer  # placement 解析（BuildSlot/PosMark，ADR-0029）
         self._queues: dict[str, Queue] = {}
         self._workers = WorkerAllocator(catalog)
@@ -231,7 +239,10 @@ class ProductionRuntime:
                     outcome = self._confirm_build(flight, gs)
                     if outcome == "waiting":
                         still_pending.append(flight)
+                    elif outcome == "started":
+                        self._release_flight(flight)  # 实体已出现 → 建造工回去采矿
                     elif outcome == "failed":
+                        self._release_flight(flight)  # 命令没了 → 先放回，重试时再征用
                         # _confirm_build 已设 builder=None；下帧再重试
                         # （不在本帧重试——避免同帧 failed→retry→failed 循环）
                         still_pending.append(flight)
@@ -322,6 +333,11 @@ class ProductionRuntime:
         if not isinstance(head.task, WorkerTask):
             self._drop(head, "assign_workers 缺 task（mineral|gas|idle）")
             return
+        if self._economy is not None:
+            # ADR-0030 D2.2：队列项 = **写目标**（绝对值，幂等）。目标是持久的，所以
+            # "精炼厂还没建好就设了 gas 目标"不再蒸发（issues P9）—— 建好后维持器自动补满。
+            self._economy.set_target(head.task.value, max(0, head.count))
+            return
         emissions = self._workers.assign(gs, head.task, max(1, head.count),
                                         base_pos=self._base_anchor(),
                                         skip=frozenset(self._frame_busy))
@@ -382,7 +398,7 @@ class ProductionRuntime:
             [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
             gs.seq,
         )
-        self._build_flights.setdefault(q_name, []).append({
+        flight = {
             "item": head,
             "type": head.type,
             "builder": builder.tag,
@@ -391,7 +407,9 @@ class ProductionRuntime:
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）
             "radius": 1.5,
-        })
+        }
+        self._reserve_for_flight(flight, builder.tag)  # 建造期间这个 SCV 谁都不许动
+        self._build_flights.setdefault(q_name, []).append(flight)
         return "emitted"
 
     # ---- 在途建造确认（真机教训：SC2 放置失败时命令静默消失）----
@@ -477,6 +495,7 @@ class ProductionRuntime:
         )
         if pos is None or slot_name is None:
             self._drop(head, reason or f"放置失败：候选位耗尽（已试 {sorted(flight['attempted'])}）")
+            self._release_flight(flight)
             return False
         res = check_build(gs, self._catalog, head.type, pos)
         builder = self._pick_builder(gs)
@@ -487,6 +506,7 @@ class ProductionRuntime:
             gs.seq,
         )
         flight["builder"] = builder.tag
+        self._reserve_for_flight(flight, builder.tag)  # 换人重发 → 征用换到新工兵
         flight["frames"] = 0
         flight["seen_tags"] = self._type_entity_tags(gs, head.type)
         flight["attempted"] = set(flight["attempted"]) | {slot_name}
@@ -546,9 +566,11 @@ class ProductionRuntime:
 
     def _pick_builder(self, gs: GameState):
         names = {e.burnysc2_name for e in self._catalog.where(role="worker")}
+        reserved = self._reservations.tags() if self._reservations is not None else frozenset()
         candidates = [u for u in gs.units
                       if u.owner is Owner.SELF and u.type_name in names
-                      and u.tag not in self._frame_busy]  # 本帧已被命令的工兵不重复用
+                      and u.tag not in self._frame_busy  # 本帧已被命令的工兵不重复用
+                      and u.tag not in reserved]  # 已在给别的 flight 盖房子的不抢（ADR-0030 D3.3）
         idle = [u for u in candidates if not u.orders]  # 优先空闲工兵
         return (idle or candidates or [None])[0]
 
@@ -781,6 +803,26 @@ class ProductionRuntime:
             ))
         if ops:
             self._port.submit_operations(ops)
+
+    # ---- 建造工征用（ADR-0030 D3.3）----
+
+    def _reserve_for_flight(self, flight: dict, tag: int) -> None:
+        """给 flight 征用建造工；同一 flight 换人时先释放旧的（owner 不变）。"""
+        if self._reservations is None:
+            return
+        owner = flight.get("owner")
+        if owner is None:
+            self._flight_seq += 1
+            owner = f"production/build#{self._flight_seq}"
+            flight["owner"] = owner
+        self._reservations.release(owner)
+        self._reservations.reserve(owner, tag)
+
+    def _release_flight(self, flight: dict) -> None:
+        """flight 结束（实体已出现 / 被丢弃 / 转重试）→ 释放建造工，让它回去采矿。"""
+        owner = flight.get("owner")
+        if owner is not None and self._reservations is not None:
+            self._reservations.release(owner)
 
     def _drop(self, item: QueueItem, reason: str) -> None:
         self.dropped.append((item, reason))

@@ -82,7 +82,7 @@ class WorkerAllocator:
         """assign_workers(task, count) → gather/stop 级 Emission 列表。base_pos = 主基锚点（节点过滤）；
         skip = 本帧已被其他队列下过令的单位 tag（同帧同单位命令会被 burnysc2 去重丢单——真机踩坑）。"""
         if task is WorkerTask.IDLE:
-            return self._idle(gs, count)
+            return self._idle(gs, count, skip)  # P7：IDLE 也必须吃 skip（否则会 stop 掉本帧刚派去建造的 SCV）
         workers = [u for u in self._workers(gs) if u.tag not in skip]
         nodes = self._nodes(gs, gas=(task is WorkerTask.GAS), base_pos=base_pos)
         if not workers or not nodes:
@@ -116,9 +116,14 @@ class WorkerAllocator:
                 break  # 全部饱和或没工兵
         return out
 
-    def _idle(self, gs: GameState, count: int) -> list[Emission]:
-        """idle：把正在采集的 SCV 从矿/气解放（stop）——给建造/修理用。"""
-        workers = self._workers(gs)
+    def _idle(self, gs: GameState, count: int,
+              skip: frozenset[int] = frozenset()) -> list[Emission]:
+        """idle：把正在采集的 SCV 从矿/气解放（stop）——给建造/修理用。
+
+        skip = 本帧已被其他队列命令过的单位（P7：原本 IDLE 忽略 skip，会 stop 掉刚被派去建造的 SCV，
+        与"同帧同单位命令被 burnysc2 去重丢单"的防护自相矛盾）。
+        """
+        workers = [u for u in self._workers(gs) if u.tag not in skip]
         nodes = self._nodes(gs, gas=False, base_pos=None) + self._nodes(gs, gas=True, base_pos=None)
         node_tags = {n.tag for n in nodes}
         out: list[Emission] = []

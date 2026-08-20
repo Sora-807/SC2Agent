@@ -74,3 +74,19 @@ def test_run_scripts_only_touch_existing_engine_attrs():
     for script in sorted(ROOT.glob("run_*.py")):
         for attr in sorted(set(pattern.findall(script.read_text(encoding="utf-8")))):
             assert hasattr(eng, attr), f"{script.name} 引用了 FlowEngine 上不存在的 {attr!r}"
+
+
+
+def test_tank_script_shares_one_ownership_table():
+    """ADR-0030 会话装配自检：Allocator / 生产 / 维持器必须共用同一份 reservations 与同一个 Allocator。
+
+    真机脚本不进 pytest，装配写错（各自 new 一份）在离线是看不出来的 —— 这条就是那个自检。
+    """
+    import inspect
+
+    src = inspect.getsource(_import("run_tank_marine_push"))
+    assert "reservations=self._reservations" in src, "生产/维持器要共用征用登记"
+    assert "pool=self._alloc" in src, "维持器领地要来自同一个 Allocator（WorkerPoolPort）"
+    assert "allocator=self._alloc" in src, "FlowEngine 要注入同一个 Allocator"
+    assert "self._economy.on_game_state" in src, "维持器必须每帧 tick，否则不收敛"
+    assert 'submit_queue("steward"' not in src, "手写的采矿维持循环应已删除（ADR-0030 验收 9）"
