@@ -21,8 +21,8 @@ export function SessionBar() {
         {fixtures.map((f) => (
           <option key={f.key} value={f.key}>{f.label}</option>
         ))}
-        {api.ok && api.sources?.includes("live") !== true && (
-          <option value="live">live（后端沙盒会话）</option>
+        {api.ok && (
+          <option value="live">live（子进程会话）</option>
         )}
       </select>
 

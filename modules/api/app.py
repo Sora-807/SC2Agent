@@ -88,17 +88,23 @@ def create_app(frame_dir: Path | str | None = None,
         return src
 
     async def _pump_session() -> None:
-        """按 SESSION_TICK 推进沙盒会话。单线程 asyncio → 命令与 tick 天然互斥，不需要锁。"""
+        """按 SESSION_TICK 推进**进程内**沙盒会话。子进程会话（B3）自己 tick，不归这里管。
+
+        单线程 asyncio → 命令与 tick 天然互斥，不需要锁。
+        """
         while True:
             await asyncio.sleep(SESSION_TICK)
             sess = app.state.session
-            if sess is not None:
-                try:
-                    sess.tick()
-                except Exception as exc:            # noqa: BLE001
-                    sess.state = "崩溃"
-                    sess.error = f"{type(exc).__name__}: {exc}"
-                    return
+            if sess is None:
+                continue
+            if not hasattr(sess, "tick"):
+                continue          # LiveSession：子进程自己推进
+            try:
+                sess.tick()
+            except Exception as exc:            # noqa: BLE001
+                sess.state = "崩溃"
+                sess.error = f"{type(exc).__name__}: {exc}"
+                return
 
     def _ensure_pump() -> None:
         if app.state.session_task is None or app.state.session_task.done():
@@ -143,7 +149,12 @@ def create_app(frame_dir: Path | str | None = None,
         而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
         """
         if app.state.session is not None:
-            raise HTTPException(status_code=409, detail="已有运行中的会话（先 POST /api/session/stop）")
+            # 换驱动 = 换会话：旧会话自动停止。让用户先手动 stop 是坏体验 ——
+            # 也是刚才实测踩过的坑（残留会话导致新会话起不来，Node 侧 fetch 409 然后超时）。
+            old = app.state.session
+            if hasattr(old, "proc"):
+                old.stop()
+            app.state.session = None
         if driver in ("sim", "sc2"):
             app.state.session = LiveSession(driver=driver)
             app.state.proposals.session = app.state.session

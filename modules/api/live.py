@@ -225,6 +225,19 @@ class LiveSession:
         self._send({"op": "workers", "task": task, "count": int(count)})
         return {"task": task, "quota": int(count), "dispatched": True, "accepted_seq": self.seq}
 
+    def tick(self) -> None:
+        """手动步进一次 = 等一帧。子进程按墙钟自推，父进程的 `tick` 只是"等到新帧"。
+
+        给 `/api/session/tick` 用：离线会话是推进，live 会话是等一帧 —— 对外语义一致
+        （"给我一帧新观察"）。给负超时会一直等，所以加个上限。
+        """
+        import time
+
+        target = self.seq + 1
+        deadline = time.time() + 10.0
+        while time.time() < deadline and self.seq < target:
+            time.sleep(0.05)
+
     # ---- 提案需要的三件事（与 OfflineSession 同名同义）----
 
     def queue_items(self, name: str = "main") -> list:

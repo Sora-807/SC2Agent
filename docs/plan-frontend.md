@@ -451,7 +451,7 @@ interface Proposal {
 | F5 | 调试页 ✅**已完成** | F2 | — | 命令流水(按 origin/动作筛)、求值诊断、掉项审计、警报、原始帧检查器;摆放叠加已在地图页 |
 | F6 | 概览页组装 ✅**已完成** | F1-F4 | — | 六面板 + 可折叠(localStorage) + 点击跳完整页 + 内嵌地图与投影 |
 | F7 | 对话栏 + 提案审批 ✅**已完成**(agent 侧待 B10) | F1,F3 | B7 ✅ | 重对话栏(消息流+内联提案卡+待审批徽标)、主区审批面板、**双投影对比图**、逐条接受、拒绝附理由 |
-| F8 | 接 live | F1-F6 | B2,B3 | WsFrameSource、会话 start/stop、回到实时 |
+| F8 | 接 live ✅**已完成** | F1-F6 | B2,B3 ✅ | `WsFrameSource({live:true})` + `ReviewableSource` 回看、会话启动(offline/sim/sc2)与停止、回到实时 |
 | F9 | 规划页(地图/生产/Flow AST 编辑器) | F2,F3,F4 | B2,B4 + DSL-T2 | 离线创作工具 |
 
 **F0-F6 对后端零依赖** —— 可与 DSL v0.2 重构完全并行。F5 先跑夹具、B1 落地后自动变真数据。

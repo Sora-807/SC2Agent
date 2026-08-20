@@ -20,9 +20,10 @@ import type { FrameSource, TimelineMarker, Unsubscribe } from "../source/types";
  * 帧源种类：
  * - `fixture`   本地 JSONL（离线，可任意 seek）
  * - `mock-live` 用 JSONL 冒充 live（验"只读回看 + 回到实时"的语义）
- * - `api`       连后端 WS（B2 的回放服务；B3 之后同一条通道就是真 live）
+ * - `api`       连后端 WS 回放服务（任意 JSONL 帧源，可 seek）
+ * - `live`      连后端 **live 会话**（B3 的子进程驱动；`ReviewableSource` 提供环形缓冲回看）
  */
-export type SourceKind = "fixture" | "mock-live" | "api";
+export type SourceKind = "fixture" | "mock-live" | "api" | "live";
 
 /** 后端 API 基址（开发期固定；`tools/serve_api.py` 的默认端口） */
 export const API_BASE = "http://127.0.0.1:8770";
@@ -124,9 +125,9 @@ export const useFrames = create<FramesStore>((set, get) => {
     async attach(kind, fixtureKey) {
       get().detach();
       set({ loading: true, error: null, ...EMPTY_FRAMES });
-      // api 源的帧由后端推，不需要本地夹具索引里有它（`live` 就只在后端存在）
+      // api/live 源的帧由后端推，不需要本地夹具索引里有它
       const meta = get().fixtures.find((f) => f.key === fixtureKey);
-      if (kind !== "api" && !meta) {
+      if (kind !== "api" && kind !== "live" && !meta) {
         set({ loading: false, error: `没有夹具 ${fixtureKey}` });
         return;
       }
@@ -142,7 +143,15 @@ export const useFrames = create<FramesStore>((set, get) => {
 
       let src: FrameSource;
       try {
-        if (kind === "api") {
+        if (kind === "live") {
+          // live 会话：WS 是**跟随**的（caps.seek=false），套 ReviewableSource
+          // 拿到"拖回最近历史不碰后端 + 回看期间 live 继续累积"（F1 已验的语义）。
+          const ws = WsFrameSource.replay(API_BASE, "live", 0, { live: true });
+          const rev = new ReviewableSource(ws);
+          rev.onChange(syncMeta);
+          await ws.connect();      // 握手里会校验 rev，不匹配直接抛（红线 C8）
+          src = rev;
+        } else if (kind === "api") {
           const ws = WsFrameSource.replay(API_BASE, fixtureKey, 0);
           ws.onChange(syncMeta);
           await ws.connect();      // 握手里会校验 rev，不匹配直接抛（红线 C8）

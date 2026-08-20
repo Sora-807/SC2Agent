@@ -41,13 +41,13 @@ export class WsFrameSource implements FrameSource {
     this.caps = { live: opts.live ?? false, seek: !(opts.live ?? false) };
   }
 
-  static replay(base: string, sourceId: string, rate = 0): WsFrameSource {
+  static replay(base: string, sourceId: string, rate = 0, opts: { live?: boolean } = {}): WsFrameSource {
     const u = new URL(base);
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
     u.pathname = "/api/frames";
     u.searchParams.set("source", sourceId);
     u.searchParams.set("rate", String(rate));
-    return new WsFrameSource(u.toString());
+    return new WsFrameSource(u.toString(), { live: opts.live ?? false });
   }
 
   connect(): Promise<void> {
