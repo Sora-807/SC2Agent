@@ -78,9 +78,9 @@
 | **B4** | `MapInfo` 地形静态面(driver 增量导出 game_info) | **T6** | 零 | 地图页从散点图变地图 |
 | **B9** | D6 `ApplyResult` 字段 + D7 `GameEvent` 目录 | **T6**,B3 | 零 | 命令流水的落地状态 |
 | **B10** | `ObservationPacket`:给 agent 的帧投影(agent 接缝) | B2 | 零 | agent 读面与 UI 同源 |
-| **B11** | `frame/economy`(**预留**,等 ADR-0030 维持器落地) | ADR-0030 D4 | 零 | 采矿维持可观测 |
+| **B11** | `frame/economy` ✅**已实装**(那边落地了 ADR-0030 第 1/3/4a/5 步) | — | 零 | 采矿维持可观测 |
 
-执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B5 → B6 → B7 ∥ B10 → B3 → B4 → B9 → B11`
+执行顺序:`B0 ✅ → B1 ✅ → B8 ✅ → B2 ✅ → B11 ✅ → B5 → B6 → B7 ∥ B10 → B3 → B4 → B9`
 
 **B2 落地要点**:WS 的时间基准是 `game_time`(ADR-0025 §6),控制消息用 `_` 前缀
 (`_hello`/`_eof`/`_error`/`_pong`)与契约的 topic 闭集区分,永不撞名;`_hello` **先于任何帧**
@@ -103,11 +103,18 @@
 它落地前,概览页的"实际 vs 预测"只能是"实际 vs 某个参考计划"。
 → **前端 F3/F6 的文案必须诚实**:标"参考计划"而不是"当前队列",否则是骗人。
 
-**② `assign_workers` 的意图会静默蒸发(ADR-0030 背景 3 / issues P9)**
+**② ~~`assign_workers` 的意图会静默蒸发~~ → ✅ 已修(issues P9)**
 
-已写成**表征测试** `tests/view/test_pipeline.py::test_assign_workers_gas_intent_evaporates_without_refinery`:
-精炼厂没建好时 `assign_workers(gas,3)` 分配到 0 人后直接出队,`dropped`/`blocked` 里什么都没有。
-ADR-0030 D2 的"目标值语义 + 常驻维持器"修它;**维持器落地后这条测试应当翻转**。
+那边落地 ADR-0030 D2.2 后,队列项 = **写目标**(绝对值、幂等),配额持久挂着。
+表征测试已按约定**翻转**为 `test_assign_workers_writes_a_persistent_quota_p9_fixed`:
+`quota` 必须留着(=3)、`target` 允许为 0(没气矿)。夹具里可见完整闭环:开局设 `gas=3`,
+精炼厂建好后维持器自动补满到 `gas=3/3`。
+
+**B11 落地时的契约校准(rev 6)**:维持器的 `snapshot()` 给的是**可达目标**(受节点容量与领地人数夹紧),
+而持久配额在 `policy` 里。所以帧里 **quota / target / actual 三个数都给** ——
+只给 target 的话,"精炼厂没建好时气目标 0"会让用户以为意图又蒸发了,恰好与 P9 的修复相反。
+另按实际能产出什么砍掉两项:`emitted` 改成 `emitted_count`(维持器只记条数)、去掉 `retask`
+(防抖帧未暴露 —— 不为它改人家刚写的文件;真需要时再谈)。
 
 **B1 实际落地方式(与原计划的差异,值得记账)**:原计划打算把读模型"合入 T2/T3/T4"以省一次冲突合并。
 实际 T 系列先完成了,所以独立落;并且刻意把足迹压到最小以便那边继续重构 flow/plan ——

@@ -46,6 +46,7 @@
 | rev | 变更 | 原因 |
 |---|---|---|
 | 1 | 初版 | DSL v0.2 之前,签名表尚不存在,`static/schema` 降级为空参数表 |
+| 6 | 新增 topic `frame/economy`;`tasks` 给 **quota / target / actual 三个数** | ADR-0030 的经济维持器落地。维持器的 `snapshot()` 给"可达目标"(受节点容量与人数夹紧),持久配额在 policy 里。只给 target 的话,"精炼厂没建好时气目标 0"会让用户以为 `assign_workers` 的意图又蒸发了 —— 恰好与 issues P9 的修复相反,所以两个数都要给 |
 | 5 | `static/schema.forbidden` 定为**开放分组表**(`Record<组名, Record<op, 原因>>`),不枚举分组名 | 后端给 `forbidden` 加了 `composite_actions`(assign_workers 需扇出层,ADR-0030 D1)与 `step_keys` 两组。后端因为"整块转发"自动就有了;前端 zod 写成封闭对象会**静默 strip** 新分组,编辑器就以为那些 op 可用。这才是 rev 2"逐字镜像、不加工"该有的样子:连分组名都不枚举 |
 | 4 | `frame/flow` 增 `eval_diagnostics`;`items[].status` 收窄为 队首阻塞/未处理 并删 `resolved_point`;`in_flight[]` 删 `timeout_frames`/`confirmed`、增 `queue`/`attempted_slots` | B1 落地时按后端**实际能产出什么**校准:① 引擎本来就在记求值诊断("条件其实没求出来"),不暴露等于丢功能;② 队首门控语义下已发出的项已出队或进 `in_flight`,队列里不可能有"已发出";③ `timeout_frames` 要在前端复制一份魔法公式、`confirmed` 恒 false(在途的都还没确认),而 `attempted_slots` 正是摆放调试叠加要的 |
 | 3 | 区域几何改为**一张标签网格 + 索引**(`regions.big_grid`/`leaf_grid`/`big_index`/`leaf_index`),删掉 `leaf[].cells` | per-region mask 不可扩展:LadderMap 176×160=28160 格,一份 mask ≈37KB;20 个区域按 mask 发就是 750KB,按标签网格发始终 37KB。且直接镜像后端 `tactical_map.RegionLayer` 的模型,前端画区域变成"一张位图 + 一份调色板" |
@@ -441,7 +442,7 @@ interface Proposal {
 | F0 | 契约落地 + 夹具 + 骨架 | 无 | **无** | contract TS+zod、手写 fixtures、vite 骨架、FixtureFrameSource |
 | F1 | 外壳 + 时间线 + 帧源切换 | F0 | 无 | shell、JsonlFrameSource、RingBuffer、只读回看模式 |
 | F2 | 地图渲染 ✅**已完成** | F0 | 无(terrain 降级) | 分层 canvas、footprint、区域标签网格、插值、选中检查器、摆放调试叠加 |
-| F3 | 生产页 + 投影图 | F0 | 无(离线夹具) | 队列视图、uPlot 曲线、Gantt、目录选择器 |
+| F3 | 生产页 + 投影图 ✅**已完成** | F0 | 无 | 队列(队首阻塞/掉项审计)、投影曲线+Gantt 泳道、经济维持器面板、目录选择器(按前置置灰) |
 | F4 | Flow 状态图(只读) | F0 | 无 | React Flow + ELK、分支/转移/退出原因 |
 | F5 | 调试页(命令流水 + 摆放叠加) | F2 | B1 才有真数据 | op 表格、落地状态、摆放叠加层、原始帧检查器 |
 | F6 | 概览页组装 | F1-F4 | 无(真警报需 B8) | 四面板 + 折叠 + 跳转 |
