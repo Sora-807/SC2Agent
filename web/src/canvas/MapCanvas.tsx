@@ -277,6 +277,11 @@ function paint(
     drawImage(ctx, vp, baked.terrainImage, map);
   }
 
+  // 格点参考线：建筑/槽位坐标对齐用（用户反馈：没格点对不齐）；LOD 防小缩放糊成灰
+  if (layersOn(props, "grid")) {
+    drawGridLines(ctx, vp, map);
+  }
+
   if (layersOn(props, "regions") && baked.regionImage) drawImage(ctx, vp, baked.regionImage, map);
   if (layersOn(props, "creep") && baked.gridImages.creep) drawImage(ctx, vp, baked.gridImages.creep, map);
   if (layersOn(props, "visibility") && baked.gridImages.visibility) {
@@ -475,6 +480,38 @@ function rgba(hex: string, a: number): string {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${a})`;
+}
+
+/**
+ * 格点参考线：每 1 格细线、每 5 格粗线（对齐建筑坐标的主参考）。
+ * 纯显示层；缩放 < LOD.gridMinor 时细线太密，只保留粗线。
+ * 线色低 alpha（不抢单位/建筑的对比度）；+0.5 对齐像素中心，1px 线不模糊。
+ */
+function drawGridLines(ctx: CanvasRenderingContext2D, vp: Viewport, map: MapStatic): void {
+  const minor = vp.scale >= LOD.gridMinor;
+  const step = minor ? 1 : LOD.gridMajorStep;
+  const [x0, y0] = worldToScreen(vp, 0, map.size[1]);   // 地图左上角
+  const w = map.size[0] * vp.scale;
+  const h = map.size[1] * vp.scale;
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx <= map.size[0]; gx += step) {
+    const major = gx % LOD.gridMajorStep === 0;
+    ctx.strokeStyle = `rgba(148,163,184,${major ? 0.16 : 0.07})`;
+    const x = Math.round(x0 + gx * vp.scale) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x, y0);
+    ctx.lineTo(x, y0 + h);
+    ctx.stroke();
+  }
+  for (let gy = 0; gy <= map.size[1]; gy += step) {
+    const major = gy % LOD.gridMajorStep === 0;
+    ctx.strokeStyle = `rgba(148,163,184,${major ? 0.16 : 0.07})`;
+    const y = Math.round(y0 + (map.size[1] - gy) * vp.scale) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x0 + w, y);
+    ctx.stroke();
+  }
 }
 
 /** 槽位降权画法：只画四个角的短刻度（不是完整虚线框） */

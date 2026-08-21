@@ -204,8 +204,8 @@
   },
   "terran/factorytechlab": {
     "burnysc2_name": "FACTORYTECHLAB",
-    "display_name_zh": "工厂科技实验室",
-    "short_name_zh": "工技",
+    "display_name_zh": "科技",
+    "short_name_zh": "科技",
     "role": "building",
     "capabilities": [
       "addon"
@@ -291,8 +291,8 @@
   },
   "terran/factoryreactor": {
     "burnysc2_name": "FACTORYREACTOR",
-    "display_name_zh": "工厂双倍",
-    "short_name_zh": "工双",
+    "display_name_zh": "双倍",
+    "short_name_zh": "双倍",
     "role": "building",
     "capabilities": [
       "addon"

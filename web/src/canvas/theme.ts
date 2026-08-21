@@ -122,4 +122,8 @@ export const LOD = {
   buildingLabelGlyph: 5,
   /** 单位聚类：< chip 阈值画聚类 chip；>= 阈值画个体 */
   unitChip: 6,
+  /** 格点参考线：>= minor 才画每格细线（否则只画每 5 格粗线） */
+  gridMinor: 4,
+  /** 粗线步长（每 N 格一条，对齐建筑坐标用） */
+  gridMajorStep: 5,
 } as const;

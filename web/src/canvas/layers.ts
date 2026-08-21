@@ -3,6 +3,7 @@ import type { MapStatic, WorldFrame } from "../contract";
 
 export type LayerKey =
   | "terrain"
+  | "grid"
   | "regions"
   | "slots"
   | "buildings"
@@ -31,6 +32,9 @@ export const LAYERS: LayerDef[] = [
     available: (m) => m?.terrain
       ? { ok: true }
       : { ok: false, why: "地形未下发（需真机 B4；sim/离线为纯色底）" } },
+  { key: "grid", label: "格点", on: true, available: always,
+    // 建筑坐标对齐参考：每 1 格细线、每 5 格粗线；缩放太小自动退成只有粗线（LOD）
+  },
   { key: "regions", label: "区域", on: true,
     available: (m) => m?.regions.big_grid
       ? { ok: true }
