@@ -54,6 +54,19 @@ def create_app(frame_dir: Path | str | None = None,
     registry.load_labels_from_index()
 
     app = FastAPI(title="sc2Agent view API", version=str(REV))
+    # CORS：驾驶舱是独立 vite dev server（localhost:5273），API 在 127.0.0.1:8770 ——
+    # 跨源。没这个中间件浏览器会把 probe/命令/提案全部拦掉，前端永远显示「后端未连接」
+    # （真机教训：start.bat 时代用 Node 脚本验证时同源没问题，浏览器一上就断）。
+    # 开发驾驶舱只绑 127.0.0.1；来源收在 localhost/127.0.0.1 任意端口，不构成暴露面。
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.registry = registry
     #: 离线沙盒会话。惰性创建：没人访问 `source=live` 就不建，也就不烧 CPU。
     app.state.session = None
