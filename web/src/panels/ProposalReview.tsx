@@ -10,11 +10,14 @@
  * 其余两种显示**后端给的原因**而不是假装能画（不给假界面）。
  */
 import { useEffect, useState } from "react";
+import { MapCanvas } from "../canvas/MapCanvas";
+import { defaultLayers } from "../canvas/layers";
+import { applyDraft, baseSlotsOf, hunksToDraft } from "../planning/map-draft";
+import { useFrames } from "../store/frames";
 import { acceptProposal, fetchPreview, rejectProposal, type ProjectionPair } from "../api/proposals";
 import { ProjectionPairChart } from "../charts/ProjectionPairChart";
 import { canReject, reviewGate } from "./proposal-gate";
 import { Empty, fmtTime } from "../shell/ui";
-import { useFrames } from "../store/frames";
 import type { Proposal } from "../contract";
 
 const STATUS_TONE: Record<string, string> = {
@@ -215,29 +218,7 @@ function PreviewBlock(props: {
           <div className="text-faint">正在算两条未来…</div>
         )
       ) : kind === "map_overlay" ? (
-        // B14：map_plan 已可应用。展示变更摘要 + hunks 明细；
-        // 地图上的叠加画布（当前 vs 提案）留给 F14 切片 2b（提案 hunk 已足够推演）。
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            <span className="rounded bg-neutral-800 px-2 py-0.5 text-note">
-              点位变更 {props.proposal.preview?.kind === "map_overlay"
-                ? props.proposal.preview.changed_marks.length : 0}
-            </span>
-            <span className="rounded bg-neutral-800 px-2 py-0.5 text-note">
-              槽位变更 {props.proposal.preview?.kind === "map_overlay"
-                ? props.proposal.preview.changed_slots.length : 0}
-            </span>
-          </div>
-          <ul className="max-h-40 space-y-0.5 overflow-auto text-note">
-            {props.proposal.hunks.map((h) => (
-              <li key={h.id} className="text-neutral-300">· {h.text_zh}</li>
-            ))}
-          </ul>
-          <div className="text-note text-ghost">
-            接受后写回机器覆盖层（base_layout.overrides.yaml），
-            **新会话**加载时生效 —— 正在跑的会话不热更。
-          </div>
-        </div>
+        <MapOverlayPreview proposal={props.proposal} />
       ) : kind === "graph_diff" ? (
         <div className="text-faint">
           策略图 diff 要 F9 的 AST 编辑器 —— 而 flow 提交必须 validate + compile（R6），
@@ -248,6 +229,60 @@ function PreviewBlock(props: {
           这类提案没有可视预览（后端的 validation 里通常写了为什么不能应用）。
         </div>
       )}
+    </div>
+  );
+}
+/** F14 2b：map_plan 审批的叠加画布 —— 同一块画布切换「当前 / 提案后」。
+ *  提案后的投影由 hunksToDraft + applyDraft 本地算（与规划页同一套纯函数），
+ *  画布照旧零草稿认知（marksOverride/slotsOverride 吃投影结果）。 */
+function MapOverlayPreview(props: { proposal: Proposal }) {
+  const map = useFrames((s) => s.map);
+  const [show, setShow] = useState<"current" | "proposed">("proposed");
+  const draft = hunksToDraft(props.proposal.hunks);
+  const baseSlots = baseSlotsOf(map?.build_slots ?? []);
+  const proj = map ? applyDraft(map.pos_marks, baseSlots, draft) : { marks: [], slots: [] };
+
+  if (!map) return <div className="text-faint">等 static/map…</div>;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex overflow-hidden rounded border border-neutral-700">
+          <button
+            onClick={() => setShow("current")}
+            className={"px-2 py-0.5 text-note " + (show === "current"
+              ? "bg-neutral-700 text-neutral-100" : "text-neutral-400")}
+          >当前</button>
+          <button
+            onClick={() => setShow("proposed")}
+            className={"px-2 py-0.5 text-note " + (show === "proposed"
+              ? "bg-neutral-700 text-neutral-100" : "text-neutral-400")}
+          >提案后</button>
+        </div>
+        <span className={"text-note text-faint "}>
+          {show === "proposed"
+            ? "菱形 = 点位 · 虚线框 = 槽位 · 提案改动即时可见"
+            : "当前静态面（含已接受的覆盖层）"}
+        </span>
+      </div>
+      <div className="h-[46vh] min-h-[320px] overflow-hidden rounded border border-neutral-800">
+        <MapCanvas
+          map={map}
+          world={null}
+          production={null}
+          catalog={null}
+          economy={null}
+          layers={defaultLayers()}
+          smooth={false}
+          selection={null}
+          onSelect={() => {}}
+          marksOverride={show === "proposed" ? proj.marks : map.pos_marks}
+          slotsOverride={show === "proposed" ? proj.slots : null}
+        />
+      </div>
+      <div className="text-note text-ghost">
+        接受后写回机器覆盖层（base_layout.overrides.yaml），
+        **新会话**加载时生效 —— 正在跑的会话不热更。
+      </div>
     </div>
   );
 }

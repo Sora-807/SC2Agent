@@ -16,7 +16,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, EconomyFrame, MapStatic, WorldFrame, ProductionFrame } from "../contract";
-import type { MarkView, SlotView } from "../planning/map-draft";
+import { slotTl, type MarkView, type SlotView } from "../planning/map-draft";
 import { bakeGrid, bakeTerrain, decodeGrid, regionColor, type Palette } from "./grid";
 import { clusterUnits } from "./cluster";
 import { ALPHA_BUDGET, COLOR, LOD, SHAPE, fontCss, ownerColor, slotColor } from "./theme";
@@ -28,6 +28,17 @@ import type { LayerState } from "./layers";
 
 /** 点选判定的位移容差（px）：累计位移超过它就当平移手势，不触发选中 */
 const CLICK_SLOP = 4;
+
+/** 命中槽位（0.5 格容差，闭区间）。编辑器拖动用它；渲染不参与（C2）。 */
+function slotAt(slots: SlotView[], wx: number, wy: number): string | null {
+  for (const s of slots) {
+    if (wx >= s.tl[0] - 0.5 && wx <= s.br[0] + 0.5
+        && wy >= s.tl[1] - 0.5 && wy <= s.br[1] + 0.5) {
+      return s.name;
+    }
+  }
+  return null;
+}
 
 export interface Selection {
   kind: "unit";
@@ -53,6 +64,10 @@ export function MapCanvas(props: {
   slotsOverride?: SlotView[] | null;
   /** F14：点击空白处（未命中任何单位）时回调，放点位工具用。不提供则维持纯只读。 */
   onBlankClick?: (worldPos: [number, number]) => void;
+  /** F14 2b：可拖动的槽位（编辑器投影）。命中时拖动槽位而不是平移画布 */
+  draggableSlots?: SlotView[] | null;
+  /** F14 2b：槽位拖到新位置（世界坐标，未吸附）松手 */
+  onSlotDrop?: (name: string, worldPos: [number, number]) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -63,7 +78,13 @@ export function MapCanvas(props: {
    * 累计位移用来区分「平移」与「点选」两种互斥手势 —— 之前 pointerup 只判
    * "有没有按下过"，于是每次拖完图松手都会误选光标下的单位、或误清掉已有选中。
    */
-  const drag = useRef<{ x: number; y: number; travel: number } | null>(null);
+  const drag = useRef<{
+    x: number; y: number; travel: number;
+    mode: "pan" | "slot";
+    slotName?: string;
+  } | null>(null);
+  /** 槽位拖动中的 ghost（世界坐标 + 名字）；paint 每帧读它，不需要 setState 触发 */
+  const slotGhost = useRef<{ name: string; pos: [number, number] } | null>(null);
 
   // 插值用：上一帧与本帧（以及本帧到达的墙钟时刻）
   const prev = useRef<{ world: WorldFrame; at: number } | null>(null);
@@ -183,6 +204,7 @@ export function MapCanvas(props: {
       paint(ctx, vp, p, baked, {
         prevWorld: prev.current?.world ?? null,
         alpha: lerpAlpha(prev.current, cur.current, p.smooth),
+        slotGhost: slotGhost.current,
       });
     };
     raf = requestAnimationFrame(draw);
@@ -196,7 +218,18 @@ export function MapCanvas(props: {
         style={{ width: vp?.cw ?? size.w, height: vp?.ch ?? size.h }}
         className="block cursor-crosshair rounded bg-[#0d1117]"
         onPointerDown={(e) => {
-          drag.current = { x: e.clientX, y: e.clientY, travel: 0 };
+          drag.current = { x: e.clientX, y: e.clientY, travel: 0, mode: "pan" };
+          // F14 2b：点到可拖槽位 → 进入槽位拖动模式（不 pan、不选单位）
+          if (props.draggableSlots && vp) {
+            const r = e.currentTarget.getBoundingClientRect();
+            const [wx, wy] = screenToWorld(vp, e.clientX - r.left, e.clientY - r.top);
+            const name = slotAt(props.draggableSlots, wx, wy);
+            if (name) {
+              drag.current.mode = "slot";
+              drag.current.slotName = name;
+              slotGhost.current = { name, pos: [wx, wy] };
+            }
+          }
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
         onPointerMove={(e) => {
@@ -207,6 +240,12 @@ export function MapCanvas(props: {
           d.x = e.clientX;
           d.y = e.clientY;
           d.travel += Math.abs(dx) + Math.abs(dy);
+          if (d.mode === "slot") {
+            const r = e.currentTarget.getBoundingClientRect();
+            const [wx, wy] = screenToWorld(vp!, e.clientX - r.left, e.clientY - r.top);
+            slotGhost.current = { name: d.slotName!, pos: [wx, wy] };
+            return;   // 槽位拖动不吃 pan
+          }
           // **函数式**更新：React 18 自动批处理下，同一批里的多个 pointermove 若都读
           // 渲染闭包里的旧 vp，就会各自 "旧值 + 自己的增量"，只有最后一个生效 ——
           // 中间增量全丢，快速拖图明显跟不上鼠标。滚轮那条路径早就是函数式的，这里漏了。
@@ -216,7 +255,15 @@ export function MapCanvas(props: {
           const d = drag.current;
           drag.current = null;
           e.currentTarget.releasePointerCapture(e.pointerId);
-          if (!vp || !props.world || !d) return;
+          if (!d) return;
+          if (d.mode === "slot" && d.slotName) {
+            // 槽位拖动：位移超过容差才落（防误触）；ghost 立即清除
+            const ghost = slotGhost.current;
+            slotGhost.current = null;
+            if (d.travel > CLICK_SLOP && ghost) props.onSlotDrop?.(d.slotName, ghost.pos);
+            return;
+          }
+          if (!vp || !props.world) return;
           // 超过容差 = 这是一次平移，不是点选（否则拖完图松手会误选/误清选中）
           if (d.travel > CLICK_SLOP) return;
           const r = e.currentTarget.getBoundingClientRect();
@@ -225,7 +272,7 @@ export function MapCanvas(props: {
           props.onSelect(hit === null ? null : { kind: "unit", tag: hit });
           if (hit === null) props.onBlankClick?.([wx, wy]);
         }}
-        onPointerCancel={() => { drag.current = null; }}
+        onPointerCancel={() => { drag.current = null; slotGhost.current = null; }}
       />
       <div className={"pointer-events-none absolute bottom-1 right-2 text-faint " + T.note}>
         滚轮缩放 · 拖动平移 · 点击选中 · {vp ? vp.scale.toFixed(1) : "?"} px/格
@@ -271,6 +318,8 @@ interface Motion {
   prevWorld: WorldFrame | null;
   /** 0..1，1 = 完全用当帧坐标 */
   alpha: number;
+  /** 槽位拖动 ghost（F14 2b；null = 没有在拖） */
+  slotGhost: { name: string; pos: [number, number] } | null;
 }
 
 /** stable_id → 短名（catalog 是 zh 文案唯一真相源，红线 C4/B13）；unknown/* 无条目 */
@@ -524,6 +573,24 @@ function paint(
         ctx.setLineDash([]);
       }
     }
+  }
+
+  // 槽位拖动 ghost（F14 2b）：半透明 footprint + 名字（经 motion 传入 ——
+  // paint 是模块级函数，拿不到组件内的 ref；ref 值由 draw 循环每帧带进来）。
+  const ghost = motion.slotGhost;
+  if (ghost) {
+    const meta = (props.draggableSlots ?? []).find((s) => s.name === ghost.name);
+    const size = meta?.size ?? 2;
+    const tl = slotTl(ghost.pos, size);
+    const [sx, sy] = worldToScreen(vp, tl[0], tl[1] + size);
+    ctx.strokeStyle = "rgba(125,211,252,0.9)";
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 2]);
+    ctx.strokeRect(sx, sy, size * vp.scale, size * vp.scale);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(125,211,252,0.9)";
+    ctx.font = fontCss("note");
+    ctx.fillText(ghost.name, sx + 2, sy + (vp.scale * size) / 2);
   }
 
   // 选中高亮（命中/选中始终按个体 —— chip 只是显示，U18）

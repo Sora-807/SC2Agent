@@ -175,6 +175,31 @@ function MapPlanning(props: { map: MapStatic | null }) {
     setDraft((d) => [...d, { kind: "del_mark", name }]);
   };
 
+  /** 槽位拖动落点：del+add 两条 hunk（与后端"移动"同语义，且不必为 move_slot 再动契约）。
+   *  新位置与"除自身外"的槽位重叠 → 拒绝（与放置同规则）；吸附格心。 */
+  const dropSlot = (name: string, worldPos: [number, number]): void => {
+    const snapped = snapToCellCenter(worldPos);
+    const cur = proj.slots.find((s) => s.name === name);
+    if (!cur) return;
+    if (Math.abs(cur.pos[0] - snapped[0]) < 0.01 && Math.abs(cur.pos[1] - snapped[1]) < 0.01) {
+      return;   // 没动
+    }
+    const tl = slotTl(snapped, cur.size);
+    const fp = { tl, br: [tl[0] + cur.size - 1, tl[1] + cur.size - 1] as [number, number] };
+    for (const s of proj.slots) {
+      if (s.name === name) continue;
+      if (slotOverlaps(fp, { tl: s.tl, br: s.br })) {
+        slotError.current = "与槽位 " + s.name + " 重叠 —— 换个位置";
+        setTimeout(() => { slotError.current = null; }, 2600);
+        return;
+      }
+    }
+    setDraft((d) => [...d,
+      { kind: "del_slot", name },
+      { kind: "add_slot", name, pos: snapped, size: cur.size, slotKind: cur.kind },
+    ]);
+  };
+
   return (
     <div className="flex gap-3">
       <div className="min-w-0 flex-1">
@@ -192,6 +217,8 @@ function MapPlanning(props: { map: MapStatic | null }) {
             marksOverride={marks}
             slotsOverride={proj.slots}
             onBlankClick={placeMode ? place : undefined}
+            draggableSlots={placeMode === null ? proj.slots : null}
+            onSlotDrop={dropSlot}
           />
           {placeMode && (
             <div className="pointer-events-none absolute left-2 top-2 rounded border border-amber-700 bg-amber-950/80 px-2 py-1 text-note text-amber-300">

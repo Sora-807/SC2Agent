@@ -305,9 +305,26 @@ describe("F14 切片 2：槽位工具与提案通道（2026-08-21）", () => {
     expect(page).not.toContain("提为提案（待 B14）");
   });
 
-  it("审批面板的 map_overlay 分支展示真实摘要而非「不能应用」", () => {
+  it("审批面板的 map_overlay 分支是叠加画布而非「不能应用」", () => {
     const review = code("panels/ProposalReview.tsx");
-    expect(review).toContain("changed_marks");
+    expect(review).toContain("MapOverlayPreview");
+    expect(review).toContain("hunksToDraft");
+    expect(review).toContain(">当前<");
+    expect(review).toContain(">提案后<");
     expect(review).not.toContain("后端目前也不能应用这类提案");
+  });
+
+  it("槽位拖动落点是 del+add 两条 hunk（不给 move_slot 动契约）", () => {
+    const page = code("pages/PlanningPage.tsx");
+    expect(page).toContain("dropSlot");
+    expect(page).toContain('{ kind: "del_slot", name }');
+    expect(page).toContain('{ kind: "add_slot", name, pos: snapped');
+  });
+
+  it("MapCanvas 的槽位拖动走独立手势分支，不污染 pan/选单位", () => {
+    const canvas = code("canvas/MapCanvas.tsx");
+    expect(canvas).toContain('mode: "pan" | "slot"');
+    expect(canvas).toContain("draggableSlots");
+    expect(canvas).toContain("motion.slotGhost");
   });
 });

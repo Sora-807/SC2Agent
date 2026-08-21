@@ -159,6 +159,54 @@ export function mapDraftToHunks(
   });
 }
 
+/** MapStatic.build_slots → 草稿投影的基座（build_point/tl/br 都是后端给的，零换算 C2） */
+export function baseSlotsOf(slots: readonly {
+  name: string; build_point: [number, number];
+  size: number; kind: string; tl: [number, number]; br: [number, number];
+}[]): SlotView[] {
+  return slots.map((s) => ({
+    name: s.name, pos: s.build_point, size: s.size, kind: s.kind, tl: s.tl, br: s.br,
+  }));
+}
+
+/** 提案 hunk（后端枚举 + payload 字段名）→ 本地草稿 hunk（审批叠加画布用，反向映射）。
+ *  add_slot 的 payload.kind 是**槽位类别**，转成草稿的 slotKind（撞名坑，见 add_slot 定义）。 */
+export function hunksToDraft(
+  hunks: readonly { kind: string; payload: Record<string, unknown> }[],
+): MapPlanHunk[] {
+  const out: MapPlanHunk[] = [];
+  for (const h of hunks) {
+    const p = h.payload;
+    switch (h.kind) {
+      case "add_mark":
+        out.push({ kind: "add_mark", name: String(p["name"]),
+                   pos: p["pos"] as [number, number] });
+        break;
+      case "move_mark":
+        out.push({ kind: "move_mark", name: String(p["name"]),
+                   pos: p["pos"] as [number, number] });
+        break;
+      case "rename_mark":
+        out.push({ kind: "rename_mark", from: String(p["from"]), to: String(p["to"]) });
+        break;
+      case "del_mark":
+        out.push({ kind: "del_mark", name: String(p["name"]) });
+        break;
+      case "add_slot":
+        out.push({ kind: "add_slot", name: String(p["name"]),
+                   pos: p["pos"] as [number, number],
+                   size: Number(p["size"]), slotKind: String(p["kind"]) });
+        break;
+      case "del_slot":
+        out.push({ kind: "del_slot", name: String(p["name"]) });
+        break;
+      default:
+        break;   // 其它类型的 hunk 不属于地图草稿（部分接受后的残留也安全跳过）
+    }
+  }
+  return out;
+}
+
 export function draftStorageKey(mapName: string): string {
   return "map-plan-draft:" + mapName;
 }
