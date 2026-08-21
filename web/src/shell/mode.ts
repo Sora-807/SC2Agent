@@ -45,6 +45,40 @@ export const MODE_META: Record<Mode, ModeMeta> = {
   },
 };
 
+/**
+ * 写入面门禁（U7 / R8）—— 命令必须打到**有会话的当前世界**上。
+ *
+ * 曾经这条判断写在 ProductionPage 里且是 `sourceKind === "api"`：
+ * 而 `api` 是**回放源**（历史 JSONL，背后没有会话），真正的会话源是 `live`。
+ * 后果是「启动沙盒 → 下命令」这条主链路在 UI 上整条走不通（写入控件全部消失），
+ * 横幅还写着"当前帧源是本地夹具"——明明是 live 会话。反过来在回放源上却放开了写，
+ * 命令会打到一个你并没有在看的世界上。两个方向都错，所以门禁必须收在这里、并可测。
+ */
+export interface WriteGate {
+  writable: boolean;
+  /** 不可写时必须给出**真话**（红线 G7：禁用带理由） */
+  reason: string | null;
+}
+
+export function writeGate(sourceKind: SourceKind, timeline: "live" | "review"): WriteGate {
+  if (sourceKind !== "live") {
+    return {
+      writable: false,
+      reason:
+        sourceKind === "api"
+          ? "只读：当前是后端回放源（历史 JSONL），它背后没有会话 —— 在这里下命令会打到一个你没在看的世界上。切到「实时驾驶」并启动会话。"
+          : "只读：当前是离线帧源，没有会话可以接受命令。切到「实时驾驶」并启动会话。",
+    };
+  }
+  if (timeline === "review") {
+    return {
+      writable: false,
+      reason: "只读回看中：拖回历史时不能下命令 —— 那一刻你看的不是现在的世界（R8）。点「回到实时」恢复。",
+    };
+  }
+  return { writable: true, reason: null };
+}
+
 /** 每个模式的合法帧源（R5：live 中不创建/编辑模块与 Strategy → 驾驶态只有 live 源） */
 export const MODE_SOURCES: Record<Mode, SourceKind[]> = {
   offline: ["fixture"],

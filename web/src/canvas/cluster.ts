@@ -98,13 +98,22 @@ export function clusterUnits(units: ClusterInput[], radiusCells: number): UnitCl
       let sy = 0;
       let group: string | null = null;
       let groupSame = true;
+      // 用独立的 first 标志判"还没设过"，**不能拿 group === null 当哨兵** ——
+      // null 同时是"这个单位没被 lease"的合法值，于是 [null, "inf"] 会把 group 设成 "inf"
+      // 并报 groupSame=true，chip 上就写成「机枪兵 2 · inf」而实际只有 1 个在组里。
+      // 那是编造归属，且结果依赖遍历顺序（["inf", null] 反而正确）。
+      let first = true;
       for (const j of comp) {
         const u = members[j]!;
         sx += u.pos[0];
         sy += u.pos[1];
         const g = u.group_id ?? null;
-        if (group === null) group = g;
-        else if (group !== g) groupSame = false;
+        if (first) {
+          group = g;
+          first = false;
+        } else if (group !== g) {
+          groupSame = false;
+        }
       }
       out.push({
         owner: members[i]!.owner,

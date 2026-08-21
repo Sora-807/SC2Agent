@@ -25,6 +25,9 @@ import {
 } from "./view";
 import type { LayerState } from "./layers";
 
+/** 点选判定的位移容差（px）：累计位移超过它就当平移手势，不触发选中 */
+const CLICK_SLOP = 4;
+
 export interface Selection {
   kind: "unit";
   tag: number;
@@ -45,7 +48,12 @@ export function MapCanvas(props: {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 800, h: 520 });
   const [vp, setVp] = useState<Viewport | null>(null);
-  const drag = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * 拖拽态：上一次指针位置 + **累计位移**。
+   * 累计位移用来区分「平移」与「点选」两种互斥手势 —— 之前 pointerup 只判
+   * "有没有按下过"，于是每次拖完图松手都会误选光标下的单位、或误清掉已有选中。
+   */
+  const drag = useRef<{ x: number; y: number; travel: number } | null>(null);
 
   // 插值用：上一帧与本帧（以及本帧到达的墙钟时刻）
   const prev = useRef<{ world: WorldFrame; at: number } | null>(null);
@@ -178,26 +186,35 @@ export function MapCanvas(props: {
         style={{ width: vp?.cw ?? size.w, height: vp?.ch ?? size.h }}
         className="block cursor-crosshair rounded bg-[#0d1117]"
         onPointerDown={(e) => {
-          drag.current = { x: e.clientX, y: e.clientY };
+          drag.current = { x: e.clientX, y: e.clientY, travel: 0 };
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
         onPointerMove={(e) => {
-          if (!drag.current || !vp) return;
-          const dx = e.clientX - drag.current.x;
-          const dy = e.clientY - drag.current.y;
-          drag.current = { x: e.clientX, y: e.clientY };
-          setVp({ ...vp, panX: vp.panX + dx, panY: vp.panY + dy });
+          const d = drag.current;
+          if (!d) return;
+          const dx = e.clientX - d.x;
+          const dy = e.clientY - d.y;
+          d.x = e.clientX;
+          d.y = e.clientY;
+          d.travel += Math.abs(dx) + Math.abs(dy);
+          // **函数式**更新：React 18 自动批处理下，同一批里的多个 pointermove 若都读
+          // 渲染闭包里的旧 vp，就会各自 "旧值 + 自己的增量"，只有最后一个生效 ——
+          // 中间增量全丢，快速拖图明显跟不上鼠标。滚轮那条路径早就是函数式的，这里漏了。
+          setVp((old) => (old ? { ...old, panX: old.panX + dx, panY: old.panY + dy } : old));
         }}
         onPointerUp={(e) => {
-          const moved = drag.current;
+          const d = drag.current;
           drag.current = null;
           e.currentTarget.releasePointerCapture(e.pointerId);
-          if (!vp || !props.world || !moved) return;
+          if (!vp || !props.world || !d) return;
+          // 超过容差 = 这是一次平移，不是点选（否则拖完图松手会误选/误清选中）
+          if (d.travel > CLICK_SLOP) return;
           const r = e.currentTarget.getBoundingClientRect();
           const [wx, wy] = screenToWorld(vp, e.clientX - r.left, e.clientY - r.top);
           const hit = nearestUnit(props.world, wx, wy, 12 / vp.scale);
           props.onSelect(hit === null ? null : { kind: "unit", tag: hit });
         }}
+        onPointerCancel={() => { drag.current = null; }}
       />
       <div className={"pointer-events-none absolute bottom-1 right-2 text-faint " + T.note}>
         滚轮缩放 · 拖动平移 · 点击选中 · {vp ? vp.scale.toFixed(1) : "?"} px/格
@@ -319,6 +336,35 @@ function paint(
     }
   }
 
+  // 点位标记（PosMark）：菱形 + 名字。之前这层**完全没画** —— 帧里有 pos_marks，
+  // 画布一个都不画，所以"离线放标记 / 在线看标记"里连"看"都做不到。
+  // 形状用菱形而非矩形/圆：U16 要求标记与建筑(矩形)、单位(chip) 不撞形。
+  if (layersOn(props, "marks")) {
+    ctx.lineWidth = 1.2;
+    for (const m of map.pos_marks) {
+      const [sx, sy] = worldToScreen(vp, m.pos[0], m.pos[1]);
+      const half = Math.max(SHAPE.mark.diamondHalf, vp.scale * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - half);
+      ctx.lineTo(sx + half, sy);
+      ctx.lineTo(sx, sy + half);
+      ctx.lineTo(sx - half, sy);
+      ctx.closePath();
+      ctx.fillStyle = rgba(COLOR.mark, 0.28);
+      ctx.fill();
+      ctx.strokeStyle = COLOR.mark;
+      ctx.stroke();
+      // 名字只在放得下时画（LOD：缩太小就只留菱形，不糊成一片字）
+      if (vp.scale >= LOD.buildingLabelFull) {
+        ctx.font = fontCss("note");
+        ctx.fillStyle = COLOR.mark;
+        ctx.textBaseline = "middle";
+        ctx.fillText(m.name, sx + half + 3, sy);
+        ctx.textBaseline = "alphabetic";
+      }
+    }
+  }
+
   if (layersOn(props, "resources") && world) {
     const byTag = new Map(world.resource_state.map((r) => [r.tag, r]));
     for (const n of map.resource_nodes) {
@@ -384,8 +430,9 @@ function paint(
           .filter((u) => !u.footprint)
           .map((u) => ({ tag: u.tag, owner: u.owner, stable_id: u.stable_id,
                          pos: posOf(u), group_id: u.group_id }));
+        const showGroup = layersOn(props, "groups");
         for (const c of clusterUnits(items, 3.5)) {
-          drawUnitChip(ctx, vp, c, names);
+          drawUnitChip(ctx, vp, c, names, showGroup);
         }
       } else {
         for (const u of world.units) {
@@ -406,18 +453,27 @@ function paint(
             ctx.strokeStyle = "#fca5a5";
             ctx.strokeRect(sx - r - 1, sy - r - 1, (r + 1) * 2, (r + 1) * 2);
           }
-          if (layersOn(props, "orders") && u.order?.target_pos) {
-            const [tx, ty] = worldToScreen(vp, u.order.target_pos[0], u.order.target_pos[1]);
-            ctx.strokeStyle = rgba("#94a3b8", ALPHA_BUDGET.orderLine);
-            ctx.setLineDash(SHAPE.order.dash);
-            ctx.beginPath();
-            ctx.moveTo(sx, sy);
-            ctx.lineTo(tx, ty);
-            ctx.stroke();
-            ctx.setLineDash([]);
-          }
         }
       }
+    }
+
+    // 命令连线：**独立于 chip/个体两个分支** —— 原来它写在个体分支里，
+    // 于是缩放 < LOD.unitChip 走 chip 档时，「命令连线」开关打开也画不出任何东西。
+    // 顺带合成一条 path 一次 stroke（每条线各自 beginPath/stroke 是白给的开销）。
+    if (layersOn(props, "orders")) {
+      ctx.strokeStyle = rgba("#94a3b8", ALPHA_BUDGET.orderLine);
+      ctx.setLineDash(SHAPE.order.dash);
+      ctx.beginPath();
+      for (const u of world.units) {
+        if (u.footprint || !u.order?.target_pos) continue;
+        const [px, py] = posOf(u);
+        const [sx, sy] = worldToScreen(vp, px, py);
+        const [tx, ty] = worldToScreen(vp, u.order.target_pos[0], u.order.target_pos[1]);
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(tx, ty);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     if (layersOn(props, "clusters") && world.enemy_clusters) {
@@ -632,6 +688,8 @@ function drawUnitChip(
   vp: Viewport,
   c: ReturnType<typeof clusterUnits>[number],
   names: Map<string, string>,
+  /** 「flow 分组」图层开关 —— 之前 chip 无条件画组标签，低缩放下这个开关关不掉 */
+  showGroup: boolean,
 ): void {
   const short = names.get(c.stable_id) ?? "未知";
   const text = `${short}${c.count > 1 ? ` ${c.count}` : ""}`;
@@ -654,7 +712,7 @@ function drawUnitChip(
   ctx.fillStyle = COLOR.text;
   ctx.textBaseline = "middle";
   ctx.fillText(text, x + padX, y + h / 2 + 0.5);
-  if (c.group_id) {
+  if (showGroup && c.group_id) {
     ctx.font = fontCss("note");
     ctx.fillStyle = "#fde68a";
     ctx.fillText(c.group_id, x + w + 3, y + h / 2 + 0.5);

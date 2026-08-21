@@ -8,6 +8,7 @@
 import { useMemo, useState } from "react";
 import { sendCommand, type CommandResult } from "../api/commands";
 import { ProjectionChart } from "../charts/ProjectionChart";
+import { writeGate } from "../shell/mode";
 import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { CatalogStatic, ProjectionFrame, WorldFrame } from "../contract";
@@ -16,20 +17,28 @@ import type { CatalogStatic, ProjectionFrame, WorldFrame } from "../contract";
 function useCommands() {
   const seq = useFrames((s) => s.seq);
   const sourceKind = useFrames((s) => s.sourceKind);
+  const timeline = useFrames((s) => s.timeline);
   const [last, setLast] = useState<CommandResult | null>(null);
-  const writable = sourceKind === "api";
+  // 门禁收在 shell/mode.ts（可测）：要求 **live 会话源 + 没在回看**。
+  // 原来是 `sourceKind === "api"` —— api 是回放源、真正的会话源是 live，
+  // 于是 live 下写入控件全被藏起来（主链路走不通），回放下反而放开（命令打到没在看的世界）。
+  const gate = writeGate(sourceKind, timeline);
   const run = async (cmd: Parameters<typeof sendCommand>[0]): Promise<void> => {
     const res = await sendCommand(cmd, seq);
     setLast(res);
   };
-  return { run, last, writable, seq };
+  return { run, last, writable: gate.writable, gateReason: gate.reason, seq };
 }
 
-function CommandBanner(props: { last: CommandResult | null; writable: boolean }) {
+function CommandBanner(props: {
+  last: CommandResult | null;
+  writable: boolean;
+  gateReason: string | null;
+}) {
   if (!props.writable) {
     return (
       <div className="rounded border border-neutral-800 bg-neutral-900/60 px-2 py-1 text-note text-faint">
-        只读：当前帧源是本地夹具。把帧源切到「后端 API」并启动沙盒会话后可以下命令。
+        {props.gateReason}
       </div>
     );
   }
@@ -66,7 +75,7 @@ export function ProductionPage() {
 
   return (
     <div className={PAGE_SCROLL + " space-y-3"}>
-      <CommandBanner last={cmd.last} writable={cmd.writable} />
+      <CommandBanner last={cmd.last} writable={cmd.writable} gateReason={cmd.gateReason} />
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <Card
           title="生产队列"
@@ -437,7 +446,7 @@ function CatalogPicker(props: {
     return null;   // upgrade 走 research，而 research 后端还不支持（不给假按钮）
   };
   return (
-    <Card title={props.writable ? "目录（点击加入 main 队列）" : "目录（只读：切到后端 API 才能下命令）"}>
+    <Card title={props.writable ? "目录（点击加入 main 队列）" : "目录（只读：需实时驾驶 + 会话）"}>
       {groups.map(([role, label]) => {
         const rows = catalog.entries.filter((e) => e.role === role);
         if (rows.length === 0) return null;

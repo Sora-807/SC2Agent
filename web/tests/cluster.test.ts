@@ -78,6 +78,31 @@ describe("clusterUnits", () => {
     expect(mixed[0]!.group_id).toBeNull();
   });
 
+  it("未分组单位混进来 → null，且与遍历顺序无关（不拿 null 当哨兵）", () => {
+    // 回归：曾用 `group === null` 判"还没设过"，而 null 也是"没被 lease"的合法值，
+    // 于是 [null, "inf"] 报成 "inf"（编造归属），["inf", null] 才正确 —— 结果看顺序。
+    const nullFirst = clusterUnits([
+      u(1, "self", "terran/marine", 0, 0, null),
+      u(2, "self", "terran/marine", 1, 0, "inf"),
+    ], 2);
+    expect(nullFirst).toHaveLength(1);
+    expect(nullFirst[0]!.count).toBe(2);
+    expect(nullFirst[0]!.group_id).toBeNull();
+
+    const groupFirst = clusterUnits([
+      u(1, "self", "terran/marine", 0, 0, "inf"),
+      u(2, "self", "terran/marine", 1, 0, null),
+    ], 2);
+    expect(groupFirst[0]!.group_id).toBeNull();
+
+    // 全员未分组也是 null（没有组标签可画，不是"有个叫 null 的组"）
+    const noneGrouped = clusterUnits([
+      u(1, "self", "terran/marine", 0, 0, null),
+      u(2, "self", "terran/marine", 1, 0, null),
+    ], 2);
+    expect(noneGrouped[0]!.group_id).toBeNull();
+  });
+
   it("50 枪兵 + 4 坦克场面：两类各成簇，总数不丢（显示聚合不改变计数）", () => {
     const units: ClusterInput[] = [];
     for (let i = 0; i < 50; i += 1) {

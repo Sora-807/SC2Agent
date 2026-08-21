@@ -43,6 +43,8 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
   const valid = p.validation?.ok === true;
   const stale = gate.ok === false && gate.why === "stale";
   const canAct = gate.ok;
+  // 已处理 = 接受与拒绝都无事可做；校验未过/已失效**只关接受**，拒绝仍要能走（P3 回流）
+  const settled = gate.ok === false && gate.why === "settled";
 
   useEffect(() => {
     if (p.preview?.kind !== "projection_pair") return;
@@ -139,35 +141,42 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
 
       <PreviewBlock proposal={p} pair={pair} error={previewErr} zhOf={zhOf} />
 
-      {!canAct && (
-        <div className="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-label text-dim">
-          不能接受：{(gate as { reason: string }).reason}
-        </div>
-      )}
-
-      {canAct && (
-        <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              disabled={busy || picked.size === 0}
-              className="rounded border border-emerald-700 bg-emerald-900/40 px-3 py-1 text-emerald-200 disabled:opacity-40"
-              onClick={() => void act(() => acceptProposal(
-                p.id,
-                picked.size === p.hunks.length ? undefined : [...picked],
-                reason || undefined))}
-            >
-              {picked.size === p.hunks.length ? "接受全部" : `接受选中的 ${picked.size} 条`}
-            </button>
-            <button
-              disabled={busy || !canReject(reason)}
-              className="rounded border border-red-800 bg-red-950/40 px-3 py-1 text-red-300 disabled:opacity-40"
-              title={reason.trim() ? "" : "拒绝必须填理由（理由会回流给 agent）"}
-              onClick={() => void act(() => rejectProposal(p.id, reason))}
-            >拒绝</button>
-            <span className="text-note text-faint">
-              接受 = 走与 agent 相同的命令路径（不开后门）
-            </span>
+      {/* P2：接受按钮**禁用但可见**，不是隐藏 —— agent 要学、用户要诊断，
+          看见"有个接受入口只是现在不能点 + 为什么"比入口凭空消失有信息量得多。
+          拒绝按钮在"校验未过/已失效"时**仍然可用**：理由回流正是 P3 的通道，
+          连它一起藏掉，agent 就永远收不到"你这条为什么不行"。只有已处理（已接受/
+          部分接受/已拒绝）才两个都关 —— 那时确实无事可做。 */}
+      <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3 space-y-2">
+        {!canAct && (
+          <div className="text-label text-dim">
+            不能接受：{(gate as { reason: string }).reason}
           </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            disabled={busy || picked.size === 0 || !canAct}
+            title={canAct ? "" : (gate as { reason: string }).reason}
+            className="rounded border border-emerald-700 bg-emerald-900/40 px-3 py-1 text-emerald-200 disabled:opacity-40"
+            onClick={() => void act(() => acceptProposal(
+              p.id,
+              picked.size === p.hunks.length ? undefined : [...picked],
+              reason || undefined))}
+          >
+            {picked.size === p.hunks.length ? "接受全部" : `接受选中的 ${picked.size} 条`}
+          </button>
+          <button
+            disabled={busy || !canReject(reason) || settled}
+            className="rounded border border-red-800 bg-red-950/40 px-3 py-1 text-red-300 disabled:opacity-40"
+            title={settled
+              ? "提案已处理，无需再拒"
+              : reason.trim() ? "" : "拒绝必须填理由（理由会回流给 agent）"}
+            onClick={() => void act(() => rejectProposal(p.id, reason))}
+          >拒绝</button>
+          <span className="text-note text-faint">
+            接受 = 走与 agent 相同的命令路径（不开后门）
+          </span>
+        </div>
+        {!settled && (
           <textarea
             rows={2}
             value={reason}
@@ -175,9 +184,9 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
             placeholder="拒绝理由（必填）／接受时的备注（可选）—— 理由会回流给 agent，否则它会重复推同一个提案"
             className="w-full resize-none rounded border border-neutral-800 bg-neutral-950 p-2 text-sm placeholder:text-ghost"
           />
-          {error && <div className="text-red-400">{error}</div>}
-        </div>
-      )}
+        )}
+        {error && <div className="text-red-400">{error}</div>}
+      </div>
     </div>
   );
 }

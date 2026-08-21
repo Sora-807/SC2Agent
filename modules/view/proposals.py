@@ -349,6 +349,14 @@ class ProposalStore:
                 self._append(p)
 
     def _require(self, pid: str) -> Proposal:
+        """取提案，**并先重判新鲜度**（§6 P5：禁止盲接受）。
+
+        之前 `_expire()` 只在 `list()`/`get()` 里调，于是 `accept()` 有个洞：
+        anchor 早已过期、但期间没人拉过列表 → 状态还是"待审批" → 照单全收，
+        等于拿过期观察改世界（同时违反 R8 的精神）。live 下前端不轮询 proposals，
+        这个窗口尤其宽。放在 `_require` 里 = 每条写路径（accept/reject）都自动受保护。
+        """
+        self._expire()
         p = self._items.get(pid)
         if p is None:
             raise KeyError(f"没有提案 {pid!r}")

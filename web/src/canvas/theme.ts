@@ -67,6 +67,13 @@ export const COLOR = {
   /** 画布底色（terrain=null 降级时的纯色底） */
   void: "#111820",
   text: "#e5e7eb",
+  /**
+   * authoring 标注色（点位标记 / 规划产物）。
+   * 单列一色而不是复用 warn/blocked：标记既不是 owner 也不是**状态**，
+   * 借状态色会让人以为"这个点有告警"（G4 只允许颜色表达 owner 与状态，
+   * 所以这里明确登记成第三类语义，而不是偷用状态色）。
+   */
+  mark: "#c4b5fd",
 } as const;
 
 /** 形状语言常量（U16：不跨类复用）。 */
@@ -93,6 +100,7 @@ export const Z_ORDER = [
   "creep",
   "visibility",
   "slots", // 四角刻度（低权）
+  "marks", // 点位标记（菱形，U16 的形状语言）
   "resources", // 矿区细节（默认关）
   "buildings", // 矩形 + 标签
   "units", // chip / 个体

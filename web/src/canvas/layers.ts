@@ -6,6 +6,7 @@ export type LayerKey =
   | "grid"
   | "regions"
   | "slots"
+  | "marks"
   | "buildings"
   | "units"
   | "groups"
@@ -42,6 +43,11 @@ export const LAYERS: LayerDef[] = [
   { key: "slots", label: "建造槽位", on: true,
     available: (m) => (m?.build_slots.length ?? 0) > 0
       ? { ok: true } : { ok: false, why: "该地图模板没有槽位" } },
+  // 点位标记（PosMark）：帧里一直有 `map.pos_marks`，但画布**从来没画过它** ——
+  // 于是「在线看到我标了什么」这件事根本看不见（地图页只显示计数、规划页只有文本列表）。
+  { key: "marks", label: "点位标记", on: true,
+    available: (m) => (m?.pos_marks.length ?? 0) > 0
+      ? { ok: true } : { ok: false, why: "该地图没有登记点位（PosMark）" } },
   { key: "buildings", label: "建筑", on: true, available: always },
   { key: "units", label: "单位", on: true, available: always },
   { key: "groups", label: "flow 分组", on: true,

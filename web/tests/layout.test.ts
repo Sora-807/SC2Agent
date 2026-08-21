@@ -153,3 +153,79 @@ describe("视口不因 resize 重置（G2 / 根因 D）", () => {
     expect(canvas).toContain("mapKey");
   });
 });
+
+describe("地图渲染面的回归锁（2026-08-21 审查发现）", () => {
+  const canvas = code("canvas/MapCanvas.tsx");
+
+  it("pos_marks 真的被画了（帧里有、画布不画 = 看不见标记）", () => {
+    expect(canvas).toContain("map.pos_marks");
+    // 图层清单里要有开关，否则关不掉也说不出为什么不可用
+    const layers = code("canvas/layers.ts");
+    expect(layers).toContain('"marks"');
+    expect(layers).toContain("pos_marks");
+  });
+
+  it("标记用菱形（U16：不与建筑矩形 / 单位 chip 撞形）", () => {
+    expect(canvas).toContain("SHAPE.mark.diamondHalf");
+  });
+
+  it("标记色是专门登记的第三类语义，不偷用状态色（G4）", () => {
+    const theme = code("canvas/theme.ts");
+    expect(theme).toMatch(/mark:\s*"#/);
+  });
+
+  it("pan 手势有位移容差，拖图松手不会误触选中", () => {
+    expect(canvas).toContain("CLICK_SLOP");
+    expect(canvas).toContain("travel");
+  });
+
+  it("pointermove 用函数式 setVp（批处理下读旧闭包会丢增量）", () => {
+    expect(canvas).not.toMatch(/setVp\(\{ \.\.\.vp,/);
+    expect(canvas).toMatch(/setVp\(\(old\) =>/);
+  });
+
+  it("命令连线画在 chip/个体两个分支之外（低缩放档也要生效）", () => {
+    // orders 块必须在 layersOn(props,"units") 的 if 之外
+    const unitsIdx = canvas.indexOf('layersOn(props, "units")');
+    const ordersIdx = canvas.indexOf('layersOn(props, "orders")');
+    expect(unitsIdx).toBeGreaterThan(-1);
+    expect(ordersIdx).toBeGreaterThan(unitsIdx);
+    // chip 分支内不得再出现 orders（否则又只在个体档生效）
+    const chipBlock = canvas.slice(unitsIdx, ordersIdx);
+    expect(chipBlock).not.toContain('layersOn(props, "orders")');
+  });
+
+  it("chip 的组标签受「flow 分组」开关门控", () => {
+    expect(canvas).toContain("showGroup");
+    expect(canvas).toMatch(/showGroup && c\.group_id/);
+  });
+});
+
+describe("写入面门禁不再绑在回放源（2026-08-21 审查发现）", () => {
+  it("ProductionPage 不自算门禁，走 shell/mode 的 writeGate", () => {
+    const page = code("pages/ProductionPage.tsx");
+    expect(page).toContain("writeGate");
+    // 回归：曾是 sourceKind === "api"（回放源）→ live 下写入控件全消失
+    expect(page).not.toMatch(/sourceKind === "api"/);
+  });
+
+  it("只读横幅说真话（不再写死「本地夹具」）", () => {
+    const page = code("pages/ProductionPage.tsx");
+    expect(page).toContain("gateReason");
+    expect(page).not.toContain("当前帧源是本地夹具");
+  });
+});
+
+describe("P2 接受按钮禁用但可见（2026-08-21 审查发现）", () => {
+  const review = code("panels/ProposalReview.tsx");
+
+  it("接受按钮始终渲染，靠 disabled 关掉而不是整块隐藏", () => {
+    expect(review).not.toMatch(/\{canAct && \(/);
+    expect(review).toMatch(/disabled=\{busy \|\| picked\.size === 0 \|\| !canAct\}/);
+  });
+
+  it("校验未过/已失效时拒绝仍可用（P3 的理由回流通道不能一起藏）", () => {
+    expect(review).toContain("settled");
+    expect(review).toMatch(/!canReject\(reason\) \|\| settled/);
+  });
+});

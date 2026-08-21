@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { REV } from "../src/contract";
+import { writeGate } from "../src/shell/mode";
 
 // mock 掉 ws 源与 API 探测（node 环境不打网络）；fixtures 加载也 mock（离线切换要读夹具文本）
 const wsMod = vi.hoisted(() => ({ created: 0 }));
@@ -118,5 +119,46 @@ describe("store：切模式真正连 live（根因 U 不复发）", () => {
       expect(target, m).not.toBeNull();
       expect(MODE_SOURCES[m]).toContain(target!.kind);
     }
+  });
+});
+
+describe("写入面门禁 writeGate（U7 / R8）", () => {
+  it("live 会话源 + 跟随实时 = 可写", () => {
+    expect(writeGate("live", "live")).toEqual({ writable: true, reason: null });
+  });
+
+  it("live 但在回看 → 不可写，理由点明 R8", () => {
+    const g = writeGate("live", "review");
+    expect(g.writable).toBe(false);
+    expect(g.reason).toContain("R8");
+    expect(g.reason).toContain("回到实时");
+  });
+
+  it("回放源（api）不可写 —— 它背后没有会话，写了会打到没在看的世界上", () => {
+    const g = writeGate("api", "live");
+    expect(g.writable).toBe(false);
+    expect(g.reason).toContain("回放");
+  });
+
+  it("离线夹具 / 模拟 live 都不可写", () => {
+    for (const k of ["fixture", "mock-live"] as const) {
+      const g = writeGate(k, "live");
+      expect(g.writable, k).toBe(false);
+      expect(g.reason, k).toContain("离线");
+    }
+  });
+
+  it("回归：门禁绝不能绑在 api 源上（曾经如此，导致 live 下写入控件全消失）", () => {
+    // 这条是核心不变式：可写的**唯一**源是 live
+    const kinds = ["fixture", "mock-live", "api", "live"] as const;
+    const writable = kinds.filter((k) => writeGate(k, "live").writable);
+    expect(writable).toEqual(["live"]);
+  });
+
+  it("不可写时一定给出理由（G7：禁用必须带理由）", () => {
+    for (const k of ["fixture", "mock-live", "api"] as const) {
+      expect(writeGate(k, "live").reason, k).toBeTruthy();
+    }
+    expect(writeGate("live", "review").reason).toBeTruthy();
   });
 });

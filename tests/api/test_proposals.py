@@ -251,6 +251,26 @@ def test_stale_anchor_expires_and_blocks_accept_p5(client: TestClient):
     assert r.status_code == 409 and "已失效" in r.json()["detail"]
 
 
+def test_stale_anchor_blocks_accept_without_listing_first_p5(client: TestClient):
+    """P5 的洞：**不先拉列表**也必须拒。
+
+    `_expire()` 原先只在 list()/get() 里调，而 accept() 走的 `_require()` 不调它 ——
+    于是 anchor 早已过期、期间没人拉过列表时，状态还是"待审批"，accept 照单全收，
+    等于拿过期观察改世界。live 下前端根本不轮询 proposals，这个窗口尤其宽。
+    上面那条测试因为先 GET 了一次列表，恰好把这个洞掩盖住了。
+    """
+    _queue(client, [{"op": "train", "type": "terran/marine"},
+                    {"op": "train", "type": "terran/scv"}])
+    p = _propose(client)
+    sess = client.app.state.session
+    for _ in range(int(ANCHOR_STALE_SECONDS) + 2):
+        sess.tick()
+    # 注意：这里**没有** GET /api/proposals
+    r = client.post(f"/api/proposals/{p['id']}/accept")
+    assert r.status_code == 409, "过期提案必须被拒，不能因为没人拉过列表就放行"
+    assert "已失效" in r.json()["detail"]
+
+
 # ---------------- 存储 ----------------
 
 def test_stopping_the_session_detaches_proposals(client: TestClient):
