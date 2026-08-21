@@ -50,8 +50,10 @@ import { z } from "zod";
  *   顺带修掉 rev 1 手抄词表时的实际错误（follow/research/use_ability 的参数、point_toward 的 origin）。
  *   `frame/production` 增队列级 `blocked`（后端 T4 已有 `runtime.blocked`：原因 + 起始时间 + 是否已告警）。
  * rev 1：初版（DSL v0.2 之前，签名表尚不存在，schema 降级为空参数表）。
+ * rev 10：B12/B13 —— economy.nodes[] 增 base_tag；catalog 增 short_name_zh。
+ * rev 11：B14 —— 提案 hunks.kind 增 map_plan 六操作；preview.map_overlay 增 changed_marks。
  */
-export const REV = 10 as const;
+export const REV = 11 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -675,7 +677,11 @@ export const zProposal = z.object({
   hunks: z.array(
     z.object({
       id: z.string(),
-      kind: z.enum(["insert", "delete", "reorder", "modify"]),
+      kind: z.enum([
+        "insert", "delete", "reorder", "modify",
+        "add_mark", "move_mark", "rename_mark", "del_mark",
+        "add_slot", "del_slot",
+      ]),
       text_zh: z.string(),
       payload: z.record(z.string(), z.unknown()),
     }),
@@ -698,6 +704,7 @@ export const zProposal = z.object({
       z.object({
         kind: z.literal("map_overlay"),
         changed_slots: z.array(z.string()),
+        changed_marks: z.array(z.string()),
       }),
       z.object({
         kind: z.literal("graph_diff"),

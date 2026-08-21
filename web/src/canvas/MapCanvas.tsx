@@ -16,7 +16,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, EconomyFrame, MapStatic, WorldFrame, ProductionFrame } from "../contract";
-import type { MarkView } from "../planning/map-draft";
+import type { MarkView, SlotView } from "../planning/map-draft";
 import { bakeGrid, bakeTerrain, decodeGrid, regionColor, type Palette } from "./grid";
 import { clusterUnits } from "./cluster";
 import { ALPHA_BUDGET, COLOR, LOD, SHAPE, fontCss, ownerColor, slotColor } from "./theme";
@@ -49,6 +49,8 @@ export function MapCanvas(props: {
    * 画布对草稿零认知，谁要叠加草稿谁自己用 applyDraft 算好传进来（决策 U1 的画布版）。
    */
   marksOverride?: MarkView[] | null;
+  /** F14：草稿合并后的槽位表（非 null 时替代 map.build_slots 渲染，语义同 marksOverride） */
+  slotsOverride?: SlotView[] | null;
   /** F14：点击空白处（未命中任何单位）时回调，放点位工具用。不提供则维持纯只读。 */
   onBlankClick?: (worldPos: [number, number]) => void;
 }) {
@@ -323,7 +325,8 @@ function paint(
       }
     }
     const debug = layersOn(props, "placement");
-    for (const s of map.build_slots) {
+    const slots = props.slotsOverride ?? map.build_slots;
+    for (const s of slots) {
       const [sx, sy] = worldToScreen(vp, s.tl[0], s.br[1] + 1);
       const side = s.size * vp.scale;
       const color = slotColor(s.kind);

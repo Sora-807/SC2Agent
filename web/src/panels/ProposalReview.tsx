@@ -215,8 +215,28 @@ function PreviewBlock(props: {
           <div className="text-faint">正在算两条未来…</div>
         )
       ) : kind === "map_overlay" ? (
-        <div className="text-faint">
-          地图叠加要 F9 的 `map_plan` patch 模型 —— 后端目前也不能应用这类提案。
+        // B14：map_plan 已可应用。展示变更摘要 + hunks 明细；
+        // 地图上的叠加画布（当前 vs 提案）留给 F14 切片 2b（提案 hunk 已足够推演）。
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded bg-neutral-800 px-2 py-0.5 text-note">
+              点位变更 {props.proposal.preview?.kind === "map_overlay"
+                ? props.proposal.preview.changed_marks.length : 0}
+            </span>
+            <span className="rounded bg-neutral-800 px-2 py-0.5 text-note">
+              槽位变更 {props.proposal.preview?.kind === "map_overlay"
+                ? props.proposal.preview.changed_slots.length : 0}
+            </span>
+          </div>
+          <ul className="max-h-40 space-y-0.5 overflow-auto text-note">
+            {props.proposal.hunks.map((h) => (
+              <li key={h.id} className="text-neutral-300">· {h.text_zh}</li>
+            ))}
+          </ul>
+          <div className="text-note text-ghost">
+            接受后写回机器覆盖层（base_layout.overrides.yaml），
+            **新会话**加载时生效 —— 正在跑的会话不热更。
+          </div>
         </div>
       ) : kind === "graph_diff" ? (
         <div className="text-faint">

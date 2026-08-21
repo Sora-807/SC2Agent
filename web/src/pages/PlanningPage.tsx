@@ -7,14 +7,15 @@
  *    守卫读**模式轴**（F13 修根因 W：旧代码读 sourceKind==="live"，但那个值永远产生不出来）；
  * 3. 所有画布操作转成**结构化草稿**（DraftItem / hunk），人与 agent 同一表示。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createProposal } from "../api/proposals";
 import { MapCanvas } from "../canvas/MapCanvas";
 import { defaultLayers } from "../canvas/layers";
 import { renderBranches, renderValue } from "../graph/ast";
 import { layout } from "../graph/layout";
 import {
-  applyDraft, loadDraft, nextMarkName, saveDraft, snapToCellCenter,
+  applyDraft, loadDraft, mapDraftToHunks, nextMarkName, saveDraft,
+  slotOverlaps, slotTl, snapToCellCenter,
   type MapPlanHunk,
 } from "../planning/map-draft";
 import {
@@ -87,7 +88,10 @@ function MapPlanning(props: { map: MapStatic | null }) {
   // F14 切片 1：结构化草稿（hunk 序列）是真相源，画布吃 applyDraft 的投影结果。
   // 持久化到 localStorage —— 离线画完关页面不丢；B14 落地后同一批 hunk 直接进提案信封。
   const [draft, setDraft] = useState<MapPlanHunk[]>([]);
-  const [placeMode, setPlaceMode] = useState(false);
+  const [placeMode, setPlaceMode] = useState<"mark" | "slot" | null>(null);
+  const [slotSize, setSlotSize] = useState<2 | 3 | 5>(2);
+  const [slotKind, setSlotKind] = useState<"supply" | "production" | "addon">("supply");
+  /** 槽位即时校验的短提示（画布上浮层显示，2.6s 后自动消失） */
   const [draftLoaded, setDraftLoaded] = useState(false);
   useEffect(() => {
     setDraft(loadDraft(map));
@@ -98,21 +102,67 @@ function MapPlanning(props: { map: MapStatic | null }) {
     if (draftLoaded) saveDraft(map, draft);
   }, [draft, draftLoaded, map]);
 
-  const marks = useMemo(
-    () => (map ? applyDraft(map.pos_marks, draft) : []),
+  const proj = useMemo(
+    () => (map ? applyDraft(
+      map.pos_marks,
+      // 槽位基座直接用后端给的 build_point/tl/br（C2：零几何换算）
+      map.build_slots.map((s) => ({
+        name: s.name, pos: s.build_point, size: s.size, kind: s.kind,
+        tl: s.tl, br: s.br,
+      })),
+      draft,
+    ) : { marks: [], slots: [] }),
     [map, draft],
   );
+  const marks = proj.marks;
   // "草稿新增"的名单（列表里打标记用）
   const addedNames = useMemo(() => new Set(draft
     .filter((h) => h.kind === "add_mark").map((h) => (h as { name: string }).name)), [draft]);
+  const addedSlots = useMemo(() => new Set(draft
+    .filter((h) => h.kind === "add_slot").map((h) => (h as { name: string }).name)), [draft]);
+  const [submitMsg, setSubmitMsg] = useState<string | null>(null);
+  const submitMapPlan = async (): Promise<void> => {
+    if (draft.length === 0) { setSubmitMsg("草稿是空的"); return; }
+    setSubmitMsg(null);
+    try {
+      const p = await createProposal({
+        kind: "map_plan",
+        title_zh: "地图规划草稿（" + draft.length + " 条改动）",
+        rationale_zh: "离线地图规划：点位/槽位的增删改（F14 草稿）",
+        target: {},
+        hunks: mapDraftToHunks(draft),
+      });
+      setSubmitMsg("已提交提案 " + p.id + "（" + p.status + "），去对话栏审批");
+    } catch (err) {
+      setSubmitMsg("提交失败：" + (err as Error).message);
+    }
+  };
 
   if (!map) return <Card title="地图规划"><Empty text="等 static/map…" /></Card>;
 
   const place = (pos: [number, number]): void => {
     const snapped = snapToCellCenter(pos);
-    const name = nextMarkName(marks.map((m) => m.name));
-    setDraft((d) => [...d, { kind: "add_mark", name, pos: snapped }]);
+    if (placeMode === "mark") {
+      const name = nextMarkName(marks.map((m) => m.name));
+      setDraft((d) => [...d, { kind: "add_mark", name, pos: snapped }]);
+      return;
+    }
+    if (placeMode === "slot") {
+      // 即时重叠校验：与"当前投影里所有槽位"（静态 + 草稿）相交就拒（后端 validate 同规则兜底）
+      const fp = { tl: slotTl(snapped, slotSize), br: [0, 0] as [number, number] };
+      fp.br = [fp.tl[0] + slotSize - 1, fp.tl[1] + slotSize - 1];
+      for (const s of proj.slots) {
+        if (slotOverlaps(fp, { tl: s.tl, br: s.br })) {
+          slotError.current = `与槽位 ${s.name} 重叠 —— 换个位置`;
+          setTimeout(() => { slotError.current = null; }, 2600);
+          return;
+        }
+      }
+      const name = nextMarkName(proj.slots.map((s) => s.name)).replace("mark_", "slot_");
+      setDraft((d) => [...d, { kind: "add_slot", name, pos: snapped, size: slotSize, slotKind }]);
+    }
   };
+  const slotError = useRef<string | null>(null);
 
   const rename = (from: string, to: string): void => {
     const clean = to.trim();
@@ -140,11 +190,19 @@ function MapPlanning(props: { map: MapStatic | null }) {
             selection={null}
             onSelect={() => {}}
             marksOverride={marks}
+            slotsOverride={proj.slots}
             onBlankClick={placeMode ? place : undefined}
           />
           {placeMode && (
             <div className="pointer-events-none absolute left-2 top-2 rounded border border-amber-700 bg-amber-950/80 px-2 py-1 text-note text-amber-300">
-              放置模式：点击地图放点位（自动吸附格心）· 点「＋ 点位」退出
+              {placeMode === "mark"
+                ? "放置点位：点击地图（吸附格心）· 再点按钮退出"
+                : `放置槽位 ${slotSize}×${slotSize}（${slotKind}）：点击地图（吸附格心）· 与既有槽位重叠会拒绝`}
+            </div>
+          )}
+          {slotError.current && (
+            <div className="pointer-events-none absolute left-2 top-10 rounded border border-red-700 bg-red-950/85 px-2 py-1 text-note text-red-300">
+              {slotError.current}
             </div>
           )}
         </div>
@@ -154,25 +212,55 @@ function MapPlanning(props: { map: MapStatic | null }) {
       </div>
 
       <div className="w-80 shrink-0 space-y-3">
-        <Card title="点位工具">
-          <div className="flex items-center gap-2">
+        <Card title="放置工具">
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => setPlaceMode((v) => !v)}
-              className={"rounded border px-2 py-1 text-note " + (placeMode
+              onClick={() => setPlaceMode((v) => (v === "mark" ? null : "mark"))}
+              className={"rounded border px-2 py-1 text-note " + (placeMode === "mark"
                 ? "border-amber-600 bg-amber-950/40 text-amber-300"
                 : "border-neutral-700 text-neutral-300")}
-            >{placeMode ? "退出放置" : "＋ 点位"}</button>
-            <span className="text-note text-ghost">点击地图空白处放置，吸附格心</span>
+            >{placeMode === "mark" ? "退出放置点位" : "＋ 点位"}</button>
+            <button
+              onClick={() => setPlaceMode((v) => (v === "slot" ? null : "slot"))}
+              className={"rounded border px-2 py-1 text-note " + (placeMode === "slot"
+                ? "border-amber-600 bg-amber-950/40 text-amber-300"
+                : "border-neutral-700 text-neutral-300")}
+            >{placeMode === "slot" ? "退出放置槽位" : "＋ 槽位"}</button>
           </div>
+          {placeMode === "slot" && (
+            <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-neutral-800 pt-2">
+              {([2, 3, 5] as const).map((sz) => (
+                <button key={sz}
+                        onClick={() => setSlotSize(sz)}
+                        className={"rounded border px-1.5 py-0.5 text-note " + (slotSize === sz
+                          ? "border-sky-600 bg-sky-950/40 text-sky-300"
+                          : "border-neutral-700 text-neutral-300")}
+                >{sz}×{sz}</button>
+              ))}
+              {(["supply", "production", "addon"] as const).map((k) => (
+                <button key={k}
+                        onClick={() => setSlotKind(k)}
+                        className={"rounded border px-1.5 py-0.5 text-note " + (slotKind === k
+                          ? "border-sky-600 bg-sky-950/40 text-sky-300"
+                          : "border-neutral-700 text-neutral-300")}
+                >{{ supply: "补给", production: "生产", addon: "挂件" }[k]}</button>
+              ))}
+              <span className="w-full text-note text-ghost">
+                与既有槽位 footprint 重叠会被当场拒绝（后端 validate 同规则兜底）
+              </span>
+            </div>
+          )}
           <div className="mt-2 border-t border-neutral-800 pt-2 text-note text-ghost">
-            草稿已存本地（浏览器 localStorage），关页面不丢。
-            提为提案要等 B14：<code>map_plan</code> 的写回通道还没建。
+            草稿已存本地（localStorage）。提为提案走审批：接受后写回后端覆盖层，
+            **新会话**加载时生效。
           </div>
           <button
-            disabled
-            title="map_plan 提案的后端应用通道还没落地（B14）—— 草稿本地保存，通道建好后这批 hunk 直接进提案"
-            className="mt-2 w-full rounded border border-neutral-800 px-2 py-1 text-note text-faint disabled:opacity-50"
-          >提为提案（待 B14）</button>
+            disabled={draft.length === 0}
+            title={draft.length === 0 ? "草稿是空的" : "草稿将作为 map_plan 提案提交审批"}
+            className="mt-2 w-full rounded border border-emerald-700 bg-emerald-900/40 px-2 py-1 text-note text-emerald-200 disabled:opacity-50"
+            onClick={() => void submitMapPlan()}
+          >提为提案（map_plan）</button>
+          {submitMsg && <div className="mt-1 text-note text-amber-400">{submitMsg}</div>}
         </Card>
 
         <Card title={"点位（" + marks.length + "）"}>
@@ -200,18 +288,25 @@ function MapPlanning(props: { map: MapStatic | null }) {
           <div className="mt-1 text-note text-ghost">名字回车/失焦即改（重名忽略）；× 从草稿删除。</div>
         </Card>
 
-        <Card title="建造槽位（只读）">
+        <Card title={"建造槽位（" + proj.slots.length + "）"}>
           <ul className="max-h-56 space-y-1 overflow-auto">
-            {map.build_slots.map((s) => (
-              <li key={s.name} className="text-note">
-                <b className="text-neutral-300">{s.name}</b>
-                <span className="ml-1 text-faint">{s.kind} {s.size}×{s.size}</span>
-                <span className="ml-1 text-ghost">tl {s.tl.join(",")} → br {s.br.join(",")}</span>
+            {proj.slots.map((s) => (
+              <li key={s.name} className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-neutral-900/60">
+                <span className="font-medium text-neutral-300">{s.name}</span>
+                <span className="text-faint">{s.kind} {s.size}×{s.size}</span>
+                <span className={"ml-auto text-note text-ghost " + T.mono}>
+                  {s.pos[0].toFixed(1)},{s.pos[1].toFixed(1)}
+                </span>
+                <button
+                  className="shrink-0 text-red-400/70 hover:text-red-300"
+                  title={addedSlots.has(s.name) ? "删除（草稿新增）" : "删除（草稿覆盖静态槽位）"}
+                  onClick={() => setDraft((d) => [...d, { kind: "del_slot", name: s.name }])}
+                >×</button>
               </li>
             ))}
           </ul>
           <div className="mt-1 text-note text-ghost">
-            槽位的放置编辑是 F14 切片 2（footprint 吸附 + placeable 校验）；现在只读。
+            拖动槽位是切片 2b（现在：删 + 放新位）。删除也会以 hunk 形式进提案。
           </div>
         </Card>
       </div>

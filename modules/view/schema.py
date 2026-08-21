@@ -49,7 +49,10 @@ from typing import Any
 #:      改增 queue + attempted_slots（摆放调试叠加要画"试过哪几个槽位"）。
 #: rev 3：区域几何改为"一张标签网格 + 索引"（原 leaf[].cells 的 per-region mask 不可扩展）。
 #: rev 2：static/schema 逐字镜像 flow.vocab.dump_vocabulary()；production 队列增 blocked。
-REV = 10
+#: rev 10：B12/B13 —— frame/economy.nodes[] 增 base_tag；static/catalog 增 short_name_zh。
+#: rev 11：B14 —— 提案 hunks.kind 枚举增 map_plan 的六种操作（add_mark/move_mark/
+#:   rename_mark/del_mark/add_slot/del_slot）；preview.map_overlay 增 changed_marks。
+REV = 11
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点

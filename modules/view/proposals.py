@@ -26,6 +26,7 @@ from typing import Any
 from game.catalog import Catalog
 from game.production import QueueItem, QueueOp, WorkerTask
 from game.production import PlacementExact, PlacementInRegion
+from view.map_plan import apply_map_overrides, changed_names, load_map_overrides, save_map_overrides
 
 #: anchor 允许的最大滞后（游戏秒）。超过就是"提案基于的世界已经不在了"（§6 P5）。
 #: 比命令的 MAX_STALE_SEQ 宽松得多：提案是给人看的，看几十秒是正常的。
@@ -38,9 +39,8 @@ STATUS_REJECTED = "已拒绝"
 STATUS_STALE = "已失效"
 
 #: V1 支持"接受即应用"的提案类型。其余类型可以存、可以看，但不能 apply（并说明原因）。
-APPLICABLE_KINDS = {"production_queue"}
+APPLICABLE_KINDS = {"production_queue", "map_plan"}
 KIND_LIMITS = {
-    "map_plan": "地图规划是离线画板的产物，接受它需要 F9 的 map_plan patch 模型",
     "flow_ast": "flow 提交必须 validate + compile（R6），且 live 不能编辑 Strategy（R5）",
     "flow_commit": "同上：flow 提交走版本树，不在 live 会话里应用",
     "params": "参数热改需要 live_editable 声明，而它已被 DSL-T3 删除（等 hot-edit 轮）",
@@ -267,6 +267,21 @@ class ProposalStore:
         if not p.hunks:
             errors.append({"hunk_id": None, "text_zh": "提案没有任何 hunk（没东西可接受）"})
 
+        if p.kind == "map_plan":
+            # B14：对**当前覆盖层**试算投影。校验失败 = 不可接受但必须可见（P2），
+            # 所以 errors 带 hunk_id 与结构化中文理由，不静默。
+            current = load_map_overrides()
+            from tactical_map.base import load_ladder_map as _load_ladder
+            proposed_ov, errs = apply_map_overrides(current, _load_ladder(), p.hunks)
+            errors.extend(errs)
+            if not errors:
+                # preview 只给**变更摘要**（不塞整个覆盖层 —— 前端 overlay 从 hunks 自己算）
+                names = changed_names(_load_ladder(), proposed_ov)
+                preview = {"kind": "map_overlay",
+                           "changed_slots": names["changed_slots"],
+                           "changed_marks": names["changed_marks"]}
+            return {"ok": not errors, "errors": errors}, preview
+
         queue_name = str(p.target.get("queue") or "main")
         current = self._current_items(queue_name)
         proposed: list[QueueItem] | None = None
@@ -312,6 +327,16 @@ class ProposalStore:
 
     def _apply(self, p: Proposal, hunks: list[Hunk]) -> None:
         """应用 = 算出结果队列后走**与 agent 相同的命令路径**（§6 P4），不开后门。"""
+        if p.kind == "map_plan":
+            # B14：map_plan 写回**机器覆盖层**（不需要会话；正在跑的会话不热更，
+            # 新会话加载时自动生效）。同一批 hunk 重新校验后投影（防止竞态下漂移）。
+            current = load_map_overrides()
+            from tactical_map.base import load_ladder_map as _load_ladder
+            proposed, errs = apply_map_overrides(current, _load_ladder(), hunks)
+            if errs:
+                raise ValueError("；".join(e["text_zh"] for e in errs))
+            save_map_overrides(proposed)
+            return
         if self.session is None:
             raise ValueError("没有运行中的会话，无法应用提案")
         queue_name = str(p.target.get("queue") or "main")

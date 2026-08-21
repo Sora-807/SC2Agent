@@ -16,8 +16,8 @@ vi.stubGlobal("localStorage", {
 });
 afterEach(() => memStore.clear());
 import {
-  applyDraft, draftStorageKey, loadDraft, nextMarkName, saveDraft, snapToCellCenter,
-  type MapPlanHunk, type MarkView,
+  applyDraft, draftStorageKey, loadDraft, mapDraftToHunks, nextMarkName, saveDraft,
+  slotOverlaps, slotTl, snapToCellCenter, type MapPlanHunk, type MarkView, type SlotView,
 } from "../src/planning/map-draft";
 
 const base: MarkView[] = [
@@ -35,9 +35,9 @@ describe("snapToCellCenter", () => {
 
 describe("applyDraft", () => {
   it("空草稿 = 原样投影（含 description）", () => {
-    const out = applyDraft(base, []);
-    expect(out).toHaveLength(2);
-    expect(out[0]).toEqual(base[0]);
+    const out = applyDraft(base, [], []);
+    expect(out.marks).toHaveLength(2);
+    expect(out.marks[0]).toEqual(base[0]);
   });
 
   it("add → move → rename → del 按序应用", () => {
@@ -47,8 +47,8 @@ describe("applyDraft", () => {
       { kind: "rename_mark", from: "new1", to: "final" },
       { kind: "del_mark", name: "choke" },
     ];
-    const out = applyDraft(base, d);
-    const byName = new Map(out.map((m) => [m.name, m]));
+    const out = applyDraft(base, [], d);
+    const byName = new Map(out.marks.map((m) => [m.name, m]));
     expect(byName.get("final")!.pos).toEqual([11.5, 21.5]);
     expect(byName.has("new1")).toBe(false);
     expect(byName.has("choke")).toBe(false);
@@ -56,27 +56,27 @@ describe("applyDraft", () => {
   });
 
   it("add 同名 = 覆盖位置（重复放置的意图就是'放这里'）", () => {
-    const out = applyDraft(base, [{ kind: "add_mark", name: "rally", pos: [1.5, 2.5] }]);
-    expect(out.find((m) => m.name === "rally")!.pos).toEqual([1.5, 2.5]);
-    expect(out).toHaveLength(2);
+    const out = applyDraft(base, [], [{ kind: "add_mark", name: "rally", pos: [1.5, 2.5] }]);
+    expect(out.marks.find((m) => m.name === "rally")!.pos).toEqual([1.5, 2.5]);
+    expect(out.marks).toHaveLength(2);
   });
 
   it("rename 撞名抛错（UI 必须先查重，模型不静默合并）", () => {
-    expect(() => applyDraft(base, [{ kind: "rename_mark", from: "rally", to: "choke" }]))
+    expect(() => applyDraft(base, [], [{ kind: "rename_mark", from: "rally", to: "choke" }]))
       .toThrow(/已存在/);
   });
 
   it("move/del 指向不存在的名字 = 幂等忽略", () => {
-    const out = applyDraft(base, [
+    const out = applyDraft(base, [], [
       { kind: "move_mark", name: "ghost", pos: [0.5, 0.5] },
       { kind: "del_mark", name: "ghost" },
     ]);
-    expect(out).toHaveLength(2);
+    expect(out.marks).toHaveLength(2);
   });
 
   it("不修改 base（纯函数）", () => {
     const snapshot = JSON.stringify(base);
-    applyDraft(base, [{ kind: "move_mark", name: "rally", pos: [9.5, 9.5] }]);
+    applyDraft(base, [], [{ kind: "move_mark", name: "rally", pos: [9.5, 9.5] }]);
     expect(JSON.stringify(base)).toBe(snapshot);
   });
 });
@@ -104,5 +104,78 @@ describe("草稿持久化", () => {
 
     memStore.set(draftStorageKey("T"), JSON.stringify([{ kind: "not_a_hunk" }]));
     expect(loadDraft(map)).toEqual([]);
+  });
+});
+
+describe("槽位草稿（F14 切片 2）", () => {
+  const baseSlots: SlotView[] = [
+    { name: "depot1", pos: [40.5, 32.5], size: 2, kind: "supply", tl: [40, 32], br: [41, 33] },
+    { name: "rax1", pos: [55.5, 33.5], size: 3, kind: "production", tl: [54, 32], br: [56, 34] },
+  ];
+
+  it("slotTl 与后端 placement.tl_from_pos 同公式（黄金用例）", () => {
+    // 偶数尺寸（2×2）：锚点落格角 → TL = ceil(P - 1)
+    expect(slotTl([40.5, 32.5], 2)).toEqual([40, 32]);
+    // 奇数尺寸（3×3）：锚点落格心 → TL = ceil(P - 1.5)
+    expect(slotTl([55.5, 33.5], 3)).toEqual([54, 32]);
+  });
+
+  it("slotOverlaps 含边界（后端 _overlaps 同语义）", () => {
+    const a = { tl: [40, 32] as [number, number], br: [41, 33] as [number, number] };
+    expect(slotOverlaps(a, a)).toBe(true);
+    // 紧邻（不相交）
+    expect(slotOverlaps(a, { tl: [42, 32] as [number, number], br: [43, 33] as [number, number] })).toBe(false);
+    // 相交
+    expect(slotOverlaps(a, { tl: [41, 33] as [number, number], br: [42, 34] as [number, number] })).toBe(true);
+  });
+
+  it("add_slot → 投影进 slots；del_slot 删除", () => {
+    const d: MapPlanHunk[] = [
+      { kind: "add_slot", name: "new1", pos: [20.5, 20.5], size: 2, slotKind: "supply" },
+      { kind: "del_slot", name: "depot1" },
+    ];
+    const out = applyDraft([], baseSlots, d);
+    const names = out.slots.map((s) => s.name);
+    expect(names).toEqual(["rax1", "new1"]);
+    const n = out.slots.find((s) => s.name === "new1")!;
+    expect(n.tl).toEqual([20, 20]);
+    expect(n.br).toEqual([21, 21]);
+  });
+
+  it("add_slot 同名 = 覆盖位置（与 add_mark 同语义）", () => {
+    const out = applyDraft([], baseSlots, [
+      { kind: "add_slot", name: "depot1", pos: [10.5, 10.5], size: 2, slotKind: "supply" },
+    ]);
+    expect(out.slots.find((s) => s.name === "depot1")!.pos).toEqual([10.5, 10.5]);
+    expect(out.slots).toHaveLength(2);
+  });
+
+  it("草稿槽位的 footprint 由 slotTl 现算，不进 hunk（渲染不重算后端已给值）", () => {
+    // add_slot 的 hunk 只带锚点 pos + size；tl/br 是投影时算出来的
+    const d: MapPlanHunk = { kind: "add_slot", name: "x", pos: [9.5, 9.5], size: 3, slotKind: "production" };
+    expect(Object.keys(d)).not.toContain("tl");
+  });
+});
+describe("mapDraftToHunks：草稿 → 提案 hunk（与后端 map_plan 枚举对齐）", () => {
+  it("六种 hunk 的 kind 与 payload 字段名对齐后端校验", () => {
+    const draft: MapPlanHunk[] = [
+      { kind: "add_mark", name: "m1", pos: [1.5, 2.5] },
+      { kind: "move_mark", name: "m1", pos: [3.5, 4.5] },
+      { kind: "rename_mark", from: "m1", to: "m2" },
+      { kind: "del_mark", name: "m2" },
+      { kind: "add_slot", name: "s1", pos: [5.5, 6.5], size: 2, slotKind: "supply" },
+      { kind: "del_slot", name: "s1" },
+    ];
+    const hs = mapDraftToHunks(draft);
+    expect(hs.map((h) => h.kind)).toEqual([
+      "add_mark", "move_mark", "rename_mark", "del_mark", "add_slot", "del_slot",
+    ]);
+    // add_slot 的 payload 里类别字段叫 kind（后端校验读 p.get("kind")），不是 slotKind
+    const slot = hs[4]!;
+    expect(slot.payload["kind"]).toBe("supply");
+    expect(slot.payload["size"]).toBe(2);
+    // 每条都带人类可读的 text_zh（审批时逐条可见）
+    expect(hs.every((h) => h.text_zh.length > 0)).toBe(true);
+    expect(hs.every((h) => h.id)).toBe(true);
   });
 });

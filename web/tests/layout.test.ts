@@ -282,9 +282,32 @@ describe("F14 切片 1：地图规划画布（2026-08-21）", () => {
     expect(md).toContain("map-plan-draft:");
   });
 
-  it("提为提案按钮诚实置灰（B14 没落地不装成能用）", () => {
+});
+
+describe("F14 切片 2：槽位工具与提案通道（2026-08-21）", () => {
+  it("画布接收 slotsOverride，槽位层画草稿投影", () => {
+    const canvas = code("canvas/MapCanvas.tsx");
+    expect(canvas).toContain("props.slotsOverride ?? map.build_slots");
+  });
+
+  it("规划页有槽位放置工具与重叠即时校验", () => {
     const page = code("pages/PlanningPage.tsx");
-    expect(page).toContain("提为提案（待 B14）");
-    expect(page).toMatch(/<button\s*\n?\s*disabled/);
+    expect(page).toContain("slotOverlaps");
+    expect(page).toContain("slotTl");
+    expect(page).toContain('"＋ 槽位"');
+  });
+
+  it("提为提案按钮真实启用（B14 已落地，不再置灰装死）", () => {
+    const page = code("pages/PlanningPage.tsx");
+    expect(page).toContain("提为提案（map_plan）");
+    expect(page).toContain("mapDraftToHunks");
+    // 回归：上一版的"待 B14"置灰按钮已移除
+    expect(page).not.toContain("提为提案（待 B14）");
+  });
+
+  it("审批面板的 map_overlay 分支展示真实摘要而非「不能应用」", () => {
+    const review = code("panels/ProposalReview.tsx");
+    expect(review).toContain("changed_marks");
+    expect(review).not.toContain("后端目前也不能应用这类提案");
   });
 });

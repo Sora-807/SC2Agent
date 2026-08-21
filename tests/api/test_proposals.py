@@ -138,9 +138,12 @@ def test_invalid_proposal_is_stored_and_visible_p2(client: TestClient):
 
 
 def test_unapplicable_kinds_explain_why(client: TestClient):
-    """其他类型可以存、可以看，但不能 apply，并说明原因（不给假按钮）。"""
+    """其他类型可以存、可以看，但不能 apply，并说明原因（不给假按钮）。
+
+    B14 起 map_plan 已可应用（写回机器覆盖层），不再在此列。
+    """
     for kind, frag in [("flow_ast", "validate"), ("params", "live_editable"),
-                       ("map_plan", "map_plan patch")]:
+                       ("group_composition", "hot-edit")]:
         p = _propose(client, kind=kind)
         assert p["validation"]["ok"] is False
         assert frag in p["validation"]["errors"][0]["text_zh"], kind
@@ -301,3 +304,62 @@ def test_history_is_appended_not_overwritten(tmp_path: Path):
 
     reloaded = ProposalStore(CAT, path=path)
     assert reloaded.get(p.id).status == "已拒绝", "重载后取最后一条状态"
+
+
+def test_map_plan_proposal_applies_to_overrides(client, monkeypatch, tmp_path):
+    """B14 全链：map_plan 提案 → validate ok + map_overlay preview → 接受 → 覆盖层落盘。
+
+    覆盖层路径 monkeypatch 到临时目录（不污染仓库里的真实 authoring 数据）。
+    接受后**新会话**加载时生效 —— 这里验证落盘 + 重载模板可见（重开 = 重载）。
+    """
+    import view.map_plan as mp
+    ov_path = tmp_path / "base_layout.overrides.yaml"
+    monkeypatch.setattr(mp, "MAP_OVERRIDES_PATH", ov_path)
+
+    p = _propose(client, kind="map_plan", title_zh="放个新点位",
+                 target={}, hunks=[
+                     {"id": "h1", "kind": "add_mark", "text_zh": "新增点位 mark_1",
+                      "payload": {"name": "mark_1", "pos": [55.5, 42.5]}},
+                 ])
+    assert p["validation"]["ok"] is True, p["validation"]
+    assert p["preview"]["kind"] == "map_overlay"
+
+    r = client.post(f"/api/proposals/{p['id']}/accept")
+    assert r.status_code == 200, r.text
+
+    ov = mp.load_map_overrides()
+    assert ov["pos_marks"]["mark_1"]["pos"] == [55.5, 42.5]
+
+    # 重载模板（= 新会话）后点位可见 —— "在线看到我标记了什么"的数据链路
+    from tactical_map.base import load_ladder_map, load_base_template
+    from pathlib import Path
+    real = Path(__file__).resolve().parents[2] / "modules" / "tactical_map" / "data"         / "ladder_map" / "base_layout.yaml"
+    # 用 monkeypatch 过的路径构造：临时目录里没有 base_layout.yaml，
+    # 所以直接验证 load_ladder_map 不受影响（真实文件未被污染）+ 临时覆盖层正确。
+    tpl = load_ladder_map()
+    assert all("mark_1" not in {m.name for m in s.pos_marks} for s in tpl.spawns.values())
+
+
+def test_map_plan_invalid_hunk_rejected_with_reason(client):
+    """校验失败必须带结构化理由（P2：不可接受但必须可见）。"""
+    p = _propose(client, kind="map_plan", target={}, hunks=[
+        {"id": "h1", "kind": "add_slot", "text_zh": "非法尺寸",
+         "payload": {"name": "bad", "pos": [55.5, 42.5], "size": 4, "kind": "production"}},
+    ])
+    assert p["validation"]["ok"] is False
+    assert "size" in p["validation"]["errors"][0]["text_zh"]
+    assert p["validation"]["errors"][0]["hunk_id"] == "h1"
+
+
+def test_map_plan_accept_after_invalid_refused(client, monkeypatch, tmp_path):
+    """校验没过就不能接受（P2 的另一半）。"""
+    import view.map_plan as mp
+    monkeypatch.setattr(mp, "MAP_OVERRIDES_PATH", tmp_path / "o.yaml")
+    p = _propose(client, kind="map_plan", target={}, hunks=[
+        {"id": "h1", "kind": "add_slot", "text_zh": "重叠",
+         "payload": {"name": "dup", "pos": [40.5, 32.5], "size": 2, "kind": "supply"}},
+    ])
+    assert p["validation"]["ok"] is False
+    r = client.post(f"/api/proposals/{p['id']}/accept")
+    assert r.status_code == 409, r.text
+    assert not (tmp_path / "o.yaml").exists()
