@@ -29,9 +29,13 @@ export class WsFrameSource implements FrameSource {
   private readonly latest = new Map<Topic, AnyEnvelope>();
   private readonly _markers: TimelineMarker[] = [];
   private readonly changeCbs = new Set<() => void>();
+  private readonly disconnectCbs = new Set<() => void>();
   private info: WsSourceInfo | null = null;
   private cursor = 0;
   private _error: string | null = null;
+  /** 中途断线（握手成功之后）为 true；dispose() 主动关闭不算 */
+  private _disconnected = false;
+  private disposed = false;
 
   constructor(
     private readonly url: string,
@@ -91,7 +95,17 @@ export class WsFrameSource implements FrameSource {
       ws.onerror = () => {
         if (!settled) { settled = true; reject(new Error("WebSocket 连接失败：" + this.url)); }
       };
-      ws.onclose = () => this.notify();
+      ws.onclose = () => {
+        // 握手成功之后的 close = **断线**（会话停止/崩溃/后端重启）。
+        // 之前这里只 notify() 一下 —— 驾驶舱就静默冻结在最后一帧，会话条还显示旧状态，
+        // 用户被过期的画面误导（ISSUES I3 的确切答案：代码里就是没有断线处理）。
+        // 主动 dispose() 不算断线。
+        if (settled && !this.disposed) {
+          this._disconnected = true;
+          for (const cb of this.disconnectCbs) cb();
+        }
+        this.notify();
+      };
     });
   }
 
@@ -147,9 +161,23 @@ export class WsFrameSource implements FrameSource {
     };
   }
 
+  /** 断线通知（握手成功之后连接断开；连接失败走 connect() 的 reject，不算断线） */
+  onDisconnect(cb: () => void): Unsubscribe {
+    this.disconnectCbs.add(cb);
+    return () => {
+      this.disconnectCbs.delete(cb);
+    };
+  }
+
+  disconnected(): boolean {
+    return this._disconnected;
+  }
+
   dispose(): void {
+    this.disposed = true;      // 主动关闭不该触发断线横幅
     this.listeners.clear();
     this.changeCbs.clear();
+    this.disconnectCbs.clear();
     this.ws?.close();
     this.ws = null;
   }

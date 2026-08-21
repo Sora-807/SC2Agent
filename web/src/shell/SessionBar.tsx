@@ -29,6 +29,7 @@ export function SessionBar() {
     fixtures, fixtureKey, sourceKind, attach,
     session, caps, position, api,
     returnToLive, play, pause,
+    disconnected, reconnect,
   } = useFrames();
 
   // 会话描述轮询（只在 drive 模式）：driver/alive 驱动按钮拦截，防止重复启动 SC2。
@@ -76,6 +77,21 @@ export function SessionBar() {
     <header className="border-b border-neutral-800">
       {/* 模式色带：F13(b) 的「视觉不可忽略」—— 2px 高，全宽 */}
       <div className={"h-0.5 rounded " + meta.band} />
+
+      {/* WS 断线横幅（2026-08-21）：之前零处理 = 驾驶舱静默冻结在最后一帧，
+          用户被过期的画面误导。显眼横幅 + 手动重连（不做自动重连，语义显式）。 */}
+      {disconnected && (
+        <div className="mt-1 flex items-center gap-2 rounded border border-red-800 bg-red-950/50 px-2 py-1">
+          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-400" />
+          <span className={"text-red-300 " + T.label}>
+            帧流已断开（后端可能已停止或崩溃）· 画面停留在断开前，继续操作会基于过期状态
+          </span>
+          <button
+            className="ml-auto shrink-0 rounded border border-red-700 px-2 py-0.5 text-red-200 hover:bg-red-900/40"
+            onClick={() => void reconnect()}
+          >重连</button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 pb-2 pt-1">
         <span className="text-base font-bold">sc2Agent 驾驶舱</span>

@@ -24,6 +24,8 @@ vi.mock("../src/source/ws", () => ({
         caps: { live: false, seek: false },
         dispose: () => {},
         onChange: () => () => {},
+        onDisconnect: () => () => {},   // 2026-08-21 起 frames.attach 会注册断线回调
+        disconnected: () => false,
       };
     }),
   },

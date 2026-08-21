@@ -70,9 +70,13 @@ interface FramesStore extends Frames {
   markers: TimelineMarker[];
   error: string | null;
   loading: boolean;
+  /** WS 帧流中途断开（握手成功之后）。之前零处理 = 驾驶舱静默冻结在最后一帧 */
+  disconnected: boolean;
 
   init(): Promise<void>;
   attach(kind: SourceKind, fixtureKey: string): Promise<void>;
+  /** 断线后用当前 (kind, fixtureKey) 重新 attach */
+  reconnect(): Promise<void>;
   setMode(m: Mode): Promise<void>;
   /** 重新探测后端（用户后启动 serve_api 时不用刷新页面） */
   probe(): void;
@@ -114,7 +118,7 @@ export const useFrames = create<FramesStore>((set, get) => {
     api: { ok: false },
     caps: { live: false, seek: true }, timeline: "live", mode: "offline",
     range: { from: 0, to: 0 }, position: 0, seq: 0, markers: [],
-    error: null, loading: false,
+    error: null, loading: false, disconnected: false,
 
     async init() {
       // 探测后端与读本地夹具是独立的两件事：任一可用就能工作
@@ -158,11 +162,13 @@ export const useFrames = create<FramesStore>((set, get) => {
           const ws = WsFrameSource.replay(API_BASE, "live", 0, { live: true });
           const rev = new ReviewableSource(ws);
           rev.onChange(syncMeta);
+          ws.onDisconnect(() => set({ disconnected: true }));
           await ws.connect();      // 握手里会校验 rev，不匹配直接抛（红线 C8）
           src = rev;
         } else if (kind === "api") {
           const ws = WsFrameSource.replay(API_BASE, fixtureKey, 0);
           ws.onChange(syncMeta);
+          ws.onDisconnect(() => set({ disconnected: true }));
           await ws.connect();      // 握手里会校验 rev，不匹配直接抛（红线 C8）
           src = ws;
         } else if (kind === "mock-live") {
@@ -202,7 +208,7 @@ export const useFrames = create<FramesStore>((set, get) => {
         src.subscribe("static/strategy", (e) => set({ strategy: e.payload })),
       ];
       set({
-        sourceKind: kind, fixtureKey, loading: false, caps: src.caps,
+        sourceKind: kind, fixtureKey, loading: false, caps: src.caps, disconnected: false,
         range: src.range(), position: src.position(), markers: src.markers(),
         timeline: isReviewable(src) ? src.mode() : "live",
       });
@@ -229,6 +235,12 @@ export const useFrames = create<FramesStore>((set, get) => {
       }
       set({ mode: m });
       await get().attach(target.kind, target.fixtureKey);
+    },
+
+    async reconnect() {
+      const { sourceKind, fixtureKey } = get();
+      if (!fixtureKey) return;      // 理论上不该发生（任何已 attach 的源都有键）
+      await get().attach(sourceKind, fixtureKey);
     },
 
     seek(t) {
