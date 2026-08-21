@@ -22,10 +22,8 @@ import {
 import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 
-/** 端口几何：入边统一汇到卡片左上空心圆；出边从 branch 行右侧实心圆出发（用户反馈：让连接更直观） */
-const ENTRY_OFF = -8;   // 入口圆心相对卡片左缘的 x 偏移
-const ENTRY_Y = 15;     // 入口圆心相对卡片顶部的 y
-const OUT_OFF = 8;      // 出口圆心相对卡片右缘的 x 偏移
+/** 端口几何（用户反馈：端口要嵌在卡片圆角上，圆心压边框、一半在内一半在外，加粗增强视觉） */
+const ENTRY_R = 5;     // 入口圆：圆心在卡片左上角点（0,0），骑在圆角上
 
 export function FlowPage() {
   const { strategy: graph, flow, schema, catalog } = useFrames();
@@ -130,7 +128,7 @@ export function FlowPage() {
       .find((s) => s.step_id === stepId);
     const idx = step ? matchExitBranch(step.branches ?? [], edge) : null;
     if (idx === null) return null;
-    return { x: n.x + NODE_W + OUT_OFF, y: n.y + HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H + BRANCH_ROW_H / 2 };
+    return { x: n.x + NODE_W, y: n.y + HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H + BRANCH_ROW_H / 2 };
   };
 
   return (
@@ -178,8 +176,8 @@ export function FlowPage() {
             const anchor = branchAnchor(e.from, e);
             const sx = anchor?.x ?? from.x + NODE_W;
             const sy = anchor?.y ?? from.y + from.h / 2;
-            const tx = to.x + ENTRY_OFF;
-            const ty = to.y + ENTRY_Y;
+            const tx = to.x;
+            const ty = to.y;
             const isLast = lastT?.from === e.from && lastT?.to === e.to;
             const walked = state?.transitions.some((t) => t.from === e.from && t.to === e.to);
             const color = isLast ? "#fbbf24" : walked ? "#34d399" : "#4b5563";
@@ -276,8 +274,8 @@ export function FlowPage() {
                     </text>
                   </>
                 )}
-                {/* 入口点：所有入边汇到这里（空心圆，比「每条边扎在左中」更直观） */}
-                <circle cx={ENTRY_OFF} cy={ENTRY_Y} r={4} fill="#0d1117" stroke="#8a8f98" strokeWidth={1.2} />
+                {/* 入口点：骑在卡片左上角圆弧上（圆心压角点、一半在内一半在外、加粗） */}
+                <circle cx={0} cy={0} r={ENTRY_R} fill="#0d1117" stroke="#c3c9d4" strokeWidth={2} />
                 {/* 主体：一行一个 branch（左右分栏可换行）；行间分隔线；出边行右端画出口点；
                     点行 → 下方详情卡看全文（截断不再死路） */}
                 {branches.map((b, idx) => {
@@ -302,8 +300,8 @@ export function FlowPage() {
                               stroke="rgba(148,163,184,0.14)" strokeWidth={1} />
                       )}
                       {hasEdge && (
-                        <circle cx={NODE_W + OUT_OFF} cy={y + BRANCH_ROW_H / 2} r={3}
-                                fill={hit ? "#fbbf24" : "#8a8f98"} />
+                        <circle cx={NODE_W} cy={y + BRANCH_ROW_H / 2} r={4}
+                                fill={hit ? "#fbbf24" : "#8a8f98"} stroke="#0d1117" strokeWidth={1.5} />
                       )}
                       <foreignObject x={4} y={y} width={NODE_W - 8} height={BRANCH_ROW_H}>
                         <div

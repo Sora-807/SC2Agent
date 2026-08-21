@@ -370,11 +370,17 @@ class LiveSession:
         try:
             self.proc.wait(timeout=STOP_GRACE)
         except subprocess.TimeoutExpired:
-            # 真机上 run_game 不一定听我们的 —— 到点就 kill，别把 api 拖住
-            self.proc.kill()
-        # 无论子进程是否自己退出：SC2 是它的子进程，只有树杀才不会变孤儿黑屏。
-        # 子进程已退时 taskkill 报"找不到进程"被静默；SC2 还在则被连坐。
+            pass
+            # 注意：**不要在这里单独 kill 根**。taskkill /T 靠根进程枚举子树，
+            # 根先死了 SC2 就成枚举不到的孤儿（真机实测：游戏停不掉就是这个顺序问题）。
         self._kill_tree()
+        # 兜底：树杀后根还活着（理论不该）再补刀
+        if self.proc.poll() is None:
+            self.proc.kill()
+        try:
+            self.proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
         with self._lock:
             if self.state != "崩溃":
                 self.state = "已结束"
