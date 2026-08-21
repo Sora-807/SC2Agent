@@ -10,7 +10,8 @@
 
 **sc2Agent**（sc2_agent_next）：星际争霸 II 的 Agent 框架。核心不是"打比赛"，而是：
 
-1. **人在环审批**：agent 推草稿提案，人审批后才生效（红线 P1-P7）；
+1. **人在环审批**：agent 推草稿提案，人审批后才生效（审批红线 **P1-P7** 见
+   `docs/plan-frontend.md` §6；后端机制侧不变量 **Q1-Q7** 见本文 §6.2）；
 2. **严格分层**：flow 引擎不知道具体单位、driver 零业务规则、前端零规则复算；
 3. **一套帧契约贯通一切**：live 推送、复盘录制、离线夹具、agent 观察包，全是**同一批字节**（ViewFrame）。
 
@@ -209,7 +210,7 @@ check_build/check_train/check_gas/...：矿/气/供给/前置/放置/重叠 → 
 - tools/make_fixtures.py：真引擎产夹具（pnpm gen:fixtures 调它）。
 - tools/serve_api.py：API 启动器（把 modules/ 塞进 sys.path）。
 - agent/：client.py（urllib + transport 接缝）、tools.py（observe/write_surface/**propose** ——
-  **没有**直接命令工具，P1 靠"不给工具"保证）、spec.py（系统提示词：三条做不到+提案要具体）、
+  **没有**直接命令工具，P1/Q1 靠"不给工具"保证）、spec.py（系统提示词：三条做不到+提案要具体）、
   run.py（单回合，--dry 用 FakeLLM 不打网络）。
 - vendor/agentic/：BaseAgent 框架（vendored）。DiskWorkspace 物理隔离（R5 机制保证）、
   FakeLLMClient（测试不打网络）、trace 可视化。见 vendor/agentic/NOTICE.md。
@@ -221,7 +222,7 @@ check_build/check_train/check_gas/...：矿/气/供给/前置/放置/重叠 → 
 ### 4.1 信封
 
 ~~~json
-{ "topic": "world", "rev": 9, "seq": 512, "game_time": 87.0, "wall_ms": 412, "payload": { ... } }
+{ "topic": "frame/world", "rev": 9, "seq": 512, "game_time": 87.0, "wall_ms": 412, "payload": { ... } }
 ~~~
 
 - topic / rev / seq / game_time / wall_ms 五个键每个帧都有；payload 随 topic 变。
@@ -231,50 +232,65 @@ check_build/check_train/check_gas/...：矿/气/供给/前置/放置/重叠 → 
 
 ### 4.2 14 个 topic
 
+> **topic 名是带前缀的字面量**，订阅时必须逐字一致（`modules/view/schema.py:50-55` ↔
+> `web/src/contract/index.ts:731-744`，两侧由 contract test 锁死）。动态面前缀是 `frame/`，
+> 唯一例外是 `proposals`（无前缀）。写 `subscribe("world")` 会一帧都收不到。
+
 | topic | 静态/动态 | payload 要点 |
 |---|---|---|
-| static/schema | 静态 | 逐字 dump_vocabulary()：谓词签名+arity、动作目录、未实现清单、节点形态、生产闭集 |
-| static/catalog | 静态 | 全量单位目录（stable_id、zh 名、cost、build_time、前置、footprint） |
-| static/map | 静态 | 区域标签网格（big/leaf）+ 索引 + 槽位（br / build_point / reported_position 后端算好） |
-| static/terrain | 静态 | height / pathable / placeable 三栅格（176x160），后端转 b64 |
-| static/strategy | 静态 | steps / branches 值树原样、edges、声明（strategy.yaml 的镜像） |
-| world | 动态 | units/orders/owners/resources/game_time，单位已翻译为 stable_id |
-| flow | 动态 | 当前活跃 step、转换记录、观测（branch_hit/transitions） |
-| production | 动态 | 队列与状态：pending / 队首阻塞（原因）/ 在途确认 / dropped 审计 |
-| ops | 动态 | 最近产出/提交的 Operation（OpRing 环形缓冲，带三态 apply 回填） |
-| economy | 动态 | 政策/目标值/节点（矿气实际分配、饱和）/保留/最近 assign 操作 |
-| session | 动态 | 运行态（over/declared/error）、声明时间、报错、驱动来源（live/sim/record） |
-| projection | 动态 | 未来曲线（逐秒点 + 事件：started/completed/stalled+原因） |
-| terrain | 动态 | 真机地图信息到达事件（B4；live 模式下子进程→控制行→帧） |
-| observation | 动态 | agent 读面包（见 §6.3） |
+| `static/map` | 静态 | 区域标签网格（big/leaf）+ 索引 + 槽位（br / build_point / reported_position 后端算好） |
+| `static/catalog` | 静态 | 全量单位目录（stable_id、zh 名、cost、build_time、前置、footprint） |
+| `static/schema` | 静态 | 逐字 dump_vocabulary()：谓词签名+arity、动作目录、未实现清单、节点形态、生产闭集 |
+| `static/strategy` | 静态 | steps / branches 值树原样、edges、声明（strategy.yaml 的镜像） |
+| `static/terrain` | 静态 | height / pathable / placeable 三栅格（176x160），后端转 b64。**事件式静态面**：`static/map` 先到（terrain=null），game_info 就绪后本帧补到（rev 9 的原因，见 §4.4） |
+| `frame/session` | 动态 | 会话状态机（未连接/启动中/对局中/已结束/崩溃）、地图、种族、error |
+| `frame/world` | 动态 | economy + units（已翻译 stable_id + 形态归一 + footprint）+ enemy_clusters + resource_state + grids |
+| `frame/flow` | 动态 | strategies[]（活跃 step、branch_hit、transitions、params/variables）+ groups[]（composition/refill_state/leased_tags） |
+| `frame/production` | 动态 | queues[]（队首阻塞+原因）/ in_flight[]（在途确认+attempted_slots）/ dropped[] 审计 |
+| `frame/economy` | 动态 | tasks[]（quota/target/actual 三个数）/ nodes[]（workers/capacity/saturated）/ reserved / domain_workers |
+| `frame/ops` | 动态 | 最近产出/提交的 Operation（OpRing 环形缓冲，带 origin + 三态 apply 回填） |
+| `frame/projection` | 动态 | 未来曲线（逐秒点 + 事件 started/completed/stalled+原因）+ skipped（投不了的项，不静默） |
+| `frame/alerts` | 动态 | 结构化警报（队列阻塞/卡人口/缺前置/浮矿浮气/产线空闲），zh 文案后端拼 |
+| `proposals` | 动态 | 草稿提案与审批状态（**唯一无前缀的 topic**） |
 
-### 4.3 契约红线（C1-C8，docs 里成文，测试守）
+**不是 topic 的读面**：`observation`（agent 观察包）只有 REST `GET /api/observation`
+（`modules/api/app.py:248`），不在 `TOPICS` 里 —— 它是"帧的投影"，由 `view.observe` 从已有帧派生。
 
-- **C1** REV 版本号两侧一致：modules/view/schema.py REV ↔ web/src/contract/index.ts REV。
-  不匹配时前端 _hello 判 rev 直接提示版本不符，不渲染。
-- **C2** 信封五键不可缺：任何 topic 的帧缺一个键都算违约。
-- **C3** 派生量全部后端算：供给饱和度、在训、挂件、槽位坐标、队列状态、投影曲线、
-  zh 文案 —— 前端不许重算业务量（它只做"帧 → 像素"）。
-- **C4** 单一真相源：zh 文案在 catalog；规则参数在 catalog/vocab；坐标换算只在 tactical_map.placement。
-- **C5** 帧是快照：一帧内自洽，任何游标/时序下都可独立渲染；前端组件不许跨帧做假设。
-- **C6** 静态面一次性拉全：静态 topic 返回完整 payload（目录/词表/地形全量），前端不拼不增量。
-- **C7** 动态面按 rate 推：同一 websocket 里多 topic 订阅，帧间顺序 = 服务端发送顺序。
-- **C8** 录制/夹具/live 同一产帧路径（FrameProducer）：回放与实况必须字节级同构，
-  不允许"回放专用"的简化帧。GAME_EVENTS / OP_CATALOG / 契约都是**只增不改**。
+### 4.3 架构不变量（A1-A8）
 
-### 4.4 REV 历史（1 → 9，全在 schema.py 顶部注释里）
+> ⚠️ **号段说明（务必先读）**：契约红线的**唯一权威号段是 `docs/plan-frontend.md` §2.4 的 C1-C8** ——
+> 它有代码背书（`view/adapt.py:191` 引 C1、`flow/allocator.py:137` 引 C3、
+> `view/schema.py:469` 引 C6、`view/schema.py:14` 引 C8 等 17 处源码注释）。
+> 本节这 8 条是**传输与产帧层的架构不变量**，与 C1-C8 是不同的东西，故编号为 **A1-A8**，
+> 避免与 C 号段撞号。引用时请写全 `C6`（契约红线）或 `A6`（架构不变量），不要只写编号。
 
-| REV | 变更 |
-|---|---|
-| 1 | 首版：世界/资源/订单 |
-| 2 | 加入区域标签网格（map 静态面） |
-| 3 | 加入投影曲线 + 事件 |
-| 4 | 加入经济（assign 目标语义前身） |
-| 5 | 加入 ops 环形缓冲 + 三态 apply |
-| 6 | 加入 terrain 静态面（B4 三栅格） |
-| 7 | 加入 observation（agent 读面包） |
-| 8 | session 帧加 error/declared；ops 帧带 origin |
-| 9 | schema_static 改为逐字 vocab；strategy_static 带声明；drop 语义修正 |
+| # | 架构不变量 | 与 C 号段的关系 |
+|---|---|---|
+| **A1** | REV 版本号两侧一致：`modules/view/schema.py` REV ↔ `web/src/contract/index.ts` REV。不匹配时前端 `_hello` 判 rev 直接提示版本不符，不渲染 | 是 **C8**（改契约 = rev+1）的运行期执行机制 |
+| **A2** | 信封五键不可缺（topic/seq/game_time/wall_ms/payload + rev）：任何 topic 的帧缺一个键都算违约 | 对应契约 §2.1 信封定义 |
+| **A3** | 派生量全部后端算：供给饱和度、在训、挂件、槽位坐标、队列状态、投影曲线、zh 文案 —— 前端不许重算业务量 | = **C2**（footprint 后端算）+ **C3**（状态闭集后端给）+ **C7**（帧里没有的不许现算）的合并陈述 |
+| **A4** | 单一真相源：zh 文案在 catalog；规则参数在 catalog/vocab；坐标换算只在 `tactical_map.placement` | = **C4**（zh 来自 catalog）+ **C2**（换算不许有第二份） |
+| **A5** | 帧是快照：一帧内自洽，任何游标/时序下都可独立渲染；前端组件不许跨帧做假设 | 是决策 **U1**（组件 = 帧→像素纯函数）的契约侧表述 |
+| **A6** | 静态面一次性拉全：静态 topic 返回完整 payload（目录/词表/地形全量），前端不拼不增量 | 传输层约定，**无 C 对应** |
+| **A7** | 动态面按 rate 推：同一 websocket 多 topic 订阅，帧间顺序 = 服务端发送顺序 | 传输层约定，**无 C 对应**（契约 §2.1 有同义表述："帧内顺序由流的顺序给，不靠 seq 排"）|
+| **A8** | 录制/夹具/live **同一产帧路径**（FrameProducer）：回放与实况字节级同构，不允许"回放专用"简化帧。`GAME_EVENTS` / `OP_CATALOG` / 契约都是**只增不改** | 是决策 **U2**（复盘优先、live 最后接）的机制保证，**无 C 对应** |
+
+### 4.4 REV 历史（1 → 9）
+
+> 权威来源是 `modules/view/schema.py:14-44` 的行内注释（每条都写了**为什么**改）。
+> 消费方视角的同一份历史在 `docs/plan-frontend.md` §2「变更记录」。下表照 schema.py 转录。
+
+| REV | 变更 | 原因摘要 |
+|---|---|---|
+| 1 | 初版 | DSL v0.2 之前，签名表尚不存在，`static/schema` 降级为空参数表 |
+| 2 | `static/schema` 改为**逐字镜像** `flow.vocab.dump_vocabulary()`；`frame/production` 队列增 `blocked` | rev 1 手抄已出错（`follow`/`research` 参数、`point_toward` 的 origin 全抄错）；vocab 是校验器/提示词/编辑器共用的权威表 |
+| 3 | 区域几何改为**一张标签网格 + 索引**（`big_grid`/`leaf_grid`/`*_index`），删 `leaf[].cells` | per-region mask 不可扩展：20 个区域按 mask 发 750KB，按标签网格始终 37KB |
+| 4 | `frame/flow` 增 `eval_diagnostics`；`items[].status` 收窄为 队首阻塞/未处理 并删 `resolved_point`；`in_flight[]` 删 `timeout_frames`/`confirmed`、增 `queue`/`attempted_slots` | B1 落地时按后端**实际能产出什么**校准；`attempted_slots` 正是摆放调试叠加要的 |
+| 5 | `static/schema.forbidden` 定为**开放分组表**（`{组名: {op: 原因}}`），不枚举分组名 | 后端新加 `composite_actions`/`step_keys` 两组；前端 zod 写成封闭对象会**静默 strip** 新分组，编辑器就以为那些 op 可用 |
+| 6 | 新增 topic `frame/economy` | ADR-0030 经济维持器落地；payload 按 `EconomyKeeper.snapshot()` 实际产出校准（`emitted_count` 而非 `emitted`）|
+| 7 | 新增 topic `static/strategy`（steps/branches 值树/edges/声明节） | 策略图**不在任何帧里**：`frame/flow` 只有"现在在哪个 step"。刻意原样下发 branches 值树 —— 摊平一次就得再补通道 |
+| 8 | `frame/projection` 增 `skipped`；`source.kind="live_queue"` 有真值 | `Planner.project` 与 `ProductionRuntime` 之前没有互转，"当前队列的投影"产不出来；`view.projection` 补上这条桥。`skipped` 是"不静默" |
+| 9 | 新增 topic `static/terrain`（B4：driver 从 game_info 导出三栅格） | 它是**事件式静态面**：真机上 game_info 在 bot 第一个 on_step 才可用，而 `static/map` 在那之前就得发出去 |
 
 历史帧兼容：**只增不改**意味着旧帧永远能按新契约解析（缺的字段有默认值）。
 向前兼容只保留"解析"，不承诺"语义"，新字段老前端看不到是预期。
@@ -334,15 +350,25 @@ engine/planner/production/economy/lease/FrameProducer/ProposalStore **完全同�
 - 双投影：对提案后形态跑 queue_to_ops → Planner.project，得"采纳后曲线"与当前曲线同图对比；
 - 过期失效：proposal 带 based_on_seq，序列走远即标记 stale，UI 不让过期提案过审。
 
-### 6.2 提案红线（P1-P7）
+### 6.2 提案机制不变量（Q1-Q7）
 
-- **P1** agent 没有直接命令工具（工具集 = done / observe / write_surface / propose），物理上不能绕过审批；
-- **P2** 提案必须附 based_on_seq（新鲜度闭环）；
-- **P3** 提案必须具体到队列与 hunk（"多造点兵"被 spec 拒绝）；
-- **P4** 一次一个可审单元（不能一条提案塞十个意图）；
-- **P5** 拒绝必须给理由，理由**回流给 agent**（下一轮 observe 带历史段）；
-- **P6** 采纳后必须经校验 + 双投影，投影不可行可直接拒；
-- **P7** 提案日志 append-only，全量可审（runtime/proposals.jsonl）。
+> ⚠️ **号段说明**：审批红线的**唯一权威号段是 `docs/plan-frontend.md` §6 的 P1-P7**（含两条本节
+> 没有的 UI 硬要求：**P2** `validation.ok=false` 时接受按钮禁用但**必须可见**、**P5** `anchor` 帧
+> 过期自动置「已失效」禁止盲接受）。本节这 7 条是**后端机制侧**的不变量，编号为 **Q1-Q7** 以免撞号。
+> **F14 实现 map_plan 提案时必须同时满足 P1-P7 与 Q1-Q7**，两者不是同一张清单。
+
+| # | 机制不变量 | 与 P 号段的关系 |
+|---|---|---|
+| **Q1** | agent 没有直接命令工具（工具集 = `done`/`observe`/`write_surface`/`propose`），物理上不能绕过审批 | = **P1**（agent 只能推提案）的实现手段："不给那个工具" |
+| **Q2** | 提案必须附 `based_on_seq`（新鲜度闭环，R8）| 是 **P5**（anchor 过期即失效）的前置数据 |
+| **Q3** | 提案必须具体到队列与 hunk（"多造点兵"被 spec 拒绝）| spec 层要求，**无 P 对应** |
+| **Q4** | 一次一个可审单元（不能一条提案塞十个意图）| 对应契约 `hunks[]`「可逐条接受的最小单元」 |
+| **Q5** | 拒绝必须给理由，理由**回流给 agent**（下一轮 observe 带历史段）| = **P3**（拒绝必须能附理由 + 回流）|
+| **Q6** | 采纳后必须经校验 + 双投影，投影不可行可直接拒 | 是 **P2**（validation 门）+ 需求 **R6**（提交必过 validate）的后端落点 |
+| **Q7** | 提案日志 append-only，全量可审（`runtime/proposals.jsonl`）| 存储层要求，**无 P 对应** |
+
+> **P 有而 Q 没有的两条**（F14 必须自己实现）：**P2** 的"禁用但可见"（agent 要学、用户要诊断）、
+> **P6** 用户自己的编辑直接生效但同样过 validate（用户是权威 R3）。
 
 ### 6.3 agent 读写面（ObservationPacket + propose）
 
@@ -408,7 +434,7 @@ GameState ──FrameProducer──> ViewFrame(JSONL/WS) ──FrameSource──
 ~~~
 
 复盘 = 读 JSONL 走同一 FrameSource 接口；live = 换 ws 实现；夹具 = jsonl 实现。
-**同一条产帧路径（C8）保证三种玩法看到的字节一模一样。**
+**同一条产帧路径（架构不变量 A8）保证三种玩法看到的字节一模一样。**
 
 ### 8.2 写面：命令（人）
 

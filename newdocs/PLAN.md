@@ -28,45 +28,48 @@ F0-F9 建成的驾驶舱功能齐全（每个数据面都有页面、提案审�
 
 ## 1. 根因诊断（代码级证据，截至 d42aa1e）
 
-> 每条带 file:line。开工前建议 re-verify 一遍行号（上一轮改动可能漂移）。
+> 每条带 file:line。**已于 HEAD `1cc1c2e` 机械 re-verify（25 条论断全部成立，11 处行号已修正）**。
+> 核对方法：按 file:line 读该行并用正则断言它确实是所声称的东西，未命中则在 ±12 行窗口内定位真实行号。
+> 注意 `d42aa1e` **未改动 `web/`**（只改 live.py / sc2_adapter.py / run_session.py + 新测试），
+> 故前端漂移源于原提案的范围书写不精确，不是代码变动。
 
 ### 1.1 滚轮缩放导致页面滚动（问题 1，波及所有页）
 
 | # | 根因 | 证据 |
 |---|---|---|
-| A | e.preventDefault() 是空操作：React 18 把 wheel/touchstart/touchmove 注册在 root 且强制 passive，onWheel 里的 preventDefault 无效（控制台有 "Unable to preventDefault inside passive event listener"），滚轮同时缩放+滚动祖先。React 既定设计（facebook/react#22794），必须绕开 | web/src/canvas/MapCanvas.tsx:150 |
+| A | e.preventDefault() 是空操作：React 18 把 wheel/touchstart/touchmove 注册在 root 且强制 passive，onWheel 里的 preventDefault 无效（控制台有 "Unable to preventDefault inside passive event listener"），滚轮同时缩放+滚动祖先。React 既定设计（facebook/react#22794），必须绕开 | web/src/canvas/MapCanvas.tsx:149 |
 | B | 外壳允许长高（min-h-screen 是最小高度不是固定高度）+ main 是 overflow-auto → 永远有东西可滚 | web/src/App.tsx:50、:55 |
 | B2 | 地图页强制 min-h-[420px]，小窗口把中间行顶出视口 | web/src/pages/MapPage.tsx:30 |
-| C | 绘制 effect 依赖里有 props（每渲染新对象）→ 每渲染都拆建 rAF 循环 | web/src/canvas/MapCanvas.tsx:139 |
-| D | host 尺寸一变就 fitViewport → 改窗口/收对话栏丢缩放平移 | web/src/canvas/MapCanvas.tsx:83 |
+| C | 绘制 effect 依赖里有 props（每渲染新对象）→ 每渲染都拆建 rAF 循环 | web/src/canvas/MapCanvas.tsx:140 |
+| D | host 尺寸一变就 fitViewport → 改窗口/收对话栏丢缩放平移 | web/src/canvas/MapCanvas.tsx:73（effect :71-74）|
 
 ### 1.2 地图看不出地形、主次不分（问题 1）
 
 | # | 根因 | 证据 |
 |---|---|---|
 | E | 地形数据早就有（height/pathable/placeable 三栅格已下发），缺的只是画法 | modules/driver/sc2_adapter.py:132-140、modules/view/statics.py:147-152 |
-| F | 高度映射成连续绿色渐变 46+min(120, v*3)，离散台地被糊成一团 | web/src/canvas/MapCanvas.tsx:88-90 |
-| G | pathable 是 alpha 70 红/绿平涂，抢对比度；斜坡完全没表达 | web/src/canvas/MapCanvas.tsx:91-92 |
-| H | 建筑 = 半透明矩形 + 无说明数字（画 producing.length），分不清兵营/工厂 | web/src/canvas/MapCanvas.tsx:330-336 |
-| I | 单位 = scale*0.3 实心圆，50 个枪兵是 50 个不可辨点；建筑/单位/槽位无形状区分 | web/src/canvas/MapCanvas.tsx:355-363 |
-| J | 20+ 槽位常驻 alpha 0.55 虚线 + 每矿点一个圆点，噪声压过信息 | web/src/canvas/MapCanvas.tsx:263-297 |
+| F | 高度映射成连续绿色渐变 46+min(120, v*3)，离散台地被糊成一团 | web/src/canvas/MapCanvas.tsx:79-81 |
+| G | pathable 是 alpha 70 红/绿平涂，抢对比度；斜坡完全没表达 | web/src/canvas/MapCanvas.tsx:82-83 |
+| H | 建筑 = 半透明矩形 + 无说明数字（画 producing.length），分不清兵营/工厂 | web/src/canvas/MapCanvas.tsx:308-311 |
+| I | 单位 = scale*0.3 实心圆，50 个枪兵是 50 个不可辨点；建筑/单位/槽位无形状区分 | web/src/canvas/MapCanvas.tsx:316-349（圆点 :322-328；:350 起才是敌方聚类块）|
+| J | 20+ 槽位常驻 alpha 0.55 虚线 + 每矿点一个圆点，噪声压过信息 | web/src/canvas/MapCanvas.tsx:252-283（槽位 :252-264 / 矿点 :265-283）|
 
 ### 1.3 策略图不能拖不能缩（问题 2）
 
 | # | 根因 | 证据 |
 |---|---|---|
-| K | 固定 width/height 手写 SVG 塞在 overflow-auto div：无平移/缩放/拖动/fit，节点被 BFS 列推出容器后拉不回 | web/src/pages/FlowPage.tsx:64-66、:43-46 |
-| L | 节点 132x52 矩形内只有 step_id；有信息量的东西都在图下两张卡里 →「全是文字」 | web/src/pages/FlowPage.tsx:100-130 vs :139-190 |
-| M | branch 才是边，但 branch 关在卡里，边是匿名线只标 reason，讲不出「什么条件→去哪」 | web/src/graph/ast.ts:57-77 vs :96-146 |
-| N | 布局 = BFS 深度=列 + indexOf 定行，无降交叉，回边靠固定 +70 偏移绕行 | web/src/graph/ast.ts:107-145 |
-| O | rect 用 x - NODE_W/2 + NODE_W/2 配补偿 transform，半宽 off-by-one 温床 | web/src/pages/FlowPage.tsx:105-107 |
-| P | flow?.strategies.at(0) 违反契约红线 C6（列表形状不假设长度 1） | web/src/pages/FlowPage.tsx:26 |
+| K | 固定 width/height 手写 SVG 塞在 overflow-auto div：无平移/缩放/拖动/fit，节点被 BFS 列推出容器后拉不回 | web/src/pages/FlowPage.tsx:65-66（固定 width/height 的 svg 套在 overflow-auto div 里）、:43-44（尺寸算式）|
+| L | 节点 132x52 矩形内只有 step_id；有信息量的东西都在图下两张卡里 →「全是文字」 | web/src/pages/FlowPage.tsx:93-137（节点）vs :138-190（分支卡/转移历史卡）|
+| M | branch 才是边，但 branch 关在卡里，边是匿名线只标 reason，讲不出「什么条件→去哪」 | web/src/graph/ast.ts:59-77（renderBranches）vs :100-146（layout 只吃 edges）|
+| N | 布局 = BFS 深度=列 + indexOf 定行，无降交叉，回边靠固定 +70 偏移绕行 | web/src/graph/ast.ts:100-146（回边 +70 在 FlowPage.tsx:80-82）|
+| O | rect 用 x - NODE_W/2 + NODE_W/2 配补偿 transform，半宽 off-by-one 温床 | web/src/pages/FlowPage.tsx:102 |
+| P | flow?.strategies.at(0) 违反契约红线 C6（列表形状不假设长度 1；plan-frontend.md §2.4） | web/src/pages/FlowPage.tsx:24 |
 
 ### 1.4 规划与地图错位、无法在图上放标记（问题 3）
 
 | # | 根因 | 证据 |
 |---|---|---|
-| Q | 「地图规划」是三张只读列表（槽位/点位/区域），根本没有画布 | web/src/pages/PlanningPage.tsx:57-108 |
+| Q | 「地图规划」是三张只读列表（槽位/点位/区域），根本没有画布 | web/src/pages/PlanningPage.tsx:56-109（MapPlanning 全函数）|
 | R | 真实 authoring 路径 = 手改 YAML + 跑真机 can_place 扫描脚本；「图上放标记」无入口 | modules/tactical_map/data/ladder_map/base_layout.yaml |
 | S | 写入路径整条是断的：APPLICABLE_KINDS = {"production_queue"}，map_plan 被显式拒绝（理由：需要 F9 的 patch 模型） | modules/view/proposals.py:41-44 |
 | T | 契约早已预留 kind:"map_plan" 与 preview:{kind:"map_overlay", changed_slots}，patch 模型从没建 | docs/plan-frontend.md §6 |
@@ -83,9 +86,9 @@ F0-F9 建成的驾驶舱功能齐全（每个数据面都有页面、提案审�
 
 | # | 根因 | 证据 |
 |---|---|---|
-| U | SourceKind 含 "live"，attach("live") 会构造真 live 源 + ReviewableSource（才有「回到实时」）；但 SessionBar 从不传 "live"：「启动沙盒」调 attach("api","live") → 真 live 模式 UI 不可达，caps.live=false，live 会话上反显「播放 x4/暂停」 | web/src/store/frames.ts:26、:146-153；web/src/shell/SessionBar.tsx:36-45、:63 |
-| V | live 在一个下拉是 fixtureKey、在另一个是 SourceKind，外壳里最糟的一处 | web/src/shell/SessionBar.tsx:19-45 |
-| W | 规划页用 sourceKind==="live" 做守卫，但 UI 永远产生不出这个值 → 警告永不触发，背后无真实约束 | web/src/pages/PlanningPage.tsx:32 |
+| U | SourceKind 含 "live"，attach("live") 会构造真 live 源 + ReviewableSource（才有「回到实时」）；但 SessionBar 从不传 "live"：「启动沙盒」调 attach("api","live") → 真 live 模式 UI 不可达，caps.live=false，live 会话上反显「播放 x4/暂停」 | web/src/store/frames.ts:26、:146-153；web/src/shell/SessionBar.tsx:29-40（源下拉只给 fixture/mock-live/api）、:58（启动沙盒调 attach("api","live")）|
+| V | live 在一个下拉是 fixtureKey、在另一个是 SourceKind，外壳里最糟的一处 | web/src/shell/SessionBar.tsx:16-40（两个 select 相邻）|
+| W | 规划页用 sourceKind==="live" 做守卫，但 UI 永远产生不出这个值 → 警告永不触发，背后无真实约束 | web/src/pages/PlanningPage.tsx:34 |
 | X | 131 处字号声明 121 处 <=12px（text-xs 30 / text-[11px] 40 / text-[10px] 51），108 处前景 neutral-500/600 → 头条和脚注长得一样 | grep -ro 统计 web/src/**/*.tsx |
 | Y | 页脚硬编码「契约 ViewFrame v0.1（rev=1）」，两侧 REV 都是 9，黄金位置显示错误信息 | web/src/App.tsx:75 vs modules/view/schema.py:45 |
 
@@ -117,7 +120,7 @@ F0-F9 建成的驾驶舱功能齐全（每个数据面都有页面、提案审�
 | G5 | 一切聚合/量化只做显示，不产出任何被读回的语义字段（U15/U18；不违 C7） |
 | G6 | 每个信息元素必须落在 6 个字号 token 之一（metric-xl/metric/label/body/note/mono）；禁止新增裸 text-[Npx] |
 | G7 | 禁用必须带理由（tooltip 引用 R/C/G 编号），禁止静默隐藏功能（U20） |
-| G8 | 沿用 plan-frontend.md 全部既有红线：C1-C8（契约）、U1-U12（决策）、R1-R8（需求）。本轮不放宽任何一条 |
+| G8 | 沿用全部既有红线，本轮不放宽任何一条：**C1-C8**（契约红线，`docs/plan-frontend.md` §2.4 —— **唯一权威号段**，有 17 处源码注释背书）、**P1-P7**（审批红线，同文件 §6）、**U1-U12**（决策，同文件 §1）、**R1-R8**（需求红线，`docs/需求文档-v0.1.md`）；后端侧另有 **A1-A8**（架构不变量）与 **Q1-Q7**（提案机制）见 ARCHITECTURE.md §4.3/§6.2 —— 那是**另外两张清单**，引用时务必带字母不要只写编号 |
 
 ---
 
@@ -449,9 +452,14 @@ live = 顶部绿色细线 + 呼吸点 +「跟随实时」；复盘 = 琥珀 +「
 
 ## 附：本计划与 ARCHITECTURE.md 的交叉引用
 
-- 契约信封/topic/红线 C1-C8/REV 历史：ARCHITECTURE.md §4
+- 契约红线 **C1-C8**（唯一权威号段）：`docs/plan-frontend.md` §2.4 —— 本计划 §1 根因 P 引的 C6、
+  §3 G5 与 §2 U15 引的 C7、§7 引的 C8 **都是这一套**
+- 契约信封 / topic 字面量（带 `frame/` 前缀）/ REV 1-9 历史 / **架构不变量 A1-A8**：ARCHITECTURE.md §4
 - 会话模型与子进程协议（B14 热重载要动它）：ARCHITECTURE.md §5
-- 提案通道与红线 P1-P7（F14 的 map_plan 提案走它）：ARCHITECTURE.md §6
+- 审批红线 **P1-P7**（F14 的 map_plan 提案 UI 必须满足）：`docs/plan-frontend.md` §6 ——
+  其中 **P2**（`validation.ok=false` 时接受按钮禁用但**必须可见**）与 **P5**（`anchor` 帧过期
+  自动置「已失效」、禁止盲接受）是 A/Q 两套里**没有**的 UI 硬要求，F14 要自己实现
+- 提案通道机制与 **Q1-Q7**（后端侧不变量，F14 的 applier 走它）：ARCHITECTURE.md §6
 - 前端架构与 U1-U12（本计划 U13-U20 的续接）：ARCHITECTURE.md §7
 - 已知缺口与可用性自评：ARCHITECTURE.md §11
 - 测试布局（新测试文件的落点）：ARCHITECTURE.md §12
