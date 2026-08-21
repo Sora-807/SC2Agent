@@ -89,58 +89,32 @@ function renderAction(a: Record<string, unknown>): string {
   return op;
 }
 
-/** 分层布局：从 initial_step 做 BFS 定列，同列纵向排开；回边单独标出 */
-export interface Laid {
-  nodes: { id: string; col: number; row: number }[];
-  edges: { from: string; to: string; kind: string; reason: string; back: boolean }[];
-  cols: number;
-  rows: number;
-}
-
-export function layout(
-  steps: { step_id: string }[],
-  edges: { from: string; to: string; kind: string; reason: string }[],
-  initial: string,
-): Laid {
-  const ids = steps.map((s) => s.step_id);
-  const out = new Map<string, string[]>();
-  for (const e of edges) {
-    if (!out.has(e.from)) out.set(e.from, []);
-    out.get(e.from)!.push(e.to);
-  }
-  const depth = new Map<string, number>();
-  const queue: string[] = ids.includes(initial) ? [initial] : [...ids];
-  if (queue.length > 0) depth.set(queue[0]!, 0);
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const nxt of out.get(cur) ?? []) {
-      if (depth.has(nxt)) continue;         // 已定层 → 后面那条是回边
-      depth.set(nxt, (depth.get(cur) ?? 0) + 1);
-      queue.push(nxt);
+/**
+ * F12b：边 ↔ branch 的对应关系（修根因 M：branch 才是边，边要锄在它所在的 branch 行上）。
+ *
+ * 编译期已保证：每条声明边 (kind, reason) 与某个 exit_step/exit_strategy 分支一一对应
+ * （后端 schema.py 的 EdgeView 注释）。这里按同规则匹配；匹配不上（热改中途/异常数据）
+ * 返回 null —— 调用方退回节点中心锚，不猜。
+ */
+export function matchExitBranch(
+  branches: Record<string, unknown>[],
+  edge: { kind: string; reason: string },
+): number | null {
+  for (let i = 0; i < branches.length; i += 1) {
+    const b = branches[i]!;
+    const dos = Array.isArray(b["do"]) ? (b["do"] as Record<string, unknown>[]) : [];
+    const exit = dos.find((a) => a["op"] === "exit_step" || a["op"] === "exit_strategy");
+    if (exit && String(exit["kind"]) === edge.kind && String(exit["reason"]) === edge.reason) {
+      return i;
     }
   }
-  // 不可达的 step 也要画出来（编译器会拒不可达，但热改/手构造时要能看见）
-  let orphanCol = Math.max(0, ...[...depth.values()]) + 1;
-  for (const id of ids) {
-    if (!depth.has(id)) depth.set(id, orphanCol++);
-  }
-  const byCol = new Map<number, string[]>();
-  for (const id of ids) {
-    const c = depth.get(id) ?? 0;
-    if (!byCol.has(c)) byCol.set(c, []);
-    byCol.get(c)!.push(id);
-  }
-  const nodes = ids.map((id) => {
-    const c = depth.get(id) ?? 0;
-    return { id, col: c, row: (byCol.get(c) ?? []).indexOf(id) };
-  });
-  return {
-    nodes,
-    edges: edges.map((e) => ({
-      ...e,
-      back: (depth.get(e.to) ?? 0) <= (depth.get(e.from) ?? 0),
-    })),
-    cols: Math.max(1, ...nodes.map((n) => n.col + 1)),
-    rows: Math.max(1, ...[...byCol.values()].map((v) => v.length)),
-  };
+  return null;
+}
+
+/**
+ * F12a：节点拖动位置的持久化键 —— **必须带 version**。
+ * 不带的话重编译的策略（结构已变）会继承过期坐标，节点飘回旧位置。
+ */
+export function storageKey(strategyId: string, version: number): string {
+  return `flow-node-pos:${strategyId}@${version}`;
 }

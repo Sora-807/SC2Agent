@@ -1,5 +1,5 @@
 /**
- * static/strategy + AST 渲染 + 分层布局（F4）
+ * static/strategy + AST 渲染 + 布局接入（F4/F12）
  *
  * 关键不变式：**图与状态分开** —— 图里必须能看见"一次都没走过的 step"，
  * 只靠转移历史推图会漏掉它们。
@@ -9,7 +9,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseEnvelopeLine, type FlowFrame, type StrategyStatic } from "../src/contract";
-import { layout, renderBranches, renderValue } from "../src/graph/ast";
+import { matchExitBranch, renderBranches, renderValue, storageKey } from "../src/graph/ast";
+import { layout } from "../src/graph/layout";
 
 const FIX_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", "fixtures");
 
@@ -26,6 +27,15 @@ function read(file: string): { graph: StrategyStatic; flows: FlowFrame[] } {
   return { graph, flows };
 }
 
+/** 转成新布局的输入形状（与 FlowPage 同款） */
+function laidOf(graph: StrategyStatic) {
+  return layout(
+    graph.steps.map((s) => ({ id: s.step_id, branchCount: s.branches.length })),
+    graph.edges as { from: string; to: string; kind: string; reason: string }[],
+    graph.initial_step,
+  );
+}
+
 describe("static/strategy", () => {
   it("每份夹具都带策略图，且 steps/edges 非空", () => {
     for (const f of ["opening.jsonl", "blocked.jsonl", "leapfrog.jsonl"]) {
@@ -38,8 +48,11 @@ describe("static/strategy", () => {
 
   it("蛙跳场景的图有回边（成环）", () => {
     const { graph } = read("leapfrog.jsonl");
-    const laid = layout(graph.steps, graph.edges, graph.initial_step);
-    expect(laid.edges.some((e) => e.back), "armor_hop ⇄ inf_hop 应形成回边").toBe(true);
+    const laid = laidOf(graph);
+    expect(laid.back.size, "armor_hop ⇄ inf_hop 应形成回边").toBeGreaterThan(0);
+    for (const key of laid.back) {
+      expect(laid.lanes.get(key), `回边 ${key} 应有车道号`).toBeDefined();
+    }
   });
 
   it("图里能看见没走过的 step（只靠转移历史会漏）", () => {
@@ -54,12 +67,13 @@ describe("static/strategy", () => {
     expect(all.size).toBeGreaterThanOrEqual(visited.size);
   });
 
-  it("布局：起点在第 0 列，所有节点都有位置", () => {
+  it("布局：起点在第 0 层，所有节点都有位置", () => {
     const { graph } = read("leapfrog.jsonl");
-    const laid = layout(graph.steps, graph.edges, graph.initial_step);
-    expect(laid.nodes.length).toBe(graph.steps.length);
-    expect(laid.nodes.find((n) => n.id === graph.initial_step)?.col).toBe(0);
-    for (const n of laid.nodes) expect(n.col).toBeGreaterThanOrEqual(0);
+    const laid = laidOf(graph);
+    expect(laid.layer.get(graph.initial_step)).toBe(0);
+    for (const s of graph.steps) {
+      expect(laid.positions.get(s.step_id), s.step_id).toBeDefined();
+    }
   });
 
   it("每条 edge 的 (kind, reason) 都能在某个 exit_step 里找到（编译器保证，这里验帧确实带着）", () => {
@@ -107,5 +121,30 @@ describe("AST 渲染", () => {
       { forbidden: { do_ops: { start_timer: "计时器未实现" } } } as never,
     );
     expect(rows[0]!.actions[0]!.forbidden).toBe("计时器未实现");
+  });
+});
+
+describe("F12：边锚定与位置持久化", () => {
+  it("matchExitBranch：每条边都能找到自己的 branch 行（锚定的前提）", () => {
+    const { graph } = read("leapfrog.jsonl");
+    for (const e of graph.edges as { from: string; to: string; kind: string; reason: string }[]) {
+      const step = graph.steps.find((s) => s.step_id === e.from)!;
+      const idx = matchExitBranch(step.branches, e);
+      expect(idx, `边 ${e.from}→${e.to} 找不到对应 branch`).not.toBeNull();
+      expect(idx!).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("matchExitBranch：匹配不上返回 null（不猜，调用方退回节点中心锚）", () => {
+    expect(matchExitBranch([], { kind: "done", reason: "X" })).toBeNull();
+    expect(matchExitBranch(
+      [{ do: [{ op: "exit_step", kind: "done", reason: "READY" }] }],
+      { kind: "done", reason: "OTHER" },
+    )).toBeNull();
+  });
+
+  it("storageKey 含 version：换 version 不复用旧坐标（重编译的策略结构已变）", () => {
+    expect(storageKey("s", 1)).toBe("flow-node-pos:s@1");
+    expect(storageKey("s", 2)).not.toBe(storageKey("s", 1));
   });
 });

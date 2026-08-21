@@ -1,33 +1,96 @@
 /**
- * Flow 状态图（F4）—— 策略图 + 当前位置 + 转移原因。
+ * Flow 状态图（F4/F12）—— 卡片节点 + branch 锚定边 + 可拖缩视口。
  *
- * 图来自 `static/strategy`（不变的结构），位置来自 `frame/flow`（每帧的状态）——
- * 两者合起来才画得出"当前在哪个节点、从哪条边过来的、还有哪些没走过"。
- * 只靠转移历史推图会看不见没走过的节点。
+ * 图来自 `static/strategy`（不变的结构），位置来自 `frame/flow`（每帧的状态）。
+ * F12 之前的欠账（PLAN §1.3）：
+ * - 图不能拖不能缩、节点会被推出容器拉不回（根因 K）→ graph/PanZoom；
+ * - 有信息量的东西全在图下面的卡里、节点只有 step_id（根因 L）→ 卡片节点；
+ * - branch 才是边，但边是匿名线讲不出「什么条件→去哪」（根因 M）→ 边锚在 branch 行；
+ * - 布局 BFS 列不降交叉（根因 N）→ graph/layout Sugiyama-lite；
+ * - 半宽补偿 transform（根因 O）→ 坐标一律左上角原点；
+ * - strategies.at(0) 假设单实例（根因 P/C6）→ 实例选择器。
  *
- * 用手写 SVG 而不是 React Flow + ELK：策略图是 2~5 个节点的小图，
- * 那两个依赖加起来 ~1.4MB，为这点规模不值（原计划的选型在知道图规模后修正）。
- * live 下这页**只读**（R5：live 不能编辑模块与 Strategy）。
+ * live 下这页只读（R5）；节点拖动是图内坐标（不是面板 dock，U9 界线）。
  */
-import { useMemo, useState } from "react";
-import { layout, renderBranches, renderValue } from "../graph/ast";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { matchExitBranch, renderBranches, renderValue, storageKey } from "../graph/ast";
+import { PanZoom, type SvgViewport } from "../graph/PanZoom";
+import {
+  BRANCH_ROW_H, GAP_X, HEADER_H, LANE_H, NODE_PAD_Y, NODE_W,
+  backDip, edgeKey, layout, nodeHeight,
+} from "../graph/layout";
 import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 
-const COL_W = 190;
-const ROW_H = 96;
-const NODE_W = 132;
-const NODE_H = 52;
-
 export function FlowPage() {
   const { strategy: graph, flow, schema, catalog } = useFrames();
-  const state = flow?.strategies.at(0) ?? null;
+  // C6：不假设长度 1 —— 列表形状为多实例预留，选择器现在就有
+  const strategies = flow?.strategies ?? [];
+  const [instIdx, setInstIdx] = useState(0);
+  const state = strategies[Math.min(instIdx, Math.max(0, strategies.length - 1))] ?? null;
+
   const [picked, setPicked] = useState<string | null>(null);
+  const [centerReq, setCenterReq] = useState<{ x: number; y: number } | null>(null);
+  const [overrides, setOverrides] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const vpRef = useRef<SvgViewport>({ scale: 1, tx: 0, ty: 0 });
 
   const laid = useMemo(
-    () => (graph ? layout(graph.steps, graph.edges, graph.initial_step) : null),
+    () => graph
+      ? layout(
+          graph.steps.map((s: { step_id: string; branches: unknown[] }) => ({
+            id: s.step_id, branchCount: Array.isArray(s.branches) ? s.branches.length : 0,
+          })),
+          graph.edges, graph.initial_step)
+      : null,
     [graph],
   );
+
+  // 换策略/换版本 → 重读持久化的节点位置（键带 version，重编译不继承旧坐标）
+  const graphKey = graph ? storageKey(graph.id, graph.version) : null;
+  useEffect(() => {
+    if (!graphKey) return;
+    try {
+      const raw = localStorage.getItem(graphKey);
+      const parsed = raw ? JSON.parse(raw) as Record<string, [number, number]> : null;
+      setOverrides(
+        parsed
+          ? new Map(Object.entries(parsed).map(([id, [x, y]]) => [id, { x, y }]))
+          : new Map(),
+      );
+    } catch {
+      setOverrides(new Map()); // 坏数据不猜，回自动布局
+    }
+  }, [graphKey]);
+
+  // 有效位置 = 自动布局 + 用户拖动覆盖；内容尺寸随之重算（PanZoom 换图即 fit）
+  const nodes = useMemo(() => {
+    const out: { id: string; x: number; y: number; h: number }[] = [];
+    if (!graph || !laid) return out;
+    for (const s of graph.steps as { step_id: string; branches: unknown[] }[]) {
+      const auto = laid.positions.get(s.step_id) ?? { x: 0, y: 0 };
+      const o = overrides.get(s.step_id);
+      out.push({
+        id: s.step_id,
+        x: o?.x ?? auto.x,
+        y: o?.y ?? auto.y,
+        h: nodeHeight(Array.isArray(s.branches) ? s.branches.length : 0),
+      });
+    }
+    return out;
+  }, [graph, laid, overrides]);
+  const posOf = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const contentW = nodes.reduce((m, n) => Math.max(m, n.x + NODE_W), 0);
+  const contentH = nodes.reduce((m, n) => Math.max(m, n.y + n.h), 0);
+
+  // 进入次数（热度）：初始 1 次 + 转移历史里进入该节点的次数 —— 环在图上才读得出是环
+  const entryCount = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!graph) return m;
+    m.set(graph.initial_step, 1);
+    for (const t of state?.transitions ?? []) m.set(t.to, (m.get(t.to) ?? 0) + 1);
+    return m;
+  }, [graph, state]);
+
   const zhOf = (id: string): string =>
     catalog?.entries.find((e) => e.stable_id === id)?.display_name_zh ?? id;
 
@@ -37,16 +100,30 @@ export function FlowPage() {
 
   const active = state?.active_step ?? null;
   const selected = picked ?? active;
-  const step = graph.steps.find((s: { step_id: string }) => s.step_id === selected) ?? null;
-  const branches = step ? renderBranches(step.branches, schema) : [];
-  const pos = new Map(laid.nodes.map((n) => [n.id, n]));
-  const width = laid.cols * COL_W + 40;
-  const height = laid.rows * ROW_H + 40;
+  const lastT = state?.transitions.at(-1) ?? null;
 
-  const nodeCenter = (id: string): [number, number] => {
-    const n = pos.get(id);
-    if (!n) return [0, 0];
-    return [20 + n.col * COL_W + NODE_W / 2, 20 + n.row * ROW_H + NODE_H / 2];
+  // 节点拖动：图坐标 = 原位 + 屏幕位移 / scale（PanZoom 的 vp 由 onViewport 持续同步）
+  const nodeDrag = useRef<{ id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const persist = (): void => {
+    if (!graphKey) return;
+    const obj: Record<string, [number, number]> = {};
+    for (const [id, p] of overrides) obj[id] = [p.x, p.y];
+    try {
+      localStorage.setItem(graphKey, JSON.stringify(obj));
+    } catch {
+      /* 存不进（隐私模式之类）就算了 —— 拖动只在内存里生效 */
+    }
+  };
+
+  /** branch 行锚点：边从它对应的 branch 行右端出发（根因 M）；匹配不上退节点中心 */
+  const branchAnchor = (stepId: string, edge: { kind: string; reason: string }): { x: number; y: number } | null => {
+    const n = posOf.get(stepId);
+    if (!n) return null;
+    const step = (graph.steps as { step_id: string; branches: Record<string, unknown>[] }[])
+      .find((s) => s.step_id === stepId);
+    const idx = step ? matchExitBranch(step.branches ?? [], edge) : null;
+    if (idx === null) return null;
+    return { x: n.x + NODE_W, y: n.y + HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H + BRANCH_ROW_H / 2 };
   };
 
   return (
@@ -54,198 +131,238 @@ export function FlowPage() {
       <Card
         title={`策略图 · ${graph.id} v${graph.version}`}
         right={
-          <span className="text-note text-faint">
+          <span className="flex items-center gap-3 text-note text-faint">
+            {strategies.length > 1 && (
+              <select
+                className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5"
+                value={instIdx}
+                onChange={(e) => setInstIdx(Number(e.target.value))}
+              >{strategies.map((s, i) => (
+                <option key={s.instance_id} value={i}>{s.instance_id}</option>
+              ))}</select>
+            )}
             {state
               ? `转移 ${state.transition_count}/${state.transition_limit}`
               : "无运行状态"}
-            {state?.done && <span className="ml-2 text-emerald-400">已结束</span>}
+            {state?.done && <span className="text-emerald-400">已结束</span>}
+            <button
+              className="rounded border border-neutral-700 px-2 py-0.5"
+              title="清掉手动拖动的节点位置，回到自动布局"
+              onClick={() => {
+                setOverrides(new Map());
+                if (graphKey) localStorage.removeItem(graphKey);
+              }}
+            >重新布局</button>
           </span>
         }
       >
-        <div className="overflow-auto">
-          <svg width={width} height={height} className="min-w-full">
-            {/* 边 */}
-            {laid.edges.map((e, i) => {
-              const [x1, y1] = nodeCenter(e.from);
-              const [x2, y2] = nodeCenter(e.to);
-              const isLast =
-                state?.transitions.at(-1)?.from === e.from &&
-                state?.transitions.at(-1)?.to === e.to;
-              const walked = state?.transitions.some((t) => t.from === e.from && t.to === e.to);
-              const color = isLast ? "#fbbf24" : walked ? "#34d399" : "#4b5563";
-              // 回边画成下方绕行的弧，避免和正向边重叠
-              const d = e.back
-                ? `M ${x1} ${y1 + NODE_H / 2} C ${x1} ${y1 + 70}, ${x2} ${y2 + 70}, ${x2} ${y2 + NODE_H / 2}`
-                : `M ${x1 + NODE_W / 2} ${y1} L ${x2 - NODE_W / 2} ${y2}`;
-              const mx = (x1 + x2) / 2;
-              const my = e.back ? Math.max(y1, y2) + 52 : (y1 + y2) / 2 - 6;
-              return (
-                <g key={i}>
-                  <path d={d} fill="none" stroke={color} strokeWidth={isLast ? 2 : 1.2}
-                        strokeDasharray={e.back ? "4 3" : undefined} />
-                  <title>{`${e.from} → ${e.to}｜${e.kind}/${e.reason}`}</title>
-                  <text x={mx} y={my} textAnchor="middle" fontSize={10} fill={color}>
-                    {e.reason}
-                  </text>
-                </g>
-              );
-            })}
-            {/* 节点 */}
-            {laid.nodes.map((n) => {
-              const isActive = n.id === active;
-              const entered = isActive ? state?.step_entry_count ?? 1 : null;
-              const x = 20 + n.col * COL_W;
-              const y = 20 + n.row * ROW_H;
-              return (
-                <g key={n.id} onClick={() => setPicked(n.id)} className="cursor-pointer">
-                  <rect
-                    x={x - NODE_W / 2 + NODE_W / 2} y={y} rx={8} width={NODE_W} height={NODE_H}
-                    transform={`translate(${-NODE_W / 2},0)`}
-                    fill={isActive ? "rgba(52,211,153,0.14)" : "rgba(38,38,38,0.6)"}
-                    stroke={n.id === selected ? "#e5e7eb" : isActive ? "#34d399" : "#525252"}
-                    strokeWidth={isActive ? 2 : 1}
-                  />
-                  <text x={x} y={y + 20} textAnchor="middle" fontSize={12}
-                        fill={isActive ? "#d1fae5" : "#d4d4d4"}>{n.id}</text>
-                  {n.id === graph.initial_step && (
-                    <text x={x} y={y + 34} textAnchor="middle" fontSize={9} fill="#737373">起点</text>
-                  )}
-                  {isActive && (
-                    <>
-                      <text x={x} y={y + 34} textAnchor="middle" fontSize={9} fill="#6ee7b7">
-                        第 {entered} 次 · {state?.step_elapsed.toFixed(1)}s
+        <PanZoom
+          contentW={Math.max(1, contentW)}
+          contentH={Math.max(1, contentH)}
+          centerRequest={centerReq}
+          onViewport={(v) => { vpRef.current = v; }}
+        >
+          {/* 边：锚在 branch 行上（根因 M）；三态配色沿用 */}
+          {(graph.edges as { from: string; to: string; kind: string; reason: string }[]).map((e, i) => {
+            const from = posOf.get(e.from);
+            const to = posOf.get(e.to);
+            if (!from || !to) return null;
+            const isBack = laid.back.has(edgeKey(e.from, e.to));
+            const anchor = branchAnchor(e.from, e);
+            const sx = anchor?.x ?? from.x + NODE_W;
+            const sy = anchor?.y ?? from.y + from.h / 2;
+            const tx = to.x;
+            const ty = to.y + to.h / 2;
+            const isLast = lastT?.from === e.from && lastT?.to === e.to;
+            const walked = state?.transitions.some((t) => t.from === e.from && t.to === e.to);
+            const color = isLast ? "#fbbf24" : walked ? "#34d399" : "#4b5563";
+            let d: string;
+            if (isBack) {
+              // 回边：保留车道 —— 沉到两端点中较低者下方 + laneIndex × LANE_H
+              const lane = laid.lanes.get(edgeKey(e.from, e.to)) ?? 0;
+              const dip = backDip(from.y + from.h, to.y + to.h, lane);
+              d = `M ${sx} ${sy} C ${sx + GAP_X * 0.7} ${dip}, ${tx - GAP_X * 0.7} ${dip}, ${tx} ${ty}`;
+            } else {
+              d = `M ${sx} ${sy} L ${tx} ${ty}`;
+            }
+            return (
+              <g key={i}>
+                <path d={d} fill="none" stroke={color}
+                      strokeWidth={isLast ? 2 : 1.2}
+                      strokeDasharray={isBack ? "4 3" : undefined} />
+                <title>{`${e.from} → ${e.to}｜${e.kind}/${e.reason}`}</title>
+                <text x={(sx + tx) / 2} y={isBack ? Math.max(from.y + from.h, to.y + to.h) + LANE_H : (sy + ty) / 2 - 4}
+                      textAnchor="middle" fontSize={10} fill={color}>{e.reason}</text>
+              </g>
+            );
+          })}
+
+          {/* 卡片节点：头部（step_id/热度/elapsed）+ 主体（一行一个 branch） */}
+          {nodes.map((n) => {
+            const step = (graph.steps as { step_id: string; branches: Record<string, unknown>[] }[])
+              .find((s) => s.step_id === n.id);
+            const branches = step ? renderBranches(step.branches ?? [], schema) : [];
+            const isActive = n.id === active;
+            const entered = entryCount.get(n.id) ?? 0;
+            const hitIdx = state?.branch_hit?.step_id === n.id ? state.branch_hit.index : null;
+            // 该 branch 行的去向（有边 → 目标节点；没有 → 留在本步）
+            const targetOf = (idx: number): string => {
+              const e = (graph.edges as { from: string; to: string; kind: string; reason: string }[])
+                .find((ed) => ed.from === n.id && matchExitBranch(step?.branches ?? [], ed) === idx);
+              return e ? e.to : "留在本步";
+            };
+            return (
+              <g key={n.id}
+                 transform={`translate(${n.x},${n.y})`}
+                 className="cursor-pointer"
+                 onPointerDown={(e) => {
+                   e.stopPropagation();     // 不触发画布平移
+                   const host = (e.currentTarget.closest("svg")?.parentElement)?.getBoundingClientRect();
+                   nodeDrag.current = {
+                     id: n.id,
+                     sx: host ? e.clientX - host.left : e.clientX,
+                     sy: host ? e.clientY - host.top : e.clientY,
+                     ox: n.x, oy: n.y, moved: false,
+                   };
+                   (e.target as Element).setPointerCapture?.(e.pointerId);
+                 }}
+                 onPointerMove={(e) => {
+                   const dr = nodeDrag.current;
+                   if (!dr || dr.id !== n.id) return;
+                   const host = (e.currentTarget.closest("svg")?.parentElement)?.getBoundingClientRect();
+                   const cx = host ? e.clientX - host.left : e.clientX;
+                   const cy = host ? e.clientY - host.top : e.clientY;
+                   const dx = (cx - dr.sx) / vpRef.current.scale;
+                   const dy = (cy - dr.sy) / vpRef.current.scale;
+                   if (Math.abs(dx) + Math.abs(dy) > 2) dr.moved = true;
+                   setOverrides((m) => new Map(m).set(n.id, { x: dr.ox + dx, y: dr.oy + dy }));
+                 }}
+                 onPointerUp={(e) => {
+                   const dr = nodeDrag.current;
+                   nodeDrag.current = null;
+                   (e.target as Element).releasePointerCapture?.(e.pointerId);
+                   if (dr && !dr.moved) setPicked(n.id);   // 点击（没拖）= 选中
+                   else persist();
+                 }}
+                 onDoubleClick={() => setCenterReq({ x: n.x + NODE_W / 2, y: n.y + n.h / 2 })}
+              >
+                <rect width={NODE_W} height={n.h} rx={6}
+                      fill={isActive ? "rgba(52,211,153,0.14)" : "rgba(38,38,38,0.6)"}
+                      stroke={n.id === selected ? "#e5e7eb" : isActive ? "#34d399" : "#525252"}
+                      strokeWidth={isActive ? 2 : 1} />
+                {/* 头部：step_id + 热度 + 起点标 */}
+                <text x={8} y={17} fontSize={12} fontWeight={600}
+                      fill={isActive ? "#d1fae5" : "#d4d4d4"}>{n.id}</text>
+                {entered > 1 && (
+                  <text x={NODE_W - 8} y={17} textAnchor="end" fontSize={10} fill="#a3a3a3">×{entered}</text>
+                )}
+                {n.id === graph.initial_step && (
+                  <text x={NODE_W - (entered > 1 ? 34 : 8)} y={17} textAnchor="end" fontSize={9} fill="#737373">起点</text>
+                )}
+                {isActive && (
+                  <>
+                    <circle cx={NODE_W - 10} cy={10} r={4} fill="#34d399">
+                      <animate attributeName="opacity" values="1;0.25;1" dur="1.4s" repeatCount="indefinite" />
+                    </circle>
+                    <text x={NODE_W - 18} y={17} textAnchor="end" fontSize={9} fill="#6ee7b7">
+                      {state?.step_elapsed.toFixed(1)}s
+                    </text>
+                  </>
+                )}
+                {/* 主体：一行一个 branch（条件 chip + 去向）；本帧命中行高亮 */}
+                {branches.map((b, idx) => {
+                  const y = HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H;
+                  const hit = hitIdx === b.index;
+                  const when = (b.when ?? "else").slice(0, 34);
+                  return (
+                    <g key={b.index}>
+                      {hit && (
+                        <rect x={2} y={y} width={NODE_W - 4} height={BRANCH_ROW_H}
+                              fill="rgba(52,211,153,0.16)" />
+                      )}
+                      <title>{b.when ?? "else（无条件）"} → {targetOf(b.index)}</title>
+                      <text x={8} y={y + 12} fontSize={10} fill={hit ? "#a7f3d0" : "#7dd3fc"}>
+                        {when}{(b.when ?? "else").length > 34 ? "…" : ""}
                       </text>
-                      <circle cx={x + NODE_W / 2 - 10} cy={y + 10} r={4} fill="#34d399">
-                        <animate attributeName="opacity" values="1;0.25;1" dur="1.4s"
-                                 repeatCount="indefinite" />
-                      </circle>
-                    </>
-                  )}
-                </g>
-              );
-            })}
-          </svg>
-        </div>
+                      <text x={NODE_W - 6} y={y + 12} textAnchor="end" fontSize={10}
+                            fill={hit ? "#fbbf24" : "#a3a3a3"}>
+                        → {targetOf(b.index)}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </PanZoom>
         <div className="mt-1 flex flex-wrap gap-3 text-note text-ghost">
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-neutral-600 align-middle" />未走过</span>
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-emerald-400 align-middle" />走过</span>
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-amber-400 align-middle" />最近一次</span>
-          <span>虚线 = 回边（成环）· 边上的字是退出原因 · 点节点看分支</span>
+          <span>虚线 = 回边（成环）· 节点右上 ×N = 进入次数 · 点选节点 · 拖动挪位 · 双击居中</span>
         </div>
       </Card>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Card title={`分支 · ${selected ?? "—"}`} right={
-          state?.branch_hit?.step_id === selected
-            ? <span className="text-note text-emerald-400">
-                本帧命中 {state.branch_hit.branch_id ?? "#" + state.branch_hit.index}
-              </span>
-            : undefined
-        }>
-          {branches.length === 0 ? <Empty text="该 step 没有分支" /> : (
-            <ol className="space-y-2">
-              {branches.map((b) => {
-                const hit = state?.branch_hit?.step_id === selected &&
-                  state.branch_hit.index === b.index;
-                return (
-                  <li key={b.index}
-                      className={"rounded border p-2 " + (hit
-                        ? "border-emerald-700 bg-emerald-950/30"
-                        : "border-neutral-800")}>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-faint">#{b.index}</span>
-                      <span className="font-medium">{b.id ?? "（未命名）"}</span>
-                      {hit && <span className="text-note text-emerald-400">← 本帧命中</span>}
-                    </div>
-                    <div className="mt-1 text-neutral-300">
-                      {b.when === null
-                        ? <span className="text-faint">else（无条件，只能放最后）</span>
-                        : <code className="text-sky-300">{b.when}</code>}
-                    </div>
-                    {b.actions.length > 0 && (
-                      <ul className="mt-1 space-y-0.5">
-                        {b.actions.map((a, i) => (
-                          <li key={i} className={a.forbidden ? "text-ghost" : "text-neutral-300"}>
-                            → {a.text}
-                            {a.forbidden && (
-                              <span className="ml-1 text-note text-amber-600">
-                                （不可用：{a.forbidden}）
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
+        <Card title="转移历史">
+          {state && state.transitions.length > 0 ? (
+            <ol className="space-y-0.5">
+              {[...state.transitions].reverse().map((t, i) => (
+                <li key={i} className={i === 0 ? "text-amber-300" : "text-dim"}>
+                  {fmtTime(t.at)} {t.from} → {t.to}
+                  <span className="ml-1 text-note text-ghost">{t.kind}/{t.reason}</span>
+                </li>
+              ))}
             </ol>
+          ) : <Empty text="还没有转移" />}
+          {state && (
+            <div className="mt-2">
+              <div className="h-1 rounded bg-neutral-800">
+                <div className="h-1 rounded bg-sky-500"
+                     style={{ width: Math.min(100, (state.transition_count / Math.max(1, state.transition_limit)) * 100) + "%" }} />
+              </div>
+              <div className="mt-0.5 text-note text-ghost">
+                转移上限是**兜底**不是出口（ADR-0021 §4）：每个环必须有自己的 exit
+              </div>
+            </div>
+          )}
+          {state?.exit_record && (
+            <div className="mt-2 rounded border border-emerald-800 bg-emerald-950/30 p-2">
+              策略已结束：{state.exit_record.kind} / {state.exit_record.reason}
+            </div>
           )}
         </Card>
 
-        <div className="space-y-3">
-          <Card title="转移历史">
-            {state && state.transitions.length > 0 ? (
-              <ol className="space-y-0.5">
-                {[...state.transitions].reverse().map((t, i) => (
-                  <li key={i} className={i === 0 ? "text-amber-300" : "text-dim"}>
-                    {fmtTime(t.at)} {t.from} → {t.to}
-                    <span className="ml-1 text-note text-ghost">
-                      {t.kind}/{t.reason}
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            ) : <Empty text="还没有转移" />}
-            {state && (
-              <div className="mt-2">
-                <div className="h-1 rounded bg-neutral-800">
-                  <div className="h-1 rounded bg-sky-500"
-                       style={{ width: Math.min(100, (state.transition_count / Math.max(1, state.transition_limit)) * 100) + "%" }} />
-                </div>
-                <div className="mt-0.5 text-note text-ghost">
-                  转移上限是**兜底**不是出口（ADR-0021 §4）：每个环必须有自己的 exit
-                </div>
-              </div>
-            )}
-            {state?.exit_record && (
-              <div className="mt-2 rounded border border-emerald-800 bg-emerald-950/30 p-2">
-                策略已结束：{state.exit_record.kind} / {state.exit_record.reason}
-              </div>
-            )}
-          </Card>
-
-          <Card title="绑定与参数">
-            <div className="space-y-1">
-              <div className="text-dim">
-                槽位 {graph.group_slots.map((s: string) => `${s}→${graph.bindings[s] ?? "?"}`).join("、")}
-              </div>
-              {flow?.groups.map((g) => (
-                <div key={g.group_id} className="text-neutral-300">
-                  {g.group_id}
-                  {Object.entries(g.composition).map(([id, c]) => (
-                    <span key={id} className="ml-2">{zhOf(id)} {c.current}/{c.target}</span>
-                  ))}
-                  <span className="ml-2 rounded bg-neutral-800 px-1.5 text-note">{g.refill_state}</span>
-                </div>
-              ))}
-              <div className="border-t border-neutral-800 pt-1 text-dim">
-                {Object.entries(state?.params ?? {}).map(([k, v]) => (
-                  <span key={k} className="mr-3">{k}={JSON.stringify(v)}</span>
-                ))}
-              </div>
-              {Object.keys(graph.definitions).length > 0 && (
-                <div className="text-note text-faint">
-                  别名：{Object.entries(graph.definitions).map(([k, v]) => (
-                    <div key={k} className="ml-2">
-                      <span className="text-dim">{k}</span> = <code>{renderValue(v)}</code>
-                    </div>
-                  ))}
-                </div>
-              )}
+        <Card title="绑定与参数">
+          <div className="space-y-1">
+            <div className="text-dim">
+              槽位 {graph.group_slots.map((s: string) => `${s}→${graph.bindings[s] ?? "?"}`).join("、")}
             </div>
-          </Card>
-        </div>
+            {flow?.groups.map((g) => (
+              <div key={g.group_id} className="text-neutral-300">
+                {g.group_id}
+                {Object.entries(g.composition).map(([id, c]) => (
+                  <span key={id} className="ml-2">{zhOf(id)} {c.current}/{c.target}</span>
+                ))}
+                <span className="ml-2 rounded bg-neutral-800 px-1.5 text-note">{g.refill_state}</span>
+              </div>
+            ))}
+            <div className="border-t border-neutral-800 pt-1 text-dim">
+              {Object.entries(state?.params ?? {}).map(([k, v]) => (
+                <span key={k} className="mr-3">{k}={JSON.stringify(v)}</span>
+              ))}
+            </div>
+            {Object.keys(graph.definitions).length > 0 && (
+              <div className="text-note text-faint">
+                别名：{Object.entries(graph.definitions).map(([k, v]) => (
+                  <div key={k} className="ml-2">
+                    <span className="text-dim">{k}</span> = <code>{renderValue(v)}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   );

@@ -9,7 +9,8 @@
  */
 import { useMemo, useState } from "react";
 import { createProposal } from "../api/proposals";
-import { layout, renderBranches, renderValue } from "../graph/ast";
+import { renderBranches, renderValue } from "../graph/ast";
+import { layout } from "../graph/layout";
 import {
   describeItem, draftCost, draftToHunks, emptyItem, placementOptions,
   type DraftItem,
@@ -275,7 +276,19 @@ function FlowAssembly(props: {
   const [stepId, setStepId] = useState<string | null>(null);
 
   if (!graph) return <Card title="Flow 装配"><Empty text="等 static/strategy…" /></Card>;
-  const laid = layout(graph.steps, graph.edges, graph.initial_step);
+  const laid = layout(
+    graph.steps.map((s: { step_id: string; branches: unknown[] }) => ({
+      id: s.step_id, branchCount: Array.isArray(s.branches) ? s.branches.length : 0,
+    })),
+    graph.edges as { from: string; to: string; kind: string; reason: string }[],
+    graph.initial_step,
+  );
+  // 展示顺序 = 布局顺序（层 → 层内序）：F12 起布局在 graph/layout，这里只借它的排序
+  const stepOrder = [...graph.steps].sort(
+    (x: { step_id: string }, y: { step_id: string }) =>
+      (laid.layer.get(x.step_id) ?? 0) - (laid.layer.get(y.step_id) ?? 0)
+      || (laid.order.get(x.step_id) ?? 0) - (laid.order.get(y.step_id) ?? 0),
+  );
   const step = graph.steps.find((s: { step_id: string }) => s.step_id === (stepId ?? graph.initial_step))
     ?? graph.steps[0];
   const branches = step ? renderBranches(step.branches, schema) : [];
@@ -284,15 +297,15 @@ function FlowAssembly(props: {
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       <Card title={"策略图 · " + graph.id + " v" + graph.version}>
         <div className="space-y-1">
-          {laid.nodes.map((n) => (
-            <button key={n.id} onClick={() => setStepId(n.id)}
+          {stepOrder.map((n: { step_id: string }) => (
+            <button key={n.step_id} onClick={() => setStepId(n.step_id)}
                     className={"w-full rounded border p-2 text-left "
-                      + (n.id === step?.step_id ? "border-neutral-500" : "border-neutral-800")}>
-              <span className="font-medium text-neutral-200">{n.id}</span>
-              {n.id === graph.initial_step && <span className="ml-2 text-note text-faint">起点</span>}
+                      + (n.step_id === step?.step_id ? "border-neutral-500" : "border-neutral-800")}>
+              <span className="font-medium text-neutral-200">{n.step_id}</span>
+              {n.step_id === graph.initial_step && <span className="ml-2 text-note text-faint">起点</span>}
               <span className="ml-2 text-note text-ghost">
                 {graph.edges
-                  .filter((e: { from: string }) => e.from === n.id)
+                  .filter((e: { from: string }) => e.from === n.step_id)
                   .map((e: { to: string }) => "→" + e.to)
                   .join(" ")}
               </span>
