@@ -22,6 +22,11 @@ import {
 import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 
+/** 端口几何：入边统一汇到卡片左上空心圆；出边从 branch 行右侧实心圆出发（用户反馈：让连接更直观） */
+const ENTRY_OFF = -8;   // 入口圆心相对卡片左缘的 x 偏移
+const ENTRY_Y = 15;     // 入口圆心相对卡片顶部的 y
+const OUT_OFF = 8;      // 出口圆心相对卡片右缘的 x 偏移
+
 export function FlowPage() {
   const { strategy: graph, flow, schema, catalog } = useFrames();
   // C6：不假设长度 1 —— 列表形状为多实例预留，选择器现在就有
@@ -32,6 +37,8 @@ export function FlowPage() {
   const [picked, setPicked] = useState<string | null>(null);
   const [centerReq, setCenterReq] = useState<{ x: number; y: number } | null>(null);
   const [overrides, setOverrides] = useState<Map<string, { x: number; y: number }>>(new Map());
+  // 点 branch 行 → 下方详情卡看全文（行内两行截断后的「进一步显示途径」）
+  const [branchPick, setBranchPick] = useState<{ step: string; idx: number } | null>(null);
   const vpRef = useRef<SvgViewport>({ scale: 1, tx: 0, ty: 0 });
 
   const laid = useMemo(
@@ -115,7 +122,7 @@ export function FlowPage() {
     }
   };
 
-  /** branch 行锚点：边从它对应的 branch 行右端出发（根因 M）；匹配不上退节点中心 */
+  /** branch 行锚点：边从它对应的 branch 行右侧圆点出发（根因 M）；匹配不上退节点中心 */
   const branchAnchor = (stepId: string, edge: { kind: string; reason: string }): { x: number; y: number } | null => {
     const n = posOf.get(stepId);
     if (!n) return null;
@@ -123,7 +130,7 @@ export function FlowPage() {
       .find((s) => s.step_id === stepId);
     const idx = step ? matchExitBranch(step.branches ?? [], edge) : null;
     if (idx === null) return null;
-    return { x: n.x + NODE_W, y: n.y + HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H + BRANCH_ROW_H / 2 };
+    return { x: n.x + NODE_W + OUT_OFF, y: n.y + HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H + BRANCH_ROW_H / 2 };
   };
 
   return (
@@ -162,7 +169,7 @@ export function FlowPage() {
           centerRequest={centerReq}
           onViewport={(v) => { vpRef.current = v; }}
         >
-          {/* 边：锚在 branch 行上（根因 M）；三态配色沿用 */}
+          {/* 边：从 branch 行右侧圆点出（根因 M），统一汇入目标卡片左上角的空心入口点 */}
           {(graph.edges as { from: string; to: string; kind: string; reason: string }[]).map((e, i) => {
             const from = posOf.get(e.from);
             const to = posOf.get(e.to);
@@ -171,8 +178,8 @@ export function FlowPage() {
             const anchor = branchAnchor(e.from, e);
             const sx = anchor?.x ?? from.x + NODE_W;
             const sy = anchor?.y ?? from.y + from.h / 2;
-            const tx = to.x;
-            const ty = to.y + to.h / 2;
+            const tx = to.x + ENTRY_OFF;
+            const ty = to.y + ENTRY_Y;
             const isLast = lastT?.from === e.from && lastT?.to === e.to;
             const walked = state?.transitions.some((t) => t.from === e.from && t.to === e.to);
             const color = isLast ? "#fbbf24" : walked ? "#34d399" : "#4b5563";
@@ -269,16 +276,34 @@ export function FlowPage() {
                     </text>
                   </>
                 )}
-                {/* 主体：一行一个 branch（foreignObject 左右分栏：左条件可换行，右去向不换行） */}
+                {/* 入口点：所有入边汇到这里（空心圆，比「每条边扎在左中」更直观） */}
+                <circle cx={ENTRY_OFF} cy={ENTRY_Y} r={4} fill="#0d1117" stroke="#8a8f98" strokeWidth={1.2} />
+                {/* 主体：一行一个 branch（左右分栏可换行）；行间分隔线；出边行右端画出口点；
+                    点行 → 下方详情卡看全文（截断不再死路） */}
                 {branches.map((b, idx) => {
                   const y = HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H;
                   const hit = hitIdx === b.index;
                   const target = targetOf(b.index);
+                  const hasEdge = target !== "留在本步";
                   return (
-                    <g key={b.index}>
+                    <g key={b.index} className="cursor-pointer"
+                       onClick={(ev) => {
+                         ev.stopPropagation();
+                         setBranchPick(branchPick?.step === n.id && branchPick.idx === b.index
+                           ? null
+                           : { step: n.id, idx: b.index });
+                       }}>
                       {hit && (
                         <rect x={2} y={y} width={NODE_W - 4} height={BRANCH_ROW_H}
                               fill="rgba(52,211,153,0.16)" />
+                      )}
+                      {idx < branches.length - 1 && (
+                        <line x1={4} y1={y + BRANCH_ROW_H} x2={NODE_W - 4} y2={y + BRANCH_ROW_H}
+                              stroke="rgba(148,163,184,0.14)" strokeWidth={1} />
+                      )}
+                      {hasEdge && (
+                        <circle cx={NODE_W + OUT_OFF} cy={y + BRANCH_ROW_H / 2} r={3}
+                                fill={hit ? "#fbbf24" : "#8a8f98"} />
                       )}
                       <foreignObject x={4} y={y} width={NODE_W - 8} height={BRANCH_ROW_H}>
                         <div
@@ -310,9 +335,47 @@ export function FlowPage() {
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-neutral-600 align-middle" />未走过</span>
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-emerald-400 align-middle" />走过</span>
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-amber-400 align-middle" />最近一次</span>
-          <span>虚线 = 回边（成环）· 节点右上 ×N = 进入次数 · 点选节点 · 拖动挪位 · 双击居中</span>
+          <span>虚线 = 回边（成环）· 空心圆 = 入口 · 实心圆 = 出口 · 点行看全文 · 点选节点 · 拖动挪位 · 双击居中</span>
         </div>
       </Card>
+
+      {/* 分支详情：卡片内两行截断后的「看全文」出口（用户反馈：截断后没有进一步显示途径） */}
+      {branchPick && (() => {
+        const step = (graph.steps as { step_id: string; branches: Record<string, unknown>[] }[])
+          .find((s) => s.step_id === branchPick.step);
+        const rows = step ? renderBranches(step.branches ?? [], schema) : [];
+        const b = rows.find((r) => r.index === branchPick.idx);
+        if (!b) return null;
+        return (
+          <Card title={`分支详情 · ${branchPick.step} #${b.index}${b.id ? "（" + b.id + "）" : ""}`}
+                right={
+                  <button className="rounded border border-neutral-700 px-2 py-0.5 text-note"
+                          onClick={() => setBranchPick(null)}>关闭</button>
+                }>
+            <div className="space-y-1">
+              <div>
+                <span className="mr-2 text-faint">条件</span>
+                <code className="text-sky-300 break-all">{b.when ?? "else（无条件，只能放最后）"}</code>
+              </div>
+              <div>
+                <span className="mr-2 text-faint">动作</span>
+                {b.actions.length === 0
+                  ? <span className="text-faint">（无 —— 只等待条件）</span>
+                  : (
+                    <ul className="ml-16 space-y-0.5 text-neutral-300">
+                      {b.actions.map((a, i) => (
+                        <li key={i} className={a.forbidden ? "text-ghost" : ""}>
+                          → {a.text}
+                          {a.forbidden && <span className="ml-1 text-note text-amber-600">（不可用：{a.forbidden}）</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card title="转移历史">
