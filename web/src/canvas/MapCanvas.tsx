@@ -11,7 +11,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MapStatic, WorldFrame, ProductionFrame } from "../contract";
 import { bakeGrid, decodeGrid, regionColor, type Palette } from "./grid";
-import { fitViewport, screenToWorld, worldToScreen, zoomAt, type Viewport } from "./view";
+import {
+  fitViewport, resizeViewport, screenToWorld, worldToScreen, zoomAt, type Viewport,
+} from "./view";
 import type { LayerState } from "./layers";
 
 const OWNER_COLOR: Record<string, string> = {
@@ -68,10 +70,21 @@ export function MapCanvas(props: {
     return () => ro.disconnect();
   }, []);
 
-  // 视口（地图换了或尺寸变了就重置到 fit）
+  // 视口：**只在换图 / 首次尺寸就绪时 fit**；resize 保住 scale 与屏幕中心（根因 D / 红线 G2）。
+  // 之前这里 resize 也 fit，所以改窗口大小、收起对话栏都会把缩放平移丢掉。
+  const mw = props.map.size[0];
+  const mh = props.map.size[1];
+  const mapKey = props.map.map_name + "|" + mw + "x" + mh + "|" + props.map.spawn;
+  const fitted = useRef<string | null>(null);
   useEffect(() => {
-    setVp(fitViewport(size.w, size.h, props.map.size[0], props.map.size[1]));
-  }, [size.w, size.h, props.map.size]);
+    const needFit = fitted.current !== mapKey;   // 在 effect 体里判，updater 保持纯函数
+    fitted.current = mapKey;
+    setVp((old) => {
+      if (needFit || old === null) return fitViewport(size.w, size.h, mw, mh);
+      if (old.cw === size.w && old.ch === size.h) return old;
+      return resizeViewport(old, size.w, size.h);
+    });
+  }, [size.w, size.h, mapKey, mw, mh]);
 
   // 静态位图：地形三图只烤一次（B4；缺哪张画哪张，terrain=null 时降级纯色底）
   const terrainImages = useMemo(() => {
@@ -115,6 +128,32 @@ export function MapCanvas(props: {
     };
   }, [props.world]);
 
+  // 滚轮缩放走 **native 监听 + {passive:false}**（根因 A / 红线 G3）。
+  // React 18 把 wheel 注册在 root container 上且强制 passive，所以写在 onWheel 里的
+  // preventDefault 是空操作 —— 滚轮会同时缩放**和**滚动祖先容器，页面跟着上下动。
+  // 用函数式 setVp 读旧视口，listener 因此只挂一次，不随 vp 变化重挂。
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const handleWheel = (e: WheelEvent): void => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const sx = e.clientX - r.left;
+      const sy = e.clientY - r.top;
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      setVp((old) => (old ? zoomAt(old, sx, sy, factor) : old));
+    };
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  // 绘制循环读**最新** props 与烤好的位图，但不因它们变化重建 rAF（根因 C）。
+  // 原来依赖里有 props（每次渲染都是新对象）→ 每渲染拆一次、建一次 rAF 循环。
+  const live = useRef({ props, baked: { regionImage, gridImages, terrainImages } });
+  useEffect(() => {
+    live.current = { props, baked: { regionImage, gridImages, terrainImages } };
+  });
+
   // 绘制循环
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -125,19 +164,20 @@ export function MapCanvas(props: {
 
     const draw = (): void => {
       raf = requestAnimationFrame(draw);
+      const { props: p, baked } = live.current;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       if (canvas.width !== Math.floor(vp.cw * dpr)) canvas.width = Math.floor(vp.cw * dpr);
       if (canvas.height !== Math.floor(vp.ch * dpr)) canvas.height = Math.floor(vp.ch * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, vp.cw, vp.ch);
-      paint(ctx, vp, props, { regionImage, gridImages, terrainImages }, {
+      paint(ctx, vp, p, baked, {
         prevWorld: prev.current?.world ?? null,
-        alpha: lerpAlpha(prev.current, cur.current, props.smooth),
+        alpha: lerpAlpha(prev.current, cur.current, p.smooth),
       });
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [vp, props, regionImage, gridImages]);
+  }, [vp]);
 
   return (
     <div ref={hostRef} className="relative h-full w-full">
@@ -145,12 +185,6 @@ export function MapCanvas(props: {
         ref={canvasRef}
         style={{ width: vp?.cw ?? size.w, height: vp?.ch ?? size.h }}
         className="block cursor-crosshair rounded bg-[#0d1117]"
-        onWheel={(e) => {
-          e.preventDefault();
-          if (!vp) return;
-          const r = e.currentTarget.getBoundingClientRect();
-          setVp(zoomAt(vp, e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.15 : 1 / 1.15));
-        }}
         onPointerDown={(e) => {
           drag.current = { x: e.clientX, y: e.clientY };
           e.currentTarget.setPointerCapture(e.pointerId);

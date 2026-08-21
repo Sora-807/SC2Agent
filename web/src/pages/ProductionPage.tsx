@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { sendCommand, type CommandResult } from "../api/commands";
 import { ProjectionChart } from "../charts/ProjectionChart";
-import { Card, Empty, fmtTime } from "../shell/ui";
+import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { CatalogStatic, ProjectionFrame, WorldFrame } from "../contract";
 
@@ -65,7 +65,7 @@ export function ProductionPage() {
   }, [catalog]);
 
   return (
-    <div className="space-y-3">
+    <div className={PAGE_SCROLL + " space-y-3"}>
       <CommandBanner last={cmd.last} writable={cmd.writable} />
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <Card

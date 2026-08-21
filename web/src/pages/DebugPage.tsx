@@ -9,7 +9,7 @@
  * `burnysc2_name`）—— 红线 C1 管的是类型身份，不是诊断字段。
  */
 import { useMemo, useState } from "react";
-import { Card, Empty, fmtTime, sevClass } from "../shell/ui";
+import { Card, Empty, PAGE_SCROLL, fmtTime, sevClass } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { Topic } from "../contract";
 
@@ -43,7 +43,7 @@ export function DebugPage() {
   const strategy = flow?.strategies.at(0) ?? null;
 
   return (
-    <div className="space-y-3">
+    <div className={PAGE_SCROLL + " space-y-3"}>
       <Card title="会话" right={<span className="text-[11px] text-neutral-500">
         游标 {fmtTime(position)} / 范围 {fmtTime(range.from)}–{fmtTime(range.to)}
       </span>}>

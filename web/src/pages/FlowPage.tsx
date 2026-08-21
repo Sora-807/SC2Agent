@@ -11,7 +11,7 @@
  */
 import { useMemo, useState } from "react";
 import { layout, renderBranches, renderValue } from "../graph/ast";
-import { Card, Empty, fmtTime } from "../shell/ui";
+import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 
 const COL_W = 190;
@@ -50,7 +50,7 @@ export function FlowPage() {
   };
 
   return (
-    <div className="space-y-3">
+    <div className={PAGE_SCROLL + " space-y-3"}>
       <Card
         title={`策略图 · ${graph.id} v${graph.version}`}
         right={

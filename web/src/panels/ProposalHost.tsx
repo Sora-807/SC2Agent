@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { listProposals } from "../api/proposals";
-import { Empty } from "../shell/ui";
+import { Empty, PAGE_SCROLL } from "../shell/ui";
 import { ProposalReview } from "./ProposalReview";
 import type { Proposal } from "../contract";
 
@@ -31,7 +31,7 @@ export function ProposalHost(props: {
   const p = props.fromFrame ?? fetched;
 
   return (
-    <div className="space-y-2">
+    <div className={PAGE_SCROLL + " space-y-2"}>
       <button className="text-[11px] text-neutral-500 hover:text-neutral-300"
               onClick={props.onClose}>← 返回</button>
       {err && <div className="text-red-400">取提案失败：{err}</div>}

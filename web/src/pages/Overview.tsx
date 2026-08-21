@@ -8,7 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ProjectionChart } from "../charts/ProjectionChart";
 import { MapCanvas } from "../canvas/MapCanvas";
 import { defaultLayers } from "../canvas/layers";
-import { Empty, fmtTime, sevClass } from "../shell/ui";
+import { Empty, PAGE_SCROLL, fmtTime, sevClass } from "../shell/ui";
 import { useRoute, type PageKey } from "../shell/route";
 import { useFrames } from "../store/frames";
 
@@ -77,7 +77,7 @@ export function Overview() {
   const shared = { collapsed, toggle };
 
   return (
-    <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+    <div className={PAGE_SCROLL + " grid grid-cols-1 gap-3 xl:grid-cols-3"}>
       <Panel id="econ" title="经济" {...shared} jump="production"
              right={<span className="text-[11px] text-neutral-500">
                {economy ? `领地 ${economy.domain_workers} 人 · 差量 ${economy.emitted_count}` : ""}

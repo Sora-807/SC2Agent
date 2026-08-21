@@ -13,7 +13,7 @@ import {
   describeItem, draftCost, draftToHunks, emptyItem, placementOptions,
   type DraftItem,
 } from "../planning/queue-draft";
-import { Card, Empty } from "../shell/ui";
+import { Card, Empty, PAGE_SCROLL } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { CatalogStatic, MapStatic, SchemaStatic, StrategyStatic } from "../contract";
 
@@ -28,7 +28,7 @@ export function PlanningPage() {
   const [tab, setTab] = useState<"map" | "production" | "flow">("production");
 
   return (
-    <div className="space-y-3">
+    <div className={PAGE_SCROLL + " space-y-3"}>
       <Card title="规划（离线工作台）"
             right={<span className="text-[11px] text-amber-500">
               {sourceKind === "live"

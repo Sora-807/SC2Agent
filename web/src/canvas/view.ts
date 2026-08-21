@@ -34,6 +34,28 @@ export function screenToWorld(v: Viewport, sx: number, sy: number): [number, num
   return [(sx - v.panX) / v.scale, v.mh - (sy - v.panY) / v.scale];
 }
 
+/** 屏幕中心对应的世界点。resize 重锚与"回到中心"都以它为基准。 */
+export function viewportCenter(v: Viewport): [number, number] {
+  return screenToWorld(v, v.cw / 2, v.ch / 2);
+}
+
+/**
+ * 画布尺寸变了：**保住 scale 与"屏幕中心对应的世界点"**，只重算 pan（红线 G2）。
+ *
+ * 之前这里是直接 `fitViewport` 重置 —— 于是改窗口大小、收起对话栏、甚至侧栏里多一行字
+ * 都会把用户的缩放和平移丢掉。resize 是"窗口变了"，不是"换了张地图"，两者必须分开。
+ */
+export function resizeViewport(v: Viewport, cw: number, ch: number): Viewport {
+  const [wx, wy] = viewportCenter(v);
+  return {
+    ...v,
+    cw,
+    ch,
+    panX: cw / 2 - wx * v.scale,
+    panY: ch / 2 - (v.mh - wy) * v.scale,
+  };
+}
+
 export function zoomAt(v: Viewport, sx: number, sy: number, factor: number): Viewport {
   const next = Math.max(0.4, Math.min(24, v.scale * factor));
   const [wx, wy] = screenToWorld(v, sx, sy);

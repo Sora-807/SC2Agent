@@ -27,7 +27,7 @@ export function MapPage() {
 
   return (
     <div className="flex h-full min-h-0 gap-3">
-      <div className="min-h-[420px] flex-1">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <MapCanvas
           map={map}
           world={world}
@@ -39,7 +39,7 @@ export function MapPage() {
         />
       </div>
 
-      <div className="w-72 shrink-0 space-y-3 overflow-auto">
+      <div className="w-72 min-h-0 shrink-0 space-y-3 overflow-y-auto pb-6">
         <Card title="图层">
           <ul className="space-y-1">
             {LAYERS.map((l) => {

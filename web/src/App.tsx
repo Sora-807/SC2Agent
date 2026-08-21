@@ -9,6 +9,7 @@ import { ProposalHost } from "./panels/ProposalHost";
 import { ChatDock } from "./shell/ChatDock";
 import { IconRail } from "./shell/IconRail";
 import { SessionBar } from "./shell/SessionBar";
+import { StatusChip } from "./shell/StatusChip";
 import { Timeline } from "./shell/Timeline";
 import { useRoute } from "./shell/route";
 import { Overview } from "./pages/Overview";
@@ -36,7 +37,7 @@ export function App() {
 
   if (error) {
     return (
-      <div className="p-6 text-red-400">
+      <div className="h-[100dvh] overflow-y-auto p-6 text-red-400">
         <h1 className="text-lg font-bold">帧源出错</h1>
         <pre className="mt-3 whitespace-pre-wrap text-sm">{error}</pre>
         <p className="mt-3 text-neutral-400">
@@ -46,13 +47,19 @@ export function App() {
     );
   }
 
+  // 外壳固定一屏（红线 G1/U13）：`h-[100dvh] overflow-hidden` + 一路 `min-h-0`，
+  // 滚动权下放给**页面自己的 pane**。原先是 `min-h-screen`（最小高度，会长）+ main
+  // `overflow-auto`，于是永远有东西可滚 —— 滚轮缩放时页面跟着动的另一半原因（根因 B）。
+  // 用 dvh 不用 vh：带地址栏时 vh 会比可视区大。
   return (
-    <div className="flex min-h-screen flex-col p-3 text-sm">
-      <SessionBar />
-      <Timeline />
+    <div className="flex h-[100dvh] flex-col overflow-hidden p-3 text-sm">
+      <div className="shrink-0">
+        <SessionBar />
+        <Timeline />
+      </div>
       <div className="flex min-h-0 flex-1">
         <IconRail page={page} go={go} />
-        <main className="min-w-0 flex-1 overflow-auto px-3">
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-3">
           {loading || fixtures.length === 0 ? (
             <div className="p-6 text-neutral-500">加载帧…</div>
           ) : openProposal ? (
@@ -68,13 +75,10 @@ export function App() {
               {page === "debug" && <DebugPage />}
             </>
           )}
+          <StatusChip />
         </main>
         <ChatDock selected={openProposal} onOpen={setOpenProposal} />
       </div>
-      <footer className="mt-3 border-t border-neutral-800 pt-2 text-xs text-neutral-500">
-        契约 ViewFrame v0.1（rev=1）· 唯一真相源 docs/plan-frontend.md §2 ·
-        面板只读帧字段，未做任何本地派生（红线 C7）
-      </footer>
     </div>
   );
 }
