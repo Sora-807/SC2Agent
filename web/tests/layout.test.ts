@@ -76,7 +76,7 @@ describe("外壳固定一屏（G1 / 根因 B）", () => {
 describe("页面自己接管滚动（G1）", () => {
   const docPages = [
     "pages/Overview.tsx", "pages/ProductionPage.tsx", "pages/FlowPage.tsx",
-    "pages/PlanningPage.tsx", "pages/DebugPage.tsx", "panels/ProposalHost.tsx",
+    "pages/DebugPage.tsx", "panels/ProposalHost.tsx",
   ];
 
   it("PAGE_SCROLL 常量存在且自带高度与滚动", () => {
@@ -100,6 +100,14 @@ describe("页面自己接管滚动（G1）", () => {
     expect(src).toContain("flex h-full min-h-0");
     expect(src).not.toContain("min-h-[420px]");
     expect(src).toContain("overflow-y-auto");
+  });
+
+  it("规划页（F16/P1）：根是分栏页不滚；生产/Flow tab 内部自己接管滚动", () => {
+    const src = code("pages/PlanningPage.tsx");
+    expect(src).toMatch(/return \(\s*\n\s*<div className="flex h-full min-h-0 flex-col gap-2">/);
+    expect(src).toContain("PAGE_SCROLL");          // 生产/Flow tab 的文档页包裹
+    expect(src).not.toContain("min-h-[420px]");   // 旧固定高画布已删（跟着容器高度走）
+    expect(src).toContain("h-64 space-y-1 overflow-auto");  // 列表卡固定高度内滚（点位/槽位常显堆叠）
   });
 });
 
@@ -292,17 +300,19 @@ describe("F14 切片 2：槽位工具与提案通道（2026-08-21）", () => {
 
   it("规划页有槽位放置工具与重叠即时校验", () => {
     const page = code("pages/PlanningPage.tsx");
-    expect(page).toContain("slotOverlaps");
-    expect(page).toContain("slotTl");
+    // F16：吸附/重叠/placeable 校验收进 previewPlacement 纯函数（ghost 与落笔同一结果）
+    expect(page).toContain("previewPlacement");
+    expect(page).toContain("placeableAt");
     expect(page).toContain('"＋ 槽位"');
   });
 
-  it("提为提案按钮真实启用（B14 已落地，不再置灰装死）", () => {
+  it("离线保存按钮真实可用（P2：不走提案，直接写地图规划文件）", () => {
     const page = code("pages/PlanningPage.tsx");
-    expect(page).toContain("提为提案（map_plan）");
+    expect(page).toContain("保存到地图规划文件");
     expect(page).toContain("mapDraftToHunks");
-    // 回归：上一版的"待 B14"置灰按钮已移除
-    expect(page).not.toContain("提为提案（待 B14）");
+    expect(page).toContain("saveMapPlan");
+    // 回归：提案通道的按钮已从规划页退役（离线域直改文件，用户拍板）
+    expect(page).not.toContain("提为提案（map_plan）");
   });
 
   it("审批面板的 map_overlay 分支是叠加画布而非「不能应用」", () => {
@@ -318,7 +328,7 @@ describe("F14 切片 2：槽位工具与提案通道（2026-08-21）", () => {
     const page = code("pages/PlanningPage.tsx");
     expect(page).toContain("dropSlot");
     expect(page).toContain('{ kind: "del_slot", name }');
-    expect(page).toContain('{ kind: "add_slot", name, pos: snapped');
+    expect(page).toContain('{ kind: "add_slot", name, pos: pv.pos');
   });
 
   it("MapCanvas 的槽位拖动走独立手势分支，不污染 pan/选单位", () => {
@@ -326,5 +336,30 @@ describe("F14 切片 2：槽位工具与提案通道（2026-08-21）", () => {
     expect(canvas).toContain('mode: "pan" | "slot"');
     expect(canvas).toContain("draggableSlots");
     expect(canvas).toContain("motion.slotGhost");
+  });
+});
+
+describe("F16：规划编辑体验（2026-08-21 用户反馈）", () => {
+  it("画布有放置预览 ghost、悬停上报与双向选中", () => {
+    const canvas = code("canvas/MapCanvas.tsx");
+    expect(canvas).toContain("props.ghost");
+    expect(canvas).toContain("props.onHover");
+    expect(canvas).toContain("props.selectedName");
+    expect(canvas).toContain("props.onMarkClick");
+    expect(canvas).toContain("props.onSlotClick");
+  });
+
+  it("规划模式（slotsOverride 非 null）槽位画实线 + 名字；可建区层存在", () => {
+    const canvas = code("canvas/MapCanvas.tsx");
+    expect(canvas).toContain("const planning = props.slotsOverride != null");
+    expect(canvas).toContain("baked.placeableImage");
+    const layers = code("canvas/layers.ts");
+    expect(layers).toContain('"placeable"');
+  });
+
+  it("预览与落笔同一结果：吸附/重叠/预留/placeable 都在 previewPlacement 纯函数里", () => {
+    const md = code("planning/map-draft.ts");
+    expect(md).toContain("export function previewPlacement");
+    expect(md).toContain('reason: "overlap" | "reserved" | "unplaceable" | null');
   });
 });

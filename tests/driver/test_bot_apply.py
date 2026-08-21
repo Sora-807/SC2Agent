@@ -135,3 +135,54 @@ def test_last_raw_is_read_source():
     )
     assert bot._last_raw.seq == 3
 
+
+async def test_on_step_sinks_first_state_before_map_info_callback():
+    """地形回调必须排在首帧 sink **之后**（真机「地形不可用」的根因锁，2026-08-22）。
+
+    run_session 的 Session.on_state 由 sink 首帧触发、同步发出 static/map 等静态面；
+    地形控制行若排在它前面，LiveSession 的静态缓冲顺序就是 [terrain, map, ...]，
+    前端 store 的 terrain→map 合并（map 未到即丢）会吞掉整局地形 ——
+    sim 侧当年为同一顺序修过（B16 教训），driver 这条漏了。
+    """
+
+    class _Arr:
+        def __init__(self, data):
+            self._data = data
+
+        def tolist(self):
+            return [list(r) for r in self._data]
+
+    class _PixelMap:
+        def __init__(self, data, w, h):
+            self.data_numpy = _Arr(data)
+            self.width = w
+            self.height = h
+
+    events: list[str] = []
+
+    class _Sink:
+        def on_game_state(self, raw: RawGameState) -> None:
+            events.append("sink")
+
+        def on_session_event(self, event) -> None:
+            pass
+
+    bot = object.__new__(SC2DriverBot)
+    bot.all_units = [FakeUnit(1)]
+    bot.state = SimpleNamespace(creep=None, visibility=None)
+    bot.game_info = SimpleNamespace(
+        map_size=(2, 2),
+        terrain_height=_PixelMap([[1, 2], [3, 4]], 2, 2),
+        pathing_grid=_PixelMap([[1, 0], [1, 0]], 2, 2),
+        placement_grid=_PixelMap([[0, 1], [1, 1]], 2, 2),
+    )
+    bot._sink = _Sink()
+    bot._last_raw = None
+    bot._op_queue = []
+    bot._map_info_cb = lambda info: events.append("terrain")
+
+    await bot.on_step(0)
+    assert events == ["sink", "terrain"]            # 顺序就是本测试的全部
+    await bot.on_step(1)
+    assert events == ["sink", "terrain", "sink"]    # 地形只发一次（_map_info_sent）
+

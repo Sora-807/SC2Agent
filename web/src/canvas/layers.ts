@@ -15,7 +15,8 @@ export type LayerKey =
   | "visibility"
   | "creep"
   | "clusters"
-  | "placement";
+  | "placement"
+  | "placeable";
 
 export interface LayerDef {
   key: LayerKey;
@@ -67,6 +68,11 @@ export const LAYERS: LayerDef[] = [
     available: (_m, w) => w?.enemy_clusters
       ? { ok: true } : { ok: false, why: "后端聚类算法未实现（词表里登记为 forbidden）" } },
   { key: "placement", label: "摆放调试", on: false, available: always },
+  // F16：可建区（placeable=1 淡绿 tint）—— 编辑背景，回答「哪里能放」；规划页强制开
+  { key: "placeable", label: "可建区", on: false,
+    available: (m) => m?.terrain?.placeable
+      ? { ok: true }
+      : { ok: false, why: "placeable 未下发（需地形；离线夹具已含合成地形）" } },
 ];
 
 export type LayerState = Record<LayerKey, boolean>;

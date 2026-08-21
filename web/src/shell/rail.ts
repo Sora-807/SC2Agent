@@ -8,30 +8,42 @@ import type { AlertsFrame, ProductionFrame, ProposalsFrame } from "../contract";
 import type { Mode } from "./mode";
 import { PAGES, PAGE_GROUP_LABEL, type PageGroup, type PageKey } from "./route";
 
-/** R5：live 中不创建/编辑模块与 Strategy —— 门控理由必须带编号（G7） */
+/** R5：live 中不创建/编辑模块与 Strategy —— 门控理由必须带编号（G7）。
+ * P1 后规划组不再出现在驾驶模式导航里（见 railGroups），这条理由由
+ * PlanningPage 的守卫兜底（hash 直达规划页时仍显示，不静默）。 */
 export const PLAN_GATE_REASON = "R5：live 不能创建/编辑模块与 Strategy";
 
 export interface RailGroup {
   key: PageGroup;
   label: string;
   items: (typeof PAGES)[number][];
-  /** 规划组在 drive 模式门控（置灰 + 理由，不隐藏） */
+  /** P1 后导航按模式重组，组级门控不再出现（保留字段兼容角标逻辑） */
   gated: boolean;
   gateReason: string | null;
 }
 
+/**
+ * 模式 → 导航组的映射（P1，用户四轮反馈拍板：「离线编辑不应有驾驶栏、
+ * 复盘不应有规划栏」——导航结构就是协作流程的形状）：
+ * - 离线规划：只有规划工作台（驾驶页看"正在发生的世界"，离线没有；静态面仍从夹具来）；
+ * - 实时/复盘：只有驾驶四页（authoring 入口不属于对局现场，R5）；
+ * - 诊断常驻。
+ * 可发现性由顶栏一级模式保证（G7 的精神），不是静默藏功能。
+ */
 export function railGroups(mode: Mode): RailGroup[] {
-  const groups: PageGroup[] = ["drive", "plan", "diag"];
-  return groups.map((g) => {
-    const gated = g === "plan" && mode === "drive";
-    return {
-      key: g,
-      label: PAGE_GROUP_LABEL[g],
-      items: PAGES.filter((p) => p.group === g),
-      gated,
-      gateReason: gated ? PLAN_GATE_REASON : null,
-    };
-  });
+  const keys: PageGroup[] = mode === "offline" ? ["plan", "diag"] : ["drive", "diag"];
+  return keys.map((g) => ({
+    key: g,
+    label: PAGE_GROUP_LABEL[g],
+    items: PAGES.filter((p) => p.group === g),
+    gated: false,
+    gateReason: null,
+  }));
+}
+
+/** 模式的默认落点页（模式切换后当前页不在导航里时跳到这里） */
+export function homePageOf(mode: Mode): PageKey {
+  return mode === "offline" ? "plan-production" : "overview";
 }
 
 export interface Badges {

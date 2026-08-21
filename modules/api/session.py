@@ -33,7 +33,7 @@ from planner.build_order import ProductionModuleInstance
 from planner.planner import Planner
 from production.economy import EconomyKeeper, WorkerReservations
 from production.runtime import ProductionRuntime
-from tactical_map.base import instantiate_spawn, load_ladder_map
+from tactical_map.base import instantiate_spawn, load_ladder_map, load_map_plan
 from view.port import OpRing, RecordingPort
 from view.producer import FrameProducer
 from view.schema import STATIC_TOPICS
@@ -126,7 +126,8 @@ class OfflineSession:
     id = "live"
 
     def __init__(self, catalog: Catalog, *, workers: int = 12, minerals: float = 400.0,
-                 label: str = "离线沙盒（真引擎 + 假世界）") -> None:
+                 label: str = "离线沙盒（真引擎 + 假世界）",
+                 map_plan: str | None = None) -> None:
         from worldsim import WorldSim
 
         self.catalog = catalog
@@ -138,7 +139,8 @@ class OfflineSession:
         self.game_time = 0.0
         self.world = WorldSim(catalog=catalog, cc_pos=Point2(30.5, 30.5), minerals=minerals)
         self.world.bootstrap(workers=workers)
-        tpl = load_ladder_map()
+        # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
+        tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
         _, layout = sorted(tpl.spawns.items())[0]
         self.layer = instantiate_spawn(tpl, layout, self.world.cc_pos)
 

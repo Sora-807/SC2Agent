@@ -8,7 +8,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { ProjectionChart } from "../charts/ProjectionChart";
 import { MapCanvas } from "../canvas/MapCanvas";
 import { defaultLayers } from "../canvas/layers";
-import { Empty, PAGE_SCROLL, fmtTime, sevClass } from "../shell/ui";
+import { Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
+import { AlertsList } from "../panels/AlertsList";
+import { BootHint } from "../shell/BootHint";
 import { useRoute, type PageKey } from "../shell/route";
 import { useFrames } from "../store/frames";
 
@@ -78,6 +80,8 @@ export function Overview() {
 
   return (
     <div className={PAGE_SCROLL + " grid grid-cols-1 gap-3 xl:grid-cols-3"}>
+      {/* I6：真机首帧等待横幅 —— 无提示时不渲染任何节点，不影响网格布局 */}
+      <BootHint className="xl:col-span-3" />
       <Panel id="econ" title="经济" {...shared} jump="production"
              right={<span className="text-note text-faint">
                {economy ? `领地 ${economy.domain_workers} 人 · 差量 ${economy.emitted_count}` : ""}
@@ -150,15 +154,9 @@ export function Overview() {
              right={alerts && alerts.alerts.length > 0
                ? <span className="text-note text-amber-400">{alerts.alerts.length} 条</span>
                : undefined}>
-        {alerts && alerts.alerts.length > 0 ? (
-          <ul className="space-y-1">
-            {alerts.alerts.map((a) => (
-              <li key={a.id + a.at}>
-                <span className={sevClass(a.severity)}>●</span> {a.text_zh}
-              </li>
-            ))}
-          </ul>
-        ) : <Empty text="无警报" />}
+        {alerts
+          ? <AlertsList alerts={alerts.alerts} empty={<Empty text="无警报" />} />
+          : <Empty />}
       </Panel>
 
       <Panel id="proj"

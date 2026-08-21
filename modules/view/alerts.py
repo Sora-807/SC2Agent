@@ -119,6 +119,43 @@ class AlertService:
             break
         return out
 
+    def from_curve(self, curve, *, now: float = 0.0) -> list[AlertView]:
+        """规划干跑的**无状态**前瞻警报：同一条投影曲线 → 同一形状的 AlertView。
+
+        与实时警报（`evaluate`，带冷却、混运行时来源）共用 AlertView 数据模型，
+        前端因此能用同一个组件渲染两处。这里 stalled 只剩死局（等待不记事件，
+        见 planner 的 wait 语义），全部按 error 报；不做冷却 —— 干跑是一次性的。
+        """
+        out: list[AlertView] = []
+        for p in curve.points:
+            if p.t - now > SUPPLY_LOOKAHEAD:
+                break
+            if p.supply_cap < 200 and p.supply_used >= p.supply_cap:
+                eta = round(p.t - now, 1)
+                out.append(AlertView(
+                    id="supply_block", kind="supply_block",
+                    severity="warn" if eta > 5 else "error",
+                    at=now, eta=eta,
+                    text_zh=(f"约 {eta:g}s 后卡人口（{p.supply_used}/{p.supply_cap}）"
+                             if eta > 0 else f"已经卡人口（{p.supply_used}/{p.supply_cap}）"),
+                    source="projection",
+                    payload={"supply_used": p.supply_used, "supply_cap": p.supply_cap},
+                ))
+                break
+        for e in curve.events:
+            if e.kind != "stalled":
+                continue
+            out.append(AlertView(
+                id=f"plan_stalled/{e.type}/{e.t:g}",
+                kind="plan_stalled",
+                severity="error",
+                at=now, eta=round(e.t - now, 1),
+                text_zh=f"{_mmss(e.t)} {_zh(self.catalog, e.type).strip()}走不下去：{e.reason}",
+                source="projection",
+                payload={"stable_id": e.type, "reason": e.reason, "t": e.t},
+            ))
+        return out
+
     # ---- 经济 / 产线 ----
 
     def _economy_alerts(self, gs: GameState) -> list[AlertView]:
@@ -180,3 +217,8 @@ def _zh(catalog: Catalog, stable_id: str | None) -> str:
         return ""
     entry = catalog.by_stable_id(stable_id)
     return f"{entry.display_name_zh} " if entry else f"{stable_id} "
+
+
+def _mmss(t: float) -> str:
+    s = max(0, int(round(t)))
+    return f"{s // 60:02d}:{s % 60:02d}"

@@ -54,7 +54,7 @@ describe("quantizeLevels", () => {
 describe("cliffMask", () => {
   it("人工阶梯：边缘格为真、台地内部为假", () => {
     // 左半 level 0，右半 level 1 → 悬崖在中缝（x=9 与 x=10 两列）
-    const g = grid(20, 6, (x) => (x < 10 ? 0 : 1));
+    const g = grid(20, 6, (x) => (x < 10 ? 0 : 8));   // 真实台地落差 ≥4（SC2 常见 8）
     const { levels } = quantizeLevels(g);
     const mask = cliffMask(levels, 20, 6);
     expect(mask[3 * 20 + 9]).toBe(1);    // 中缝左格
@@ -63,8 +63,17 @@ describe("cliffMask", () => {
     expect(mask[3 * 20 + 17]).toBe(0);   // 右台地内部
   });
 
+  it("缓变噪声（1-2 单位高度差）并成同一层 —— 不再满图假斜坡/假悬崖", () => {
+    // 真机 (62,80) 附近实测形态：189/190/191 交替的近平地。旧量化把每个值当一层，
+    // 满图都是"跨层"→ 斜坡暖色抖动刷屏（用户看到的黄色格点）。
+    const g = grid(20, 6, (x) => 189 + (x % 3));
+    const { levels, count } = quantizeLevels(g);
+    expect(count).toBe(1);
+    expect(levels.every((v) => v === 0)).toBe(true);
+  });
+
   it("上下邻居跨 level 也算边缘（悬崖不只在左右方向）", () => {
-    const g = grid(6, 6, (_x, y) => (y < 3 ? 0 : 1));
+    const g = grid(6, 6, (_x, y) => (y < 3 ? 0 : 8));
     const { levels } = quantizeLevels(g);
     const mask = cliffMask(levels, 6, 6);
     expect(mask[2 * 6 + 3]).toBe(1);     // y=2（level 0 一侧的最底行）
@@ -75,7 +84,7 @@ describe("cliffMask", () => {
 
 describe("rampMask", () => {
   it("斜坡掩码只在「跨 level 的可走格」为真；不可走的边缘格不算斜坡", () => {
-    const g = grid(20, 6, (x) => (x < 10 ? 0 : 1));
+    const g = grid(20, 6, (x) => (x < 10 ? 0 : 8));   // 真实台地落差 ≥4（SC2 常见 8）
     const { levels } = quantizeLevels(g);
     // 可走掩码：只有中缝右格（x=10, y=3）可走，其余全部不可走
     const pathable = grid(20, 6, () => 0);
@@ -87,7 +96,7 @@ describe("rampMask", () => {
   });
 
   it("pathable=null（帧里缺可走图）时斜坡掩码为空 —— 不伪造", () => {
-    const g = grid(20, 6, (x) => (x < 10 ? 0 : 1));
+    const g = grid(20, 6, (x) => (x < 10 ? 0 : 8));   // 真实台地落差 ≥4（SC2 常见 8）
     const { levels } = quantizeLevels(g);
     const ramps = rampMask(levels, null, 20, 6);
     expect(ramps.every((v) => v === 0)).toBe(true);

@@ -16,7 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "modules"))
 
-from api.app import DEFAULT_FRAME_DIR, DEFAULT_PROPOSAL_LOG, create_app  # noqa: E402
+from api.app import (DEFAULT_FRAME_DIR, DEFAULT_MAP_PLANS_DIR, DEFAULT_PLANS_DIR,
+                     DEFAULT_PROPOSAL_LOG, create_app)  # noqa: E402
 
 
 def main() -> int:
@@ -27,12 +28,18 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--proposals", default=str(ROOT / DEFAULT_PROPOSAL_LOG))
+    ap.add_argument("--plans", default=str(ROOT / DEFAULT_PLANS_DIR),
+                    help="规划文件目录（一个规划一个 YAML）")
+    ap.add_argument("--map-plans", default=str(ROOT / DEFAULT_MAP_PLANS_DIR),
+                    help="地图规划文件目录（默认地图锁定 + 复制新建）")
     ap.add_argument("--log-level", default="warning")
     args = ap.parse_args()
     print(f"view API → http://{args.host}:{args.port}/api/health")
     print(f"  帧源目录 {args.frame_dir}")
     print(f"  提案日志 {args.proposals}")
-    uvicorn.run(create_app(args.frame_dir, args.proposals),
+    print(f"  规划目录 {args.plans}")
+    print(f"  地图规划目录 {args.map_plans}")
+    uvicorn.run(create_app(args.frame_dir, args.proposals, args.plans, args.map_plans),
                 host=args.host, port=args.port, log_level=args.log_level)
     return 0
 

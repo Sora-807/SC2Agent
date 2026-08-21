@@ -19,6 +19,10 @@ from planner.build_order import AssignWorkers, Build, Op, Research, Train, expan
 from planner.curve import ProjectionCurve, ProjectionEvent
 from planner.economy import DEFAULT_ECON, EconomyParams
 from planner.sim_state import InFlight, SimState, derive_from
+from planner.slots import is_tech_unit, reactor_map, slot_capacity, techlab_map
+
+#: SC2 人口上限（真实规则）—— 供给守卫与「缺供给」死局判定的分界
+SUPPLY_MAX = 200
 
 
 class Planner:
@@ -27,6 +31,11 @@ class Planner:
     def __init__(self, catalog: Catalog, econ: EconomyParams | None = None) -> None:
         self._catalog = catalog
         self._econ = econ or DEFAULT_ECON
+        # B15 产槽模型：母建筑 → techlab 挂件 stable ID（挂件是独立建筑，从 buildings 计数）；
+        # 科技单位集合（前置含本产建筑的 techlab，如坦克）也一并缓存
+        self._techlab_of = techlab_map(catalog)
+        self._reactor_of = reactor_map(catalog)
+        self._tech_units = {e.stable_id for e in catalog.where() if is_tech_unit(e, catalog)}
 
     def project(self, gs: GameState, seq: list, until: float) -> ProjectionCurve:
         """从 gs 快照 + production_sequence 投影到 until 秒。"""
@@ -52,9 +61,11 @@ class Planner:
             self._supply_guard(queue, st, curve)
             # 4. 消费队列（可行性门控）
             while queue:
-                ok, reason = self._feasible(queue[0], st)
+                ok, reason, wait = self._feasible(queue[0], st)
                 if not ok:
-                    if id(queue[0]) not in stalled_recorded:
+                    # 等待（攒钱/排队/等在途落成）是顺序执行的正常时序，不是警报；
+                    # 只有死局（前置永远建不出 / 供给顶到上限 / 收入永远为 0）才记 stalled。
+                    if not wait and id(queue[0]) not in stalled_recorded:
                         curve.events.append(ProjectionEvent(
                             "stalled", self._op_label(queue[0]), st.t, reason))
                         stalled_recorded.add(id(queue[0]))
@@ -78,6 +89,8 @@ class Planner:
         """
         if not queue:
             return
+        if st.supply_cap >= SUPPLY_MAX:
+            return   # 顶满 200：depot/CC 也不涨人口，插了纯烧钱 —— 让「缺供给」浮出为死局
         op = queue[0]
         need_inject = False
         if isinstance(op, Train):
@@ -101,64 +114,127 @@ class Planner:
         curve.events.append(ProjectionEvent("started", "terran/supplydepot", st.t, "auto-supply"))
 
     # ---- 可行性门控（资源/前置/产槽/builder）----
-    def _feasible(self, op: Op, st: SimState) -> tuple[bool, str | None]:
+    #
+    # 返回 (ok, reason, wait)：`wait=True` 表示**时序等待**（攒钱 / 产槽排队 /
+    # 前置或收入在途）——顺序队列的常态，不构成警报；只有 `wait=False` 的**死局**
+    # 才会被主循环记成 stalled 事件（真前瞻警报）。判据只看当前 SimState：
+    # 顺序语义下，排在本项后面的 op 永远救不了卡住的队首。
+
+    def _feasible(self, op: Op, st: SimState) -> tuple[bool, str | None, bool]:
         if isinstance(op, Build):
             e = self._catalog.by_stable_id(op.type)
             if e is None:
-                return (False, f"未知型 {op.type}")
+                return (False, f"未知型 {op.type}", False)
             if st.minerals < e.cost.minerals:
-                return (False, "缺矿")
+                return (False, "缺矿", self._income_coming(st))
             if st.gas < e.cost.vespene:
-                return (False, "缺气")
+                return (False, "缺气", self._gas_coming(st))
             for p in e.prerequisites:
                 if st.buildings.get(p, 0) < 1:
-                    return (False, "前置没")
+                    in_flight = any(f.type == p for f in st.in_flight)
+                    return (False, "前置没", in_flight)
             if st.idle_workers < 1 and st.mineral_workers < 1:
-                return (False, "无builder")
-            return (True, None)
+                return (False, "无builder", self._income_coming(st))
+            return (True, None, False)
         if isinstance(op, Train):
             e = self._catalog.by_stable_id(op.type)
             if e is None:
-                return (False, f"未知型 {op.type}")
+                return (False, f"未知型 {op.type}", False)
             if st.minerals < e.cost.minerals:
-                return (False, "缺矿")
+                return (False, "缺矿", self._income_coming(st))
             if st.gas < e.cost.vespene:
-                return (False, "缺气")
+                return (False, "缺气", self._gas_coming(st))
             if st.supply_used + e.cost.supply > st.supply_cap:
-                return (False, "缺供给")
+                # supply_guard 会自动插 depot（cap<200 时必然能解）；
+                # 顶到 200 上限补给站也救不了 —— 这才是用户要的「不能继续往后生产」警报
+                return (False, "缺供给", st.supply_cap < 200)
             for p in e.prerequisites:
                 if st.buildings.get(p, 0) < 1:
-                    return (False, "前置没")
+                    in_flight = any(f.type == p for f in st.in_flight)
+                    return (False, "前置没", in_flight)
             if e.produced_by:
-                producers = st.buildings.get(e.produced_by, 0)
-                reactor_bonus = st.addons.get(e.produced_by, 0)
-                busy = sum(1 for f in st.in_flight
-                           if f.kind == "train" and f.producer == e.produced_by)
-                if producers + reactor_bonus - busy <= 0:
-                    return (False, "无产槽")
-            return (True, None)
+                # B15 产槽模型：科技单位（前置含本产建筑的 techlab）只能用科技槽；
+                # 普通单位优先普通槽（reactor 双倍），普通满后溢出到空闲科技槽。
+                # 旧代码只数「母建筑数 − busy」——techlab 母建筑被当普通槽，
+                # 坦克在普通工厂上也能"同时开工"。
+                techlab_sid = self._techlab_of.get(e.produced_by)
+                normal_cap, tech_cap = slot_capacity(
+                    e.produced_by, st.buildings, st.addons, techlab_sid)
+                # 在产分桶：普通单位溢出到科技槽时占的是科技槽 —— 不追踪具体槽位，
+                # 用「溢出量 = max(0, bn − normal_cap)」推导科技槽占用（贪心：普通单位
+                # 先占满普通槽才溢出，与用户拍板的优先序一致）。
+                busy_tech = 0
+                busy_normal = 0
+                for f in st.in_flight:
+                    if f.kind != "train" or f.producer != e.produced_by:
+                        continue
+                    if f.type in self._tech_units:
+                        busy_tech += 1
+                    else:
+                        busy_normal += 1
+                if e.stable_id in self._tech_units:
+                    tech_taken = busy_tech + max(0, busy_normal - normal_cap)
+                    if tech_cap - tech_taken <= 0:
+                        # 槽全忙 = 排队等待；槽为 0 且没有 techlab 在建 = 死局
+                        wait = tech_cap > 0 or (
+                            techlab_sid is not None
+                            and any(f.type == techlab_sid for f in st.in_flight))
+                        return (False, "无科技槽", wait)
+                elif busy_normal + busy_tech >= normal_cap + tech_cap:
+                    # 普通单位任何空槽都能用（普通 + 溢出），总占用满才算无产槽
+                    reactor_sid = self._reactor_of.get(e.produced_by)
+                    wait = (normal_cap + tech_cap) > 0 or any(
+                        f.type == e.produced_by
+                        or (reactor_sid is not None and f.type == reactor_sid)
+                        for f in st.in_flight)
+                    return (False, "无产槽", wait)
+            return (True, None, False)
         if isinstance(op, Research):
             e = self._catalog.by_stable_id(op.type)
             if e is None:
-                return (False, f"未知型 {op.type}")
+                return (False, f"未知型 {op.type}", False)
             if st.minerals < e.cost.minerals:
-                return (False, "缺矿")
+                return (False, "缺矿", self._income_coming(st))
             if st.gas < e.cost.vespene:
-                return (False, "缺气")
+                return (False, "缺气", self._gas_coming(st))
             for p in e.prerequisites:
                 if st.buildings.get(p, 0) < 1:
-                    return (False, "前置没")
+                    in_flight = any(f.type == p for f in st.in_flight)
+                    return (False, "前置没", in_flight)
             if e.produced_by:
                 producers = st.buildings.get(e.produced_by, 0)
                 busy = sum(1 for f in st.in_flight
                            if f.kind == "research" and f.producer == e.produced_by)
                 if producers - busy <= 0:
-                    return (False, "无研究槽")
-            return (True, None)
+                    wait = producers > 0 or any(
+                        f.type == e.produced_by for f in st.in_flight)
+                    return (False, "无研究槽", wait)
+            return (True, None, False)
         if isinstance(op, AssignWorkers):
             # best-effort：有多少派多少，不卡（真机 steward 也是自适应不卡）
-            return (True, None)
-        return (False, "未知 op")
+            return (True, None, False)
+        return (False, "未知 op", False)
+
+    # ---- 等待/死局判据 ----
+
+    def _income_coming(self, st: SimState) -> bool:
+        """矿收入还会来吗：有矿工，或有 SCV 在训（训成自动进矿池）。"""
+        if st.mineral_workers > 0:
+            return True
+        return any(
+            f.kind == "train" and (e := self._catalog.by_stable_id(f.type)) is not None
+            and e.role == Role.WORKER
+            for f in st.in_flight)
+
+    def _gas_coming(self, st: SimState) -> bool:
+        """气收入还会来吗：有气工且（已有精炼厂或精炼厂在建）。
+
+        只建精炼厂不派工、或只派工没有厂，气都永远为 0 —— 那是规划缺一步，算死局。
+        """
+        if st.gas_workers <= 0:
+            return False
+        return (st.buildings.get("terran/refinery", 0) > 0
+                or any(f.type == "terran/refinery" for f in st.in_flight))
 
     # ---- 启动 op（扣资源/加在途/分配 worker）----
     def _start(self, op: Op, st: SimState) -> None:
@@ -224,7 +300,10 @@ class Planner:
                         st.addons[e.produced_by] = st.addons.get(e.produced_by, 0) + 1
                 else:
                     st.buildings[f.type] = st.buildings.get(f.type, 0) + 1
-                    st.supply_cap += self._econ.supply_provided.get(f.type, 0)
+                    # SC2 人口上限 200（真实规则）：顶满后再建 depot/CC 也不涨 ——
+                    # 这是「缺供给」从等待变死局的分界（用户拍板的真警报）
+                    st.supply_cap = min(
+                        SUPPLY_MAX, st.supply_cap + self._econ.supply_provided.get(f.type, 0))
                     st.mineral_workers += 1   # builder 回矿
             elif f.kind == "research":
                 st.research_completed.add(f.type)

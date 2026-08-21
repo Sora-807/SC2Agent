@@ -6,33 +6,42 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  PLAN_GATE_REASON, badgeCounters, badgeFor, railGroups,
+  PLAN_GATE_REASON, badgeCounters, badgeFor, homePageOf, railGroups,
 } from "../src/shell/rail";
 
-describe("railGroups 分组结构", () => {
-  it("驾驶 4 / 规划 3 / 诊断 1，带分组标题", () => {
+describe("railGroups 分组结构（P1：导航是模式的函数）", () => {
+  it("离线规划模式：只有规划工作台 + 诊断（驾驶页不出现）", () => {
     const groups = railGroups("offline");
-    expect(groups.map((g) => g.label)).toEqual(["驾驶", "规划", "诊断"]);
+    expect(groups.map((g) => g.label)).toEqual(["规划", "诊断"]);
     expect(groups[0]!.items.map((p) => p.key))
-      .toEqual(["overview", "map", "production", "flow"]);
-    expect(groups[1]!.items.map((p) => p.key))
       .toEqual(["plan-map", "plan-production", "plan-flow"]);
-    expect(groups[2]!.items.map((p) => p.key)).toEqual(["debug"]);
+    expect(groups[1]!.items.map((p) => p.key)).toEqual(["debug"]);
   });
 
-  it("离线/复盘下规划组可用；实时驾驶（live）下门控 + 理由引 R5（G7）", () => {
-    for (const m of ["offline", "replay"] as const) {
-      const plan = railGroups(m).find((g) => g.key === "plan")!;
-      expect(plan.gated, m).toBe(false);
-      expect(plan.gateReason).toBeNull();
+  it("实时/复盘：只有驾驶四页 + 诊断（规划入口不出现，R5）", () => {
+    for (const m of ["drive", "replay"] as const) {
+      const groups = railGroups(m);
+      expect(groups.map((g) => g.label), m).toEqual(["驾驶", "诊断"]);
+      expect(groups[0]!.items.map((p) => p.key))
+        .toEqual(["overview", "map", "production", "flow"]);
+      expect(groups.some((g) => g.key === "plan"), m).toBe(false);
     }
-    const plan = railGroups("drive").find((g) => g.key === "plan")!;
-    expect(plan.gated).toBe(true);
-    expect(plan.gateReason).toContain("R5");
+  });
+
+  it("组不再门控：模式一级入口（顶栏三段）保证可发现性，G7 的理由由 PlanningPage 守卫兜底", () => {
+    for (const m of ["offline", "drive", "replay"] as const) {
+      for (const g of railGroups(m)) {
+        expect(g.gated, m).toBe(false);
+        expect(g.gateReason).toBeNull();
+      }
+    }
     expect(PLAN_GATE_REASON).toContain("R5");
-    // 驾驶/诊断组永不被 authoring 门控
-    expect(railGroups("drive").find((g) => g.key === "drive")!.gated).toBe(false);
-    expect(railGroups("drive").find((g) => g.key === "diag")!.gated).toBe(false);
+  });
+
+  it("homePageOf：离线 → 生产规划（主场景）；实时/复盘 → 概览", () => {
+    expect(homePageOf("offline")).toBe("plan-production");
+    expect(homePageOf("drive")).toBe("overview");
+    expect(homePageOf("replay")).toBe("overview");
   });
 });
 

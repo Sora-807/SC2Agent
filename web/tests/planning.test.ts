@@ -6,7 +6,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  describeItem, draftCost, draftToHunks, emptyItem, itemToJson, placementOptions,
+  describeItem, draftCost, draftFromJson, draftToHunks, emptyItem, itemToJson,
+  placementOptions,
   type DraftItem,
 } from "../src/planning/queue-draft";
 import type { CatalogStatic, MapStatic } from "../src/contract";
@@ -82,6 +83,42 @@ describe("draftToHunks", () => {
       op: "build", type: "terran/marine", count: 2,
       placement: { kind: "exact", mark: "rax_1" }, task: null,
     });
+  });
+});
+
+describe("draftFromJson", () => {
+  it("规划文件队列项 ↔ 草稿项往返：op/type/count/placement/task 全保真", () => {
+    const draft = [
+      item({ op: "build", type: "terran/supplydepot", count: 2,
+             placement: { kind: "in_region", region: "home", index: null } }),
+      item({ op: "train", type: "terran/marine", count: 6, placement: null }),
+      item({ op: "research", type: "terran/infantryweapons1", count: 1, placement: null }),
+      item({ op: "assign_workers", type: null, count: 3, placement: null, task: "gas" }),
+    ];
+    const back = draftFromJson(draft.map(itemToJson));
+    expect(back.map(({ id, ...rest }) => rest)).toEqual(draft.map(({ id, ...rest }) => rest));
+  });
+
+  it("research 项不丢（默认规划里有 Research 导出项，编辑器必须能装下）", () => {
+    const [first] = draftFromJson([
+      { op: "research", type: "terran/infantryweapons1", count: 1,
+        placement: null, task: null },
+    ]);
+    expect(first?.op).toBe("research");
+    expect(first?.type).toBe("terran/infantryweapons1");
+  });
+
+  it("count 缺省回退 1、未知 op 回退 build（文件里来的数据不假设形状完好）", () => {
+    const [a, b] = draftFromJson([
+      { op: "train", type: "terran/marine" },
+      { op: " morph ", type: "x", count: 2 },
+    ]);
+    expect(a?.count).toBe(1);
+    expect(b?.op).toBe("build");
+  });
+
+  it("null 给空草稿", () => {
+    expect(draftFromJson(null)).toEqual([]);
   });
 });
 

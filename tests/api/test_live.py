@@ -57,8 +57,11 @@ def test_sim_session_starts_and_streams_frames(client: TestClient):
     live = [r for r in rows if r["id"] == "live"]
     assert len(live) == 1 and live[0]["kind"] == "live"
     statics = client.get("/api/sources/live/statics").json()
-    assert [f["topic"] for f in statics] == [
+    # 末尾的 static/terrain：沙盒没有 game_info，发的是真机采集的地形数据文件
+    #（P2：离线/沙盒与真机同一份地形；文件缺失时不发、如实降级）
+    assert [f["topic"] for f in statics][:4] == [
         "static/map", "static/catalog", "static/schema", "static/strategy"]
+    assert "static/terrain" in [f["topic"] for f in statics]
 
 
 def test_queue_items_keeps_types_when_reconstructed_from_frames(client: TestClient):

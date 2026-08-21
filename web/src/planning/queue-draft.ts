@@ -5,10 +5,11 @@
  * 「提为提案」才碰后端。红线：离线草稿**绝不默认叠加 live**（ADR-0022 反例）。
  */
 import type { CatalogStatic, MapStatic } from "../contract";
+import type { PlanQueueItem } from "../api/plans";
 
 export interface DraftItem {
   id: string;
-  op: "build" | "train" | "assign_workers";
+  op: "build" | "train" | "research" | "assign_workers";
   type: string | null;
   count: number;
   placement:
@@ -23,6 +24,25 @@ export const newItemId = (): string => "d" + ++seq + "-" + Date.now().toString(3
 
 export function emptyItem(): DraftItem {
   return { id: newItemId(), op: "build", type: null, count: 1, placement: null, task: null };
+}
+
+/** 规划文件队列项 → 草稿项（把后端规划加载进编辑器；字段缺省如实回退） */
+export function draftFromJson(
+  rows: readonly {
+    op: string; type: string | null; count?: number;
+    placement?: unknown; task?: string | null;
+  }[] | null,
+): DraftItem[] {
+  const opOf = (op: string): DraftItem["op"] =>
+    op === "train" || op === "research" || op === "assign_workers" ? op : "build";
+  return (rows ?? []).map((r) => ({
+    id: newItemId(),
+    op: opOf(r.op),
+    type: r.type ?? null,
+    count: Math.max(1, Number(r.count ?? 1)),
+    placement: (r.placement as DraftItem["placement"]) ?? null,
+    task: (r.task as DraftItem["task"]) ?? null,
+  }));
 }
 
 /** 成本小计（只来自 catalog；catalog 没有的项标出来，不假装免费） */
@@ -56,7 +76,7 @@ export function draftToHunks(items: DraftItem[]) {
   }));
 }
 
-export function itemToJson(it: DraftItem): Record<string, unknown> {
+export function itemToJson(it: DraftItem): PlanQueueItem {
   return {
     op: it.op,
     type: it.type,

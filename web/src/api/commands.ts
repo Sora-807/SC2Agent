@@ -63,21 +63,38 @@ export async function sendCommand(cmd: CommandKind, basedOnSeq: number): Promise
 }
 
 /** 会话控制：起/停/单步（单步是"不自动推进"时的调试入口）。
- *  `driver`：sim = 沙盒（子进程假世界）；sc2 = 真机（会启动真实 SC2 游戏）。 */
+ *  `driver`：sim = 沙盒（子进程假世界）；sc2 = 真机（会启动真实 SC2 游戏）。
+ *
+ *  失败**不吞**：后端 4xx/5xx 返回 {ok:false, detail}（曾把「地图规划不存在」的 400
+ *  静默吞成 null，UI 表现成「点启动真机没反应」——错误必须可见，G7 同款纪律）。 */
+export type SessionActionResult =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; detail: string };
+
 export async function sessionAction(
   action: "start" | "stop" | "tick",
-  opts: { autotick?: boolean; count?: number; driver?: "sim" | "sc2" } = {},
-): Promise<Record<string, unknown> | null> {
+  opts: { autotick?: boolean; count?: number; driver?: "sim" | "sc2";
+          mapPlan?: string } = {},
+): Promise<SessionActionResult> {
   const url = new URL("/api/session/" + action, API_BASE);
   if (action === "start" && opts.autotick === false) url.searchParams.set("autotick", "false");
   if (action === "start" && opts.driver) url.searchParams.set("driver", opts.driver);
+  if (action === "start" && opts.mapPlan) url.searchParams.set("map_plan", opts.mapPlan);
   if (action === "tick" && opts.count) url.searchParams.set("count", String(opts.count));
   try {
     const res = await fetch(url.toString(), { method: "POST" });
-    if (!res.ok) return null;
-    return (await res.json()) as Record<string, unknown>;
-  } catch {
-    return null;
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return {
+        ok: false,
+        detail: typeof payload.detail === "string"
+          ? payload.detail
+          : `后端返回 ${res.status}`,
+      };
+    }
+    return { ok: true, data: (await res.json()) as Record<string, unknown> };
+  } catch (err) {
+    return { ok: false, detail: "连不上后端：" + (err as Error).message };
   }
 }
 

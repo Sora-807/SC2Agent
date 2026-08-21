@@ -23,17 +23,21 @@ from fastapi.responses import PlainTextResponse
 
 from game.catalog import load_terran
 
-from view.encode import to_json
-from view.schema import REV, TOPICS
+from view.encode import envelope, to_json
+from view.schema import REV, STATIC_TOPICS, TOPICS
 from view.statics import schema_static
-
+from view.adapt import projection_frame, session_frame
+from view.alerts import AlertService
 from view.observe import frames_by_topic, observation_packet
-from view.proposals import ProposalStore
+from view.projection import queue_to_ops
+from view.proposals import ProposalStore, parse_item
+from planner.opening import opening_game_state
+from planner.planner import Planner
 
 from api.commands import CommandResult, QueueCommand, WorkerCommand
 from api.live import LiveSession
 from api.session import OfflineSession, StaleObservation
-from api.sources import SourceRegistry
+from api.sources import SourceRegistry, SourceInfo
 
 #: WS 的推送节拍（真实秒）。0.2s 一次 × rate 决定推进多少游戏秒。
 TICK_SECONDS = 0.2
@@ -46,10 +50,17 @@ SESSION_TICK = 0.25
 #: 注意 `create_app` 的默认是**不持久化**（见下）—— 默认落到一个共享文件会让每个
 #: 不传路径的测试互相污染（实测踩过：手动跑的 35 条提案混进了单测）。
 DEFAULT_PROPOSAL_LOG = Path("runtime/proposals.jsonl")
+#: 规划文件的**建议**落点（同提案日志的姿态：runtime 数据不进版本库）。
+#: `create_app` 默认**不持久化**（内存态）—— 理由同上：测试不传路径就不互污染。
+DEFAULT_PLANS_DIR = Path("runtime/plans")
+#: 地图规划文件的**建议**落点（同上）
+DEFAULT_MAP_PLANS_DIR = Path("runtime/map-plans")
 
 
 def create_app(frame_dir: Path | str | None = None,
-               proposal_log: Path | str | None = None) -> FastAPI:
+               proposal_log: Path | str | None = None,
+               plans_dir: Path | str | None = None,
+               map_plans_dir: Path | str | None = None) -> FastAPI:
     registry = SourceRegistry(Path(frame_dir) if frame_dir else DEFAULT_FRAME_DIR)
     registry.load_labels_from_index()
 
@@ -78,18 +89,23 @@ def create_app(frame_dir: Path | str | None = None,
     # 默认持久化到共享文件会让测试互相污染，而且"哪些提案属于这次运行"变得说不清。
     app.state.proposals = ProposalStore(
         load_terran(), path=Path(proposal_log) if proposal_log else None)
+    #: 规划存储（P0）：一个规划一个 YAML 文件；默认内存态，serve_api 显式传 runtime/plans。
+    from view.plans import PlanStore
+    app.state.plans = PlanStore(load_terran(), Path(plans_dir) if plans_dir else None)
+    #: 地图规划文件（P2）：默认地图锁定 + 复制新建；默认内存态。
+    from view.map_plans import MapPlanStore
+    app.state.map_plans = MapPlanStore(
+        Path(map_plans_dir) if map_plans_dir else None, catalog=load_terran())
 
-    def _session(create: bool = True) -> OfflineSession | None:
-        if app.state.session is None and create:
-            app.state.session = OfflineSession(load_terran())
-            # 提案要能算双投影、要能 apply → 必须认识会话；
-            # 反过来会话的帧生产器要认识提案 → 提案变化时会发 `proposals` 帧
-            app.state.proposals.session = app.state.session
-            app.state.session.producer.proposals = app.state.proposals
+    def _session() -> OfflineSession | None:
+        """当前会话（可能为 None）。**不惰性创建**：以前 source=live 无人访问不建、
+        一访问就顺手建一个进程内假世界 —— 假帧（出厂模板槽位 + 逐秒假数据）曾在
+        前端被误读为「SC2 已连上但地图是空的」。无会话就是无会话，如实说。"""
         return app.state.session
 
     def _resolve(source_id: str):
-        """帧源解析：`live` = 离线沙盒会话，其余 = 目录里的 JSONL。两者接口同形。"""
+        """帧源解析：`live` = 当前会话（**无会话时如实返回 None**，不再惰性建假世界 ——
+        那个假世界曾在前端被误读成「SC2 已连上但地图数据是空的」）；其余 = 目录里的 JSONL。"""
         if source_id == "live":
             return _session()
         return registry.get(source_id)
@@ -97,7 +113,9 @@ def create_app(frame_dir: Path | str | None = None,
     def _source(source_id: str):
         src = _resolve(source_id)
         if src is None:
-            raise HTTPException(status_code=404, detail=f"没有帧源 {source_id!r}")
+            detail = ("没有活跃会话（先 POST /api/session/start）" if source_id == "live"
+                      else f"没有帧源 {source_id!r}")
+            raise HTTPException(status_code=404, detail=detail)
         return src
 
     async def _pump_session() -> None:
@@ -154,9 +172,12 @@ def create_app(frame_dir: Path | str | None = None,
 
     @app.post("/api/session/start")
     async def session_start(autotick: bool = Query(True),
-                            driver: str = Query("offline")) -> dict:
+                            driver: str = Query("offline"),
+                            map_plan: str | None = Query(None)) -> dict:
         """建会话。`driver`：`offline`（进程内假世界）/ `sim`（子进程假世界，验进程分离）/
         `sc2`（子进程真机）。`autotick=false` 时不自动推进（测试与单步调试用）。
+        `map_plan`：地图规划 id —— 会话装配用它（进入游戏加载哪一份地图规划），
+        缺省 = 手写出厂模板。
 
         必须是 `async def`：`asyncio.create_task` 需要运行中的事件循环，
         而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
@@ -166,20 +187,36 @@ def create_app(frame_dir: Path | str | None = None,
         开游戏（且 V1 时代旧 SC2 不会被连带杀掉，全成桌面黑屏孤儿）。
         换 driver 才允许换会话：旧会话先 stop（含树杀），再起新的。
         """
+        plan_path: str | None = None
+        if map_plan:
+            plan_path = app.state.map_plans.file_path(map_plan)
+            if plan_path is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"地图规划 {map_plan!r} 不存在或没有落盘文件"
+                           "（子进程会话需要真文件；检查 --map-plans 目录）")
         old = app.state.session
         if old is not None and hasattr(old, "proc"):
             alive = old.describe().get("alive")
             same_driver = getattr(old, "driver", None) == driver
-            if alive and same_driver:
+            same_plan = getattr(old, "map_plan_path", None) == plan_path
+            if alive and same_driver and same_plan:
                 return old.describe()   # 已在同一种会话上：幂等返回，不多开
-            old.stop()                 # 换驱动（或旧会话已死）：先收尾（树杀，防孤儿 SC2）
+            old.stop()                 # 换驱动/换规划（或旧会话已死）：先收尾（树杀，防孤儿 SC2）
             app.state.session = None
         if driver in ("sim", "sc2"):
-            app.state.session = LiveSession(driver=driver)
+            sess = LiveSession(driver=driver, map_plan=plan_path)
+            sess.map_plan_path = plan_path   # noqa: B010 —— 幂等守卫要读
+            app.state.session = sess
             app.state.proposals.session = app.state.session
             return app.state.session.describe()
-        sess = _session()
-        assert sess is not None
+        sess = OfflineSession(load_terran(), map_plan=plan_path)
+        app.state.session = sess
+        sess.map_plan_path = plan_path      # noqa: B010
+        # 提案要能算双投影、要能 apply → 必须认识会话；
+        # 反过来会话的帧生产器要认识提案 → 提案变化时会发 `proposals` 帧
+        app.state.proposals.session = sess
+        sess.producer.proposals = app.state.proposals
         if autotick:
             _ensure_pump()
         return sess.describe()
@@ -378,6 +415,115 @@ def create_app(frame_dir: Path | str | None = None,
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return p.to_json()
 
+    # ---- 规划（P0）：离线生产规划的文件存储 + 无会话干跑 ----
+
+    @app.get("/api/plans")
+    def plans_list() -> list[dict]:
+        return app.state.plans.list()
+
+    @app.get("/api/plans/{pid}")
+    def plans_get(pid: str) -> dict:
+        p = app.state.plans.get(pid)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"没有规划 {pid!r}")
+        return p
+
+    @app.post("/api/plans")
+    def plans_create(body: dict) -> dict:
+        try:
+            return app.state.plans.create(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/plans/{pid}")
+    def plans_save(pid: str, body: dict) -> dict:
+        try:
+            return app.state.plans.save(pid, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.delete("/api/plans/{pid}")
+    def plans_delete(pid: str) -> dict:
+        try:
+            app.state.plans.remove(pid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有规划 {pid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"ok": True}
+
+    @app.post("/api/plans/simulate")
+    def plans_simulate(body: dict) -> dict:
+        """离线干跑（P0）：标准开局种子 + 真 planner 投影 —— **不需要会话**。
+
+        与提案预览（`/api/proposals/{id}/preview`，要会话当起点）互补：规划是
+        authoring 数据，仿真只需要开局种子。前端与 agent 都走这里（A3：不本地算）。
+        请求体 `{items: [{op,type,count,placement?,task?}], horizon?, plan_id?}`；
+        返回 frame/projection 的 payload —— ProjectionBoard 直接渲染，
+        stalled 事件即「前瞻警报」（缺矿/缺气/前置没……）。
+        """
+        try:
+            horizon = min(600.0, max(1.0, float(body.get("horizon") or 300.0)))
+            items = [parse_item(x) for x in (body.get("items") or [])]
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        catalog = load_terran()
+        translated = queue_to_ops(items, catalog)
+        curve = Planner(catalog).project(
+            opening_game_state(catalog), list(translated.ops), horizon)
+        frame = projection_frame(
+            curve, based_on_seq=0, based_on_game_time=0.0, horizon=horizon,
+            plan_id=str(body.get("plan_id") or "draft"), skipped=translated.skipped)
+        # 前瞻警报与实时警报同一数据模型（AlertView）、同一渲染组件 —— 干跑无冷却
+        alerts = AlertService(catalog).from_curve(curve)
+        return {**to_json(frame), "alerts": to_json(alerts)}
+
+    # ---- 地图规划文件（P2 切片 1）：默认地图锁定 + 复制新建 + 出生点读取 ----
+
+    @app.get("/api/map-plans")
+    def map_plans_list() -> list[dict]:
+        return app.state.map_plans.list()
+
+    @app.get("/api/map-plans/{pid}")
+    def map_plans_payload(pid: str) -> dict:
+        """该规划的 static/map 形状 payload（规划自带地图+出生点，画布直接渲染）。"""
+        try:
+            return app.state.map_plans.payload(pid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/map-plans")
+    def map_plans_create(body: dict) -> dict:
+        try:
+            return app.state.map_plans.create(body)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/map-plans/{pid}")
+    def map_plans_save(pid: str, body: dict) -> dict:
+        """离线保存：hunks 应用到该规划（与 map_plan 提案同一套校验，不走审批）。"""
+        try:
+            out = app.state.map_plans.save(pid, list(body.get("hunks") or []))
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if not out.get("ok"):
+            raise HTTPException(status_code=400, detail=out)   # 结构化 errors 给前端/agent
+        return out
+
+    @app.delete("/api/map-plans/{pid}")
+    def map_plans_delete(pid: str) -> dict:
+        try:
+            app.state.map_plans.remove(pid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"ok": True}
+
     # ---- WS ----
 
     @app.websocket("/api/frames")
@@ -389,18 +535,21 @@ def create_app(frame_dir: Path | str | None = None,
         start: float | None = Query(None),
     ) -> None:
         await ws.accept()
-        if source == "live":
-            _session()
+        is_live = source == "live"
+        if is_live:
+            # 无会话**不建假世界**（见 _session 注释）：握手照常，等会话启动后 pump 接上。
             _ensure_pump()
         src = _resolve(source)
-        if src is None:
+        if src is None and not is_live:
             await ws.send_text(json.dumps(
                 {"topic": "_error", "detail": f"没有帧源 {source!r}"}, ensure_ascii=False))
             await ws.close(code=1008)
             return
 
         wanted = {t.strip() for t in topics.split(",") if t.strip()} if topics else None
-        info = src.info()
+        info = src.info() if src is not None else SourceInfo(
+            id="live", label="等待会话", kind="live", envelopes=0,
+            from_time=0.0, to_time=0.0, topics=[], snapshots=[])
         cursor = info.from_time if start is None else max(info.from_time, min(info.to_time, start))
         playing = rate > 0
 
@@ -410,19 +559,52 @@ def create_app(frame_dir: Path | str | None = None,
             "topic": "_hello", "rev": REV, "source": source, "kind": info.kind,
             "from": info.from_time, "to": info.to_time, "rate": rate,
         }, ensure_ascii=False))
-        for frame in src.latest_at(cursor, wanted):
-            await ws.send_text(json.dumps(frame, ensure_ascii=False))
+        if src is None:
+            # live 无会话：合成一条 `frame/session`「未连接」—— 前端能立刻渲染真实状态
+            # （顶栏「等待会话」），而不是一片空白里猜「是不是连上了」。
+            await ws.send_text(json.dumps(envelope(
+                "frame/session", 0, 0.0,
+                session_frame("未连接", frame_source="live", game_time=0.0), 0),
+                ensure_ascii=False))
+        else:
+            for frame in src.latest_at(cursor, wanted):
+                await ws.send_text(json.dumps(frame, ensure_ascii=False))
 
-        live = info.kind == "live"
+        # live 源走「跟随」语义：新帧一律转发，不受 rate 限制（rate 是回放语义）。
+        # 静态面走「快照出现即发」，不受 game_time 游标门控：真机首帧 game_time=0.0
+        # （burnysc2 首个 on_step 的 bot.time 就是 0），而 below 的 between() 只转发
+        # game_time > cursor 的帧 —— 前端在会话出帧前 attach（真机常态，开机要 1-2 分钟）
+        # 时 cursor 从 0 起步，static/map 会永远落在游标后面，一次都发不出去
+        # （实测症状：生产页有数据、地图页一直「等待 static/map」）。
+        # sim 沙盒没暴露是因为 worldsim 先 t+=dt 再产帧，静态帧 game_time=1.0 能过过滤。
+        sent_statics = 0
+        #: 当前服务的会话对象 —— 换会话（含「无 → 有」）就重置游标与静态面进度，
+        #: 新会话的全量快照由此补发；WS 连接不用重连（前端 attach 一次即可等会话）。
+        cur_sess = src
 
         async def pump() -> None:
-            nonlocal cursor, playing, info
+            nonlocal cursor, playing, info, sent_statics, cur_sess
             while True:
                 await asyncio.sleep(TICK_SECONDS)
-                if live:
-                    # live 源**跟随**：新帧一律转发，不受 rate 限制（rate 是回放语义）
-                    info = src.info()
-                    for frame in src.between(cursor, info.to_time, wanted):
+                if is_live:
+                    sess = app.state.session
+                    if sess is None:
+                        cur_sess = None
+                        continue
+                    if sess is not cur_sess:
+                        cur_sess = sess
+                        sent_statics = 0
+                        cursor = 0.0
+                    info = sess.info()
+                    statics = sess.statics() if hasattr(sess, "statics") else []
+                    if len(statics) > sent_statics:
+                        for frame in statics[sent_statics:]:
+                            if wanted is None or frame["topic"] in wanted:
+                                await ws.send_text(json.dumps(frame, ensure_ascii=False))
+                        sent_statics = len(statics)
+                    for frame in sess.between(cursor, info.to_time, wanted):
+                        if frame.get("topic") in STATIC_TOPICS:
+                            continue        # 静态帧由上面的快照通道发，不重复
                         await ws.send_text(json.dumps(frame, ensure_ascii=False))
                     cursor = max(cursor, info.to_time)
                     continue
@@ -448,8 +630,11 @@ def create_app(frame_dir: Path | str | None = None,
                     continue
                 op = msg.get("op")
                 if op == "seek":
+                    cur = app.state.session if is_live else src
+                    if cur is None:
+                        continue
                     cursor = max(info.from_time, min(info.to_time, float(msg.get("game_time", 0))))
-                    for frame in src.latest_at(cursor, wanted):
+                    for frame in cur.latest_at(cursor, wanted):
                         await ws.send_text(json.dumps(frame, ensure_ascii=False))
                 elif op == "play":
                     rate = float(msg.get("rate", rate)) or rate

@@ -7,6 +7,7 @@
  *
  * 纯函数：store 的 setMode 与测试都吃这里，UI 不自算映射。
  */
+import type { SessionFrame } from "../contract";
 import type { SourceKind } from "../store/frames";
 
 export type Mode = "offline" | "drive" | "replay";
@@ -79,12 +80,48 @@ export function writeGate(sourceKind: SourceKind, timeline: "live" | "review"): 
   return { writable: true, reason: null };
 }
 
+/**
+ * 真机首帧等待提示（I6）—— 真机从「启动真机」到首帧 + static/map 要 1-2 分钟，
+ * 之前只有一句「等待 static/map…」，被实测误读为「地图黑屏/没同步」（实际帧流正常，只是慢）。
+ *
+ * 触发条件（纯函数，可测）：实时驾驶 + live 会话源 + static/map 还没到 +
+ * 会话还在启动中/对局中（或会话帧还没来）。已结束/崩溃/未连接不提示 ——
+ * 那些是真实终态，另有自己的显示。数据到达后 mapArrived 变 true，提示自动消失。
+ */
+export function bootHint(
+  mode: Mode,
+  sourceKind: SourceKind,
+  sessionState: SessionFrame["state"] | null,
+  mapArrived: boolean,
+): string | null {
+  if (mode !== "drive" || sourceKind !== "live") return null;
+  if (mapArrived) return null;
+  if (sessionState === "已结束" || sessionState === "崩溃" || sessionState === "未连接") {
+    return null;
+  }
+  return "正在连接 SC2 并等待首帧（真机约需 1-2 分钟）—— 期间没有画面是正常的，数据到达后自动消失";
+}
+
 /** 每个模式的合法帧源（R5：live 中不创建/编辑模块与 Strategy → 驾驶态只有 live 源） */
 export const MODE_SOURCES: Record<Mode, SourceKind[]> = {
   offline: ["fixture"],
   replay: ["fixture", "mock-live", "api"],
   drive: ["live"],
 };
+
+/**
+ * 会话装配的地图规划 id 兜底（2026-08-21 实时驾驶整改）：
+ * 旧硬编码默认值 "default" 已随预设改名（default-bl/tr、layout-bl/tr）退役 ——
+ * 发一个不存在的 id 会被后端 400，而那个 400 曾被 UI 吞掉 = 「点启动真机没反应」。
+ * 规则：当前值仍在清单里就保持；否则落清单第一个；清单空 → null（不带参数）。
+ */
+export function pickMapPlan(
+  plans: readonly { id: string }[],
+  current: string | null,
+): string | null {
+  if (current && plans.some((p) => p.id === current)) return current;
+  return plans[0]?.id ?? null;
+}
 
 /** 模式下可用的帧源；api 源在后端不在时剔除（置灰不如不给，G7 的理由另给在按钮上） */
 export function allowedSources(mode: Mode, apiOk: boolean): SourceKind[] {

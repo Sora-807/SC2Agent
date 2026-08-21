@@ -16,8 +16,9 @@ vi.stubGlobal("localStorage", {
 });
 afterEach(() => memStore.clear());
 import {
-  applyDraft, draftStorageKey, loadDraft, mapDraftToHunks, nextMarkName, saveDraft,
-  slotOverlaps, slotTl, snapToCellCenter, type MapPlanHunk, type MarkView, type SlotView,
+  applyDraft, draftStorageKey, loadDraft, mapDraftToHunks, nextMarkName, previewPlacement,
+  saveDraft, slotOverlaps, slotTl, snapToCellCenter,
+  type MapPlanHunk, type MarkView, type SlotView,
 } from "../src/planning/map-draft";
 
 const base: MarkView[] = [
@@ -177,5 +178,83 @@ describe("mapDraftToHunks：草稿 → 提案 hunk（与后端 map_plan 枚举�
     // 每条都带人类可读的 text_zh（审批时逐条可见）
     expect(hs.every((h) => h.text_zh.length > 0)).toBe(true);
     expect(hs.every((h) => h.id)).toBe(true);
+  });
+});
+
+describe("previewPlacement（F16：吸附 + 重叠 + placeable，预览与落笔同一结果）", () => {
+  const slots = [{
+    name: "rax1",
+    tl: [10, 10] as [number, number],
+    br: [12, 12] as [number, number],
+  }];
+
+  it("mark：吸附格心，恒 ok（点位不受地形/重叠约束）", () => {
+    const pv = previewPlacement({ mode: "mark", pos: [48.3, 30.9], slots: [] });
+    expect(pv.pos).toEqual([48.5, 30.5]);
+    expect(pv.ok).toBe(true);
+    expect(pv.reason).toBeNull();
+  });
+
+  it("slot：吸附格心 + footprint 由 slotTl 公式给出（奇偶尺寸都与后端一致）", () => {
+    const odd = previewPlacement({ mode: "slot", pos: [30.2, 30.8], size: 3, slots: [] });
+    expect(odd.pos).toEqual([30.5, 30.5]);
+    expect(odd.tl).toEqual([29, 29]);       // ceil(30.5 - 1.5) = 29
+    expect(odd.br).toEqual([31, 31]);
+    const even = previewPlacement({ mode: "slot", pos: [30.2, 30.8], size: 2, slots: [] });
+    expect(even.tl).toEqual([30, 30]);      // ceil(30.5 - 1) = 30（偶数尺寸落格角）
+    expect(even.br).toEqual([31, 31]);
+  });
+
+  it("slot：与既有槽位重叠 → ok=false 且指出撞了谁", () => {
+    const pv = previewPlacement({ mode: "slot", pos: [11.4, 11.4], size: 2, slots });
+    expect(pv.ok).toBe(false);
+    expect(pv.reason).toBe("overlap");
+    expect(pv.overlaps).toBe("rax1");
+  });
+
+  it("slot：footprint 任一格 placeable=0 → 拒（unplaceable）", () => {
+    // 可建区只在 x∈[10,20]；贴右界放 3×3，footprint 右半出界
+    const placeableAt = (x: number, y: number): boolean => x >= 10 && x <= 20 && y >= 0;
+    const inside = previewPlacement({
+      mode: "slot", pos: [12.5, 5.5], size: 2, slots: [], placeableAt,
+    });
+    expect(inside.ok).toBe(true);
+    const edge = previewPlacement({
+      mode: "slot", pos: [20.5, 5.5], size: 3, slots: [], placeableAt,
+    });
+    // 吸附 20.5 → tl=19、br=21：x=21 出界 → 拒
+    expect(edge.tl).toEqual([19, 4]);
+    expect(edge.ok).toBe(false);
+    expect(edge.reason).toBe("unplaceable");
+  });
+
+  it("地形未下发（placeableAt=null）不算非法 —— 未知如实降级", () => {
+    const pv = previewPlacement({ mode: "slot", pos: [11.4, 11.4], size: 2, slots: [] });
+    // 不重叠且地形未知 → ok；placeable 字段如实为 true（语义：未判定，不是判定可建）
+    expect(pv.ok).toBe(true);
+    expect(pv.reason).toBeNull();
+  });
+
+  it("固定建造点预留区不可占用（基地/气井/矿脉）", () => {
+    // 背景：SC2 placeable 栅格不含资源占用 —— 预留只能靠矩形数据显式挡
+    const reserved: { tl: [number, number]; br: [number, number]; kind: string }[] = [
+      { tl: [126, 118], br: [130, 122], kind: "base" },     // 5×5 基地（tr 主基）
+      { tl: [10, 10], br: [12, 12], kind: "geyser" },       // 3×3 气井
+    ];
+    const onBase = previewPlacement({
+      mode: "slot", pos: [128.5, 120.5], size: 3, slots: [], reserved,
+    });
+    expect(onBase.ok).toBe(false);
+    expect(onBase.reason).toBe("reserved");
+    expect(onBase.reservedKind).toBe("base");
+    const onGeyser = previewPlacement({
+      mode: "slot", pos: [11.5, 11.5], size: 2, slots: [], reserved,
+    });
+    expect(onGeyser.reason).toBe("reserved");
+    expect(onGeyser.reservedKind).toBe("geyser");
+    const beside = previewPlacement({
+      mode: "slot", pos: [15.5, 15.5], size: 2, slots: [], reserved,
+    });
+    expect(beside.ok).toBe(true);
   });
 });

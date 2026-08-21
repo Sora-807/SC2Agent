@@ -7,11 +7,11 @@
  */
 import { useMemo, useState } from "react";
 import { sendCommand, type CommandResult } from "../api/commands";
-import { ProjectionChart } from "../charts/ProjectionChart";
+import { ProjectionBoard } from "../charts/ProjectionBoard";
 import { writeGate } from "../shell/mode";
 import { Card, Empty, PAGE_SCROLL, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
-import type { CatalogStatic, ProjectionFrame, WorldFrame } from "../contract";
+import type { CatalogStatic, WorldFrame } from "../contract";
 
 /** 命令反馈：409（世界变了）与 400（请求不合法）要让用户看出区别 */
 function useCommands() {
@@ -296,7 +296,10 @@ export function ProductionPage() {
           </span>
         }
       >
-        {projection ? <ProjectionChart frame={projection} /> : <Empty />}
+        {/* F15：曲线与泳道合进一张卡 —— 共享同一条时间轴（滚轮缩放/中心跟随/点击检查） */}
+        {projection
+          ? <ProjectionBoard frame={projection} catalog={catalog} zhOf={zhOf} />
+          : <Empty />}
         {projection && projection.skipped.length > 0 && (
           <div className="mt-1 text-note text-amber-400">
             有 {projection.skipped.length} 项没进投影：
@@ -304,10 +307,6 @@ export function ProductionPage() {
             <span className="ml-1 text-ghost">—— 曲线比真实队列少算了这部分</span>
           </div>
         )}
-      </Card>
-
-      <Card title="投影泳道（Gantt）">
-        {projection ? <Gantt frame={projection} zhOf={zhOf} /> : <Empty />}
       </Card>
 
       <div className="flex gap-2 text-xs">
@@ -350,62 +349,6 @@ export function ProductionPage() {
                          kind: "queue", op: "append",
                          body: { name: "main", items: [item] },
                        })} />
-      )}
-    </div>
-  );
-}
-
-/** 投影事件 → 泳道：每个 started 到对应 completed 画一条 */
-function Gantt(props: { frame: ProjectionFrame; zhOf: (id: string | null) => string }) {
-  const { frame } = props;
-  const t0 = frame.based_on_game_time;
-  const span = Math.max(1, frame.horizon);
-  const bars: { id: string; label: string; from: number; to: number; done: boolean }[] = [];
-  const open = new Map<string, number>();
-  for (const e of frame.events) {
-    const key = e.stable_id ?? "?";
-    if (e.kind === "started") open.set(key + ":" + e.t, e.t);
-    if (e.kind === "completed") {
-      // 找同类型最早未闭合的 started
-      const entry = [...open.entries()].filter(([k]) => k.startsWith(key + ":")).sort()[0];
-      const from = entry ? entry[1] : e.t;
-      if (entry) open.delete(entry[0]);
-      bars.push({ id: key + e.t, label: props.zhOf(e.stable_id), from, to: e.t, done: true });
-    }
-  }
-  for (const [k, from] of open) {
-    bars.push({ id: k, label: props.zhOf(k.split(":")[0] ?? null), from, to: t0 + span, done: false });
-  }
-  const stalls = frame.events.filter((e) => e.kind === "stalled");
-
-  if (bars.length === 0 && stalls.length === 0) return <Empty text="该投影没有开工/完成事件" />;
-  return (
-    <div className="space-y-1">
-      {bars.slice(0, 24).map((b) => (
-        <div key={b.id} className="flex items-center gap-2 text-note">
-          <span className="w-24 shrink-0 truncate text-dim">{b.label}</span>
-          <div className="relative h-3 flex-1 rounded bg-neutral-900">
-            <div
-              className={"absolute inset-y-0 rounded " + (b.done ? "bg-emerald-700/70" : "bg-amber-700/60")}
-              style={{
-                left: ((b.from - t0) / span) * 100 + "%",
-                width: Math.max(0.6, ((b.to - b.from) / span) * 100) + "%",
-              }}
-            />
-            {stalls.map((s, i) => (
-              <div key={i} className="absolute inset-y-0 w-0.5 bg-red-500/70"
-                   style={{ left: ((s.t - t0) / span) * 100 + "%" }} />
-            ))}
-          </div>
-          <span className="w-24 shrink-0 text-right text-ghost">
-            {fmtTime(b.from)} → {b.done ? fmtTime(b.to) : "未完"}
-          </span>
-        </div>
-      ))}
-      {stalls.length > 0 && (
-        <div className="pt-1 text-note text-red-400">
-          卡点：{stalls.map((s) => `${fmtTime(s.t)} ${props.zhOf(s.stable_id)} ${s.reason ?? ""}`).join("；")}
-        </div>
       )}
     </div>
   );

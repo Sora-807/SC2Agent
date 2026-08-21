@@ -134,10 +134,20 @@ def extract_map_info(bot) -> Grid | None:
     placement_grid = getattr(gi, "placement_grid", None)
     if terrain_height is None and pathing_grid is None and placement_grid is None:
         return None
+    # 基地（扩张）位置：burnysc2 从资源簇算好的权威位置。注意 game_info 的
+    # placeable/pathable **不含资源占用**（矿脉/气井位置两格全是 1，实测），
+    # "基地/气矿要预留"必须靠这份显式数据。
+    expansions: list[tuple[float, float]] = []
+    try:
+        for p in getattr(bot, "expansion_locations_list", None) or ():
+            expansions.append((float(p.x), float(p.y)))
+    except Exception:              # noqa: BLE001 —— 不同版本形态不稳，缺了就空（不伪造）
+        expansions = []
     return {
         "height": _grid_from_pixelmap(terrain_height) if terrain_height is not None else None,
         "pathable": _grid_from_pixelmap(pathing_grid) if pathing_grid is not None else None,
         "placeable": _grid_from_pixelmap(placement_grid) if placement_grid is not None else None,
+        "expansions": expansions,
     }
 
 
@@ -376,15 +386,18 @@ class SC2DriverBot(BotAI):
     _map_info_cb = None   # SC2GamePort 注入的静态地形回调（B4）
 
     async def on_step(self, iteration: int) -> None:
+        raw = extract_raw_state(self, iteration)
+        self._last_raw = raw
+        if self._sink is not None:
+            # 首帧先走 sink（run_session 由此发出 static/map 等静态面）——地形回调必须
+            # 排在它**后面**：前端的 terrain→map 合并在 map 未到时静默丢弃（B16 教训，
+            # sim 侧当年就是这个顺序坑；真机曾因此"地形不可用"，地图页一片纯色底）。
+            self._sink.on_game_state(raw)
         if not self._map_info_sent and self._map_info_cb is not None:
             info = extract_map_info(self)
             if info is not None:
                 self._map_info_sent = True
                 self._map_info_cb(info)
-        raw = extract_raw_state(self, iteration)
-        self._last_raw = raw
-        if self._sink is not None:
-            self._sink.on_game_state(raw)
         self._drain_ops()
 
     # ---- op 应用 ----

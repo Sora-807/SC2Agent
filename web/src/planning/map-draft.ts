@@ -60,6 +60,83 @@ export function slotOverlaps(
   return !(a.br[0] < b.tl[0] || b.br[0] < a.tl[0] || a.br[1] < b.tl[1] || b.br[1] < a.tl[1]);
 }
 
+/** F16：放置预览（吸附 + 合法性判定，纯函数可测）。
+ * 规划页 mousemove 时算好传给画布当 ghost；点击时用同一个结果落笔 ——
+ * 预览与落笔永远一致（不会预览绿、点了却拒）。 */
+export interface PlacementPreview {
+  /** 吸附后的锚点（格心） */
+  pos: [number, number];
+  tl: [number, number];
+  br: [number, number];
+  /** 地形可建（footprint 每格 placeable=1）；地形未下发时 true（未知不算非法，如实降级） */
+  placeable: boolean;
+  /** 与哪个既有槽位重叠（null = 不重叠） */
+  overlaps: string | null;
+  /** 压住了哪类固定建造点（base/geyser/mineral；null = 没压） */
+  reservedKind: string | null;
+  /** 总体合法（点位不受地形/重叠约束，恒 true） */
+  ok: boolean;
+  /** 非法原因（ok=false 时非空；zh 文案由页侧拼，这里只给机器码） */
+  reason: "overlap" | "reserved" | "unplaceable" | null;
+}
+
+export function previewPlacement(opts: {
+  mode: "mark" | "slot";
+  /** 未吸附的世界坐标 */
+  pos: [number, number];
+  /** slot 的 footprint 尺寸 */
+  size?: number;
+  /** 当前投影里的全部槽位（重叠校验用） */
+  slots: readonly { name: string; tl: [number, number]; br: [number, number] }[];
+  /** placeable 查询（x/y 为格点坐标）；null = 地形未下发 */
+  placeableAt?: ((x: number, y: number) => boolean) | null;
+  /** 固定建造点预留区（基地/气井/矿脉脚印，后端矩形）：slot 不可占用 */
+  reserved?: readonly { tl: [number, number]; br: [number, number]; kind: string }[] | null;
+}): PlacementPreview {
+  const pos = snapToCellCenter(opts.pos);
+  if (opts.mode === "mark") {
+    return { pos, tl: pos, br: pos, placeable: true, overlaps: null, reservedKind: null, ok: true, reason: null };
+  }
+  const size = opts.size ?? 2;
+  const tl = slotTl(pos, size);
+  const br: [number, number] = [tl[0] + size - 1, tl[1] + size - 1];
+  let overlaps: string | null = null;
+  for (const s of opts.slots) {
+    if (slotOverlaps({ tl, br }, { tl: s.tl, br: s.br })) {
+      overlaps = s.name;
+      break;
+    }
+  }
+  // 固定建造点（基地/气井/矿脉）：placeable 栅格在这些位置是 1（SC2 的栅格不含
+  // 资源占用），必须显式挡 —— 理由单独给 "reserved"。
+  let reservedKind: string | null = null;
+  if (overlaps === null) {
+    for (const r of opts.reserved ?? []) {
+      if (slotOverlaps({ tl, br }, { tl: r.tl, br: r.br })) {
+        reservedKind = r.kind;
+        break;
+      }
+    }
+  }
+  let placeable = true;
+  if (opts.placeableAt && reservedKind === null) {
+    placeable = true;
+    for (let y = tl[1]; y <= br[1]; y += 1) {
+      for (let x = tl[0]; x <= br[0]; x += 1) {
+        if (!opts.placeableAt(x, y)) {
+          placeable = false;
+          break;
+        }
+      }
+      if (!placeable) break;
+    }
+  }
+  const reason = overlaps !== null ? "overlap"
+    : reservedKind !== null ? "reserved"
+      : placeable ? null : "unplaceable";
+  return { pos, tl, br, placeable, overlaps, ok: reason === null, reason, reservedKind };
+}
+
 /**
  * 草稿按序投影到"合并后的标记表"（含静态 pos_marks）。
  * add 同名 = 覆盖位置（重复放置的意图就是"放这里"）；rename 撞名抛错（UI 先查重）。

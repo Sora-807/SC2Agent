@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, EconomyFrame, MapStatic, WorldFrame, ProductionFrame } from "../contract";
 import { slotTl, type MarkView, type SlotView } from "../planning/map-draft";
-import { bakeGrid, bakeTerrain, decodeGrid, regionColor, type Palette } from "./grid";
+import { bakeGrid, bakeTerrain, decodeGrid, regionColor, terrainClassifier, terrainKindZh, type Palette } from "./grid";
 import { clusterUnits } from "./cluster";
 import { ALPHA_BUDGET, COLOR, LOD, SHAPE, fontCss, ownerColor, slotColor } from "./theme";
 import { T } from "../shell/tokens";
@@ -29,8 +29,12 @@ import type { LayerState } from "./layers";
 /** 点选判定的位移容差（px）：累计位移超过它就当平移手势，不触发选中 */
 const CLICK_SLOP = 4;
 
-/** 命中槽位（0.5 格容差，闭区间）。编辑器拖动用它；渲染不参与（C2）。 */
-function slotAt(slots: SlotView[], wx: number, wy: number): string | null {
+/** 命中槽位（0.5 格容差，闭区间）。编辑器拖动/选中用它；渲染不参与（C2）。
+ *  结构化参数：契约的 build_slots 与草稿 SlotView 都能传（只需要 name/tl/br）。 */
+function slotAt(
+  slots: readonly { name: string; tl: [number, number]; br: [number, number] }[],
+  wx: number, wy: number,
+): string | null {
   for (const s of slots) {
     if (wx >= s.tl[0] - 0.5 && wx <= s.br[0] + 0.5
         && wy >= s.tl[1] - 0.5 && wy <= s.br[1] + 0.5) {
@@ -38,6 +42,22 @@ function slotAt(slots: SlotView[], wx: number, wy: number): string | null {
     }
   }
   return null;
+}
+
+/** F16：命中点位（世界半径内取最近）。编辑器选中用；渲染不参与（C2）。 */
+function markAt(marks: MarkView[], wx: number, wy: number, radius: number): string | null {
+  let best: string | null = null;
+  let bestD = radius * radius;
+  for (const m of marks) {
+    const dx = m.pos[0] - wx;
+    const dy = m.pos[1] - wy;
+    const d = dx * dx + dy * dy;
+    if (d <= bestD) {
+      bestD = d;
+      best = m.name;
+    }
+  }
+  return best;
 }
 
 export interface Selection {
@@ -62,12 +82,30 @@ export function MapCanvas(props: {
   marksOverride?: MarkView[] | null;
   /** F14：草稿合并后的槽位表（非 null 时替代 map.build_slots 渲染，语义同 marksOverride） */
   slotsOverride?: SlotView[] | null;
+  /** 固定建造点预留区（基地/气井/矿脉脚印，后端矩形单点计算）。给了就画。 */
+  reserved?: { tl: [number, number]; br: [number, number]; kind: string;
+                label_zh: string; name?: string | null }[] | null;
   /** F14：点击空白处（未命中任何单位）时回调，放点位工具用。不提供则维持纯只读。 */
   onBlankClick?: (worldPos: [number, number]) => void;
   /** F14 2b：可拖动的槽位（编辑器投影）。命中时拖动槽位而不是平移画布 */
   draggableSlots?: SlotView[] | null;
   /** F14 2b：槽位拖到新位置（世界坐标，未吸附）松手 */
   onSlotDrop?: (name: string, worldPos: [number, number]) => void;
+  /** F16：放置预览（吸附后的锚点 + 合法性着色）；画布只画，吸附/校验在页侧 */
+  ghost?: {
+    kind: "mark" | "slot";
+    pos: [number, number];
+    size?: number;
+    ok: boolean;
+  } | null;
+  /** F16：悬停世界坐标（未吸附）；离开画布回调 null —— 规划页拿去做放置预览 */
+  onHover?: (worldPos: [number, number] | null) => void;
+  /** F16：点击命中点位（菱形半径内）—— 规划页用来联动右侧列表 */
+  onMarkClick?: (name: string) => void;
+  /** F16：点击命中槽位（含拖动手势的原地点击）*/
+  onSlotClick?: (name: string) => void;
+  /** F16：选中的点位/槽位名（画高亮，与右侧列表双向联动）*/
+  selectedName?: string | null;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -85,6 +123,8 @@ export function MapCanvas(props: {
   } | null>(null);
   /** 槽位拖动中的 ghost（世界坐标 + 名字）；paint 每帧读它，不需要 setState 触发 */
   const slotGhost = useRef<{ name: string; pos: [number, number] } | null>(null);
+  /** F18：鼠标悬停的格子（信息悬浮窗用；只在跨格时 setState，不逐帧触发渲染） */
+  const [hoverCell, setHoverCell] = useState<{ cell: [number, number]; world: [number, number] } | null>(null);
 
   // 插值用：上一帧与本帧（以及本帧到达的墙钟时刻）
   const prev = useRef<{ world: WorldFrame; at: number } | null>(null);
@@ -129,6 +169,17 @@ export function MapCanvas(props: {
     if (!t?.height) return null;
     return bakeTerrain(decodeGrid(t.height), t.pathable ? decodeGrid(t.pathable) : null);
   }, [props.map]);
+
+  // F16：可建区位图（placeable=1 淡绿 tint）—— 编辑背景，回答「哪里能放」。
+  // placeable 未下发时不画（不伪造）；规划页会强制开这一层。
+  const placeableImage = useMemo(() => {
+    const t = props.map.terrain;
+    if (!t?.placeable) return null;
+    return bakeGrid(decodeGrid(t.placeable), (v) => (v > 0 ? [52, 211, 153, 34] : null));
+  }, [props.map]);
+
+  // F18：地形分类器（与 bakeTerrain 同源的量化/边缘检测）；height 未下发时 null（不编造）
+  const classify = useMemo(() => terrainClassifier(props.map), [props.map]);
 
   // 静态位图：区域标签网格只烤一次
   const regionImage = useMemo(() => {
@@ -180,9 +231,9 @@ export function MapCanvas(props: {
 
   // 绘制循环读**最新** props 与烤好的位图，但不因它们变化重建 rAF（根因 C）。
   // 原来依赖里有 props（每次渲染都是新对象）→ 每渲染拆一次、建一次 rAF 循环。
-  const live = useRef({ props, baked: { regionImage, gridImages, terrainImage } });
+  const live = useRef({ props, baked: { regionImage, gridImages, terrainImage, placeableImage } });
   useEffect(() => {
-    live.current = { props, baked: { regionImage, gridImages, terrainImage } };
+    live.current = { props, baked: { regionImage, gridImages, terrainImage, placeableImage } };
   });
 
   // 绘制循环
@@ -234,7 +285,25 @@ export function MapCanvas(props: {
         }}
         onPointerMove={(e) => {
           const d = drag.current;
-          if (!d) return;
+          if (!d) {
+            // F16：非拖拽的悬停 → 规划页做放置预览（吸附/校验在页侧，画布只上报坐标）
+            if (props.onHover && vp) {
+              const r = e.currentTarget.getBoundingClientRect();
+              const [wx, wy] = screenToWorld(vp, e.clientX - r.left, e.clientY - r.top);
+              props.onHover([wx, wy]);
+            }
+            // F18：格子信息悬浮窗（只在跨格时更新 state；拖拽中不更新）
+            if (vp) {
+              const r = e.currentTarget.getBoundingClientRect();
+              const [wx, wy] = screenToWorld(vp, e.clientX - r.left, e.clientY - r.top);
+              const cell: [number, number] = [Math.floor(wx), Math.floor(wy)];
+              setHoverCell((old) =>
+                old && old.cell[0] === cell[0] && old.cell[1] === cell[1]
+                  ? old
+                  : { cell, world: [wx, wy] });
+            }
+            return;
+          }
           const dx = e.clientX - d.x;
           const dy = e.clientY - d.y;
           d.x = e.clientX;
@@ -251,16 +320,21 @@ export function MapCanvas(props: {
           // 中间增量全丢，快速拖图明显跟不上鼠标。滚轮那条路径早就是函数式的，这里漏了。
           setVp((old) => (old ? { ...old, panX: old.panX + dx, panY: old.panY + dy } : old));
         }}
+        onPointerLeave={() => { props.onHover?.(null); setHoverCell(null); }}
         onPointerUp={(e) => {
           const d = drag.current;
           drag.current = null;
           e.currentTarget.releasePointerCapture(e.pointerId);
           if (!d) return;
           if (d.mode === "slot" && d.slotName) {
-            // 槽位拖动：位移超过容差才落（防误触）；ghost 立即清除
+            // 槽位手势：原地点击（位移 ≤ 容差）= 选中；拖过容差才落位；ghost 立即清除
             const ghost = slotGhost.current;
             slotGhost.current = null;
-            if (d.travel > CLICK_SLOP && ghost) props.onSlotDrop?.(d.slotName, ghost.pos);
+            if (d.travel <= CLICK_SLOP) {
+              props.onSlotClick?.(d.slotName);
+              return;
+            }
+            if (ghost) props.onSlotDrop?.(d.slotName, ghost.pos);
             return;
           }
           if (!vp || !props.world) return;
@@ -268,6 +342,21 @@ export function MapCanvas(props: {
           if (d.travel > CLICK_SLOP) return;
           const r = e.currentTarget.getBoundingClientRect();
           const [wx, wy] = screenToWorld(vp, e.clientX - r.left, e.clientY - r.top);
+          // F16：规划页先判点位/槽位命中（右侧列表联动），再判单位
+          if (props.onMarkClick || props.onSlotClick) {
+            const marks = props.marksOverride ?? props.map.pos_marks;
+            const hitMark = markAt(marks, wx, wy, Math.max(1.5, 12 / vp.scale));
+            if (hitMark && props.onMarkClick) {
+              props.onMarkClick(hitMark);
+              return;
+            }
+            const slots = props.slotsOverride ?? props.map.build_slots;
+            const hitSlot = slotAt(slots, wx, wy);
+            if (hitSlot && props.onSlotClick) {
+              props.onSlotClick(hitSlot);
+              return;
+            }
+          }
           const hit = nearestUnit(props.world, wx, wy, 12 / vp.scale);
           props.onSelect(hit === null ? null : { kind: "unit", tag: hit });
           if (hit === null) props.onBlankClick?.([wx, wy]);
@@ -277,6 +366,21 @@ export function MapCanvas(props: {
       <div className={"pointer-events-none absolute bottom-1 right-2 text-faint " + T.note}>
         滚轮缩放 · 拖动平移 · 点击选中 · {vp ? vp.scale.toFixed(1) : "?"} px/格
       </div>
+      {/* F18：鼠标格子信息悬浮窗（左上角）—— 坐标 + 地形分类；地形未下发时如实只给坐标 */}
+      {hoverCell && (
+        <div className={"pointer-events-none absolute left-2 top-2 rounded border border-neutral-700 bg-neutral-950/85 px-2 py-1 text-neutral-300 " + T.note}>
+          ({hoverCell.world[0].toFixed(1)}, {hoverCell.world[1].toFixed(1)})
+          {(() => {
+            const info = classify ? classify(hoverCell.cell[0], hoverCell.cell[1]) : null;
+            if (!info) return " · 无地形数据";
+            return (
+              " · " + terrainKindZh(info) + ` L${info.level}/${info.levels}`
+              + (info.pathable === null ? "" : info.pathable ? " · 可走" : " · 不可走")
+              + (info.placeable === null ? "" : info.placeable ? " · 可建" : " · 不可建")
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }
@@ -311,6 +415,7 @@ interface Baked {
   regionImage: ImageData | null;
   gridImages: { visibility: ImageData | null; creep: ImageData | null };
   terrainImage: ImageData | null;
+  placeableImage: ImageData | null;
 }
 
 interface Motion {
@@ -354,6 +459,11 @@ function paint(
     drawImage(ctx, vp, baked.terrainImage, map);
   }
 
+  // F16：可建区叠加（淡绿 tint）：编辑时回答「哪里能放」；terrain 未下发时缺位（不伪造）
+  if (layersOn(props, "placeable") && baked.placeableImage) {
+    drawImage(ctx, vp, baked.placeableImage, map);
+  }
+
   // 格点参考线：建筑/槽位坐标对齐用（用户反馈：没格点对不齐）；LOD 防小缩放糊成灰
   if (layersOn(props, "grid")) {
     drawGridLines(ctx, vp, map);
@@ -365,7 +475,10 @@ function paint(
     drawImage(ctx, vp, baked.gridImages.visibility, map);
   }
 
-  // 槽位：默认四角小刻度（低权）；「有在途建造指向它」或摆放调试开时才画实线虚线框（根因 J / F11e）
+  // 槽位：默认四角小刻度（低权）；「有在途建造指向它」或摆放调试开时才画实线虚线框（根因 J / F11e）。
+  // F16：规划模式（slotsOverride 非 null）画实线框 + 名字 —— 用户反馈：半透明刻度
+  // 完全看不见放哪了、列表里的 depotxx 对不上号；驾驶态维持低权（F11e 原则不变）。
+  const planning = props.slotsOverride != null;
   if (layersOn(props, "slots")) {
     const active = new Set<string>();
     if (production) {
@@ -379,6 +492,26 @@ function paint(
       const [sx, sy] = worldToScreen(vp, s.tl[0], s.br[1] + 1);
       const side = s.size * vp.scale;
       const color = slotColor(s.kind);
+      const selected = props.selectedName === s.name;
+      if (planning) {
+        // 实线框 + 名字 + 选中高亮：编辑时必须看得见放在哪、叫什么
+        ctx.globalAlpha = selected ? 1 : ALPHA_BUDGET.slotsActive;
+        if (selected) {
+          ctx.fillStyle = rgba("#38bdf8", 0.12);
+          ctx.fillRect(sx, sy, side, side);
+        }
+        ctx.strokeStyle = selected ? "#38bdf8" : color;
+        ctx.lineWidth = selected ? 2 : 1;
+        ctx.strokeRect(sx, sy, side, side);
+        ctx.globalAlpha = 1;
+        if (vp.scale >= LOD.buildingLabelFull) {
+          ctx.font = fontCss("note");
+          ctx.fillStyle = selected ? "#38bdf8" : color;
+          ctx.textBaseline = "alphabetic";
+          ctx.fillText(s.name, sx + 1, sy - 2);
+        }
+        continue;
+      }
       if (active.has(s.name) || debug) {
         ctx.strokeStyle = color;
         ctx.globalAlpha = ALPHA_BUDGET.slotsActive;
@@ -406,20 +539,22 @@ function paint(
     for (const m of marks) {
       const [sx, sy] = worldToScreen(vp, m.pos[0], m.pos[1]);
       const half = Math.max(SHAPE.mark.diamondHalf, vp.scale * 0.5);
+      const sel = props.selectedName === m.name;   // F16：选中高亮（与右侧列表联动）
       ctx.beginPath();
       ctx.moveTo(sx, sy - half);
       ctx.lineTo(sx + half, sy);
       ctx.lineTo(sx, sy + half);
       ctx.lineTo(sx - half, sy);
       ctx.closePath();
-      ctx.fillStyle = rgba(COLOR.mark, 0.28);
+      ctx.fillStyle = rgba(sel ? "#38bdf8" : COLOR.mark, sel ? 0.45 : 0.28);
       ctx.fill();
-      ctx.strokeStyle = COLOR.mark;
+      ctx.strokeStyle = sel ? "#38bdf8" : COLOR.mark;
+      ctx.lineWidth = sel ? 2 : 1.2;
       ctx.stroke();
       // 名字只在放得下时画（LOD：缩太小就只留菱形，不糊成一片字）
       if (vp.scale >= LOD.buildingLabelFull) {
         ctx.font = fontCss("note");
-        ctx.fillStyle = COLOR.mark;
+        ctx.fillStyle = sel ? "#38bdf8" : COLOR.mark;
         ctx.textBaseline = "middle";
         ctx.fillText(m.name, sx + half + 3, sy);
         ctx.textBaseline = "alphabetic";
@@ -427,11 +562,15 @@ function paint(
     }
   }
 
-  if (layersOn(props, "resources") && world) {
-    const byTag = new Map(world.resource_state.map((r) => [r.tag, r]));
+  if (layersOn(props, "resources") && !props.reserved) {
+    // 资源圆点：地图页（live，带采集人数）用；规划视图改画预留框（props.reserved），
+    // 圆点与框重复 —— 规划里不再画点（用户拍板）。
+    const byTag = world
+      ? new Map(world.resource_state.map((r) => [r.tag, r]))
+      : null;
     for (const n of map.resource_nodes) {
       const [sx, sy] = worldToScreen(vp, n.pos[0], n.pos[1]);
-      const st = byTag.get(n.tag);
+      const st = byTag?.get(n.tag);
       ctx.beginPath();
       ctx.arc(sx, sy, Math.max(2, vp.scale * 0.45), 0, Math.PI * 2);
       ctx.fillStyle = n.kind === "geyser" ? "#22c55e" : "#7dd3fc";
@@ -442,6 +581,43 @@ function paint(
         ctx.fillStyle = COLOR.text;
         ctx.font = fontCss("note");
         ctx.fillText(String(st.workers), sx + 4, sy - 4);
+      }
+    }
+  }
+
+  // 固定建造点预留区（基地/气井/矿脉脚印，矩形来自后端单点计算）：
+  // 给了就画 —— 槽位摆放必须看得见这些不可占用区（用户拍板：基地区域要标记）。
+  if (props.reserved) {
+    // 视觉（用户拍板）：去小圆点、全部描边框 + 加深 tint；气井紫色；带预设名
+    const style = (kind: string): { fill: string; stroke: string; text: string } =>
+      kind === "base"
+        ? { fill: "rgba(250, 204, 21, 0.16)", stroke: "rgba(250, 204, 21, 0.6)", text: "rgba(250, 204, 21, 0.95)" }
+        : kind === "geyser"
+          ? { fill: "rgba(168, 85, 247, 0.20)", stroke: "rgba(168, 85, 247, 0.6)", text: "rgba(192, 132, 252, 0.95)" }
+          : { fill: "rgba(125, 211, 252, 0.20)", stroke: "rgba(125, 211, 252, 0.45)", text: "" };
+    for (const r of props.reserved) {
+      const [ax, ay] = worldToScreen(vp, r.tl[0], r.tl[1]);
+      const [bx, by] = worldToScreen(vp, r.br[0] + 1, r.br[1] + 1);
+      const st = style(r.kind);
+      ctx.fillStyle = st.fill;
+      ctx.fillRect(ax, ay, bx - ax, by - ay);
+      if (r.kind !== "mineral" && vp.scale >= 2.5) {
+        // 基地/气井：描边；名字分级 —— 基地常驻（≥2.5），气井名与普通槽位
+        // 完全同档同字体（LOD.buildingLabelFull，用户拍板「一起早隐」）
+        ctx.strokeStyle = st.stroke;
+        ctx.setLineDash(r.kind === "base" ? [4, 3] : []);
+        ctx.strokeRect(ax, ay, bx - ax, by - ay);
+        ctx.setLineDash([]);
+        const nameLod = r.kind === "base" ? 2.5 : LOD.buildingLabelFull;
+        if (r.name && vp.scale >= nameLod) {
+          ctx.fillStyle = st.text;
+          ctx.font = fontCss("note");
+          ctx.fillText(r.name, ax + 2, ay + 8);
+        }
+      } else if (vp.scale >= 4) {
+        // 矿脉：高倍率才描边（低倍率 98 个框太密）
+        ctx.strokeStyle = st.stroke;
+        ctx.strokeRect(ax, ay, bx - ax, by - ay);
       }
     }
   }
@@ -602,6 +778,39 @@ function paint(
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(sx, sy, Math.max(5, vp.scale * 0.7), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // F16 放置预览 ghost：吸附后的落点 + 合法性着色（绿=可放 / 红=非法）。
+  // 画在最后（最顶层）：用户说「完全半透明导致看不见放在哪里了」—— 预览必须一眼可见。
+  if (props.ghost) {
+    const g = props.ghost;
+    const color = g.ok ? "#34d399" : "#f87171";
+    if (g.kind === "slot" && g.size) {
+      const tl = slotTl(g.pos, g.size);
+      const [sx, sy] = worldToScreen(vp, tl[0], tl[1] + g.size);
+      const side = g.size * vp.scale;
+      ctx.fillStyle = rgba(color, 0.18);
+      ctx.fillRect(sx, sy, side, side);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash(SHAPE.slot.dash);
+      ctx.strokeRect(sx, sy, side, side);
+      ctx.setLineDash([]);
+    } else {
+      const [sx, sy] = worldToScreen(vp, g.pos[0], g.pos[1]);
+      const half = Math.max(SHAPE.mark.diamondHalf, vp.scale * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - half);
+      ctx.lineTo(sx + half, sy);
+      ctx.lineTo(sx, sy + half);
+      ctx.lineTo(sx - half, sy);
+      ctx.closePath();
+      ctx.fillStyle = rgba(color, 0.3);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
     }
   }

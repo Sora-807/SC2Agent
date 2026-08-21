@@ -4,7 +4,7 @@
  * 帧里的栅格是"行主序 uint8 + base64"（契约 C5）：一张位图 + 一份调色板，
  * 所以区域/视野/菌毯都用同一条路径画，前端不需要认识它们的语义。
  */
-import type { GridB64 } from "../contract";
+import type { GridB64, MapStatic } from "../contract";
 
 export interface DecodedGrid {
   w: number;
@@ -89,22 +89,33 @@ export function quantizeLevels(grid: DecodedGrid): { levels: Uint8Array; count: 
     .map(([v]) => v)
     .sort((a, b) => a - b);
   if (kept.length === 0) return { levels: new Uint8Array(total), count: 0 };
+  // 最小层间距：相邻高度差 < MIN_LEVEL_GAP 并成同一层。真机高度有 40 个值，
+  // 台地间还带 1-2 单位的渐变噪声 —— 不合并的话每处缓坡都被判成"跨层"，
+  // 斜坡暖色抖动画得满图都是（用户在 (62,80) 附近看到的"黄色格点"就是它）。
+  // SC2 真实台地落差 ≥ 6 单位，取 4 保守合并。
+  const MIN_LEVEL_GAP = 4;
+  const plateaus: number[] = [kept[0]!];
+  for (let i = 1; i < kept.length; i += 1) {
+    if (kept[i]! - plateaus[plateaus.length - 1]! >= MIN_LEVEL_GAP) {
+      plateaus.push(kept[i]!);
+    }
+  }
   const levels = new Uint8Array(total);
   for (let i = 0; i < total; i += 1) {
     const v = grid.data[i]!;
-    // 二分找最近幸存值（噪声值并入相邻级）
+    // 二分找最近台地（渐变/噪声值并入相邻台地）
     let lo = 0;
-    let hi = kept.length - 1;
+    let hi = plateaus.length - 1;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (kept[mid]! < v) lo = mid + 1;
+      if (plateaus[mid]! < v) lo = mid + 1;
       else hi = mid;
     }
     let idx = lo;
-    if (lo > 0 && Math.abs(kept[lo - 1]! - v) <= Math.abs(kept[lo]! - v)) idx = lo - 1;
+    if (lo > 0 && Math.abs(plateaus[lo - 1]! - v) <= Math.abs(plateaus[lo]! - v)) idx = lo - 1;
     levels[i] = idx;
   }
-  return { levels, count: kept.length };
+  return { levels, count: plateaus.length };
 }
 
 /** 4 邻域 level 不同的格为真（悬崖/台地边缘）。 */
@@ -173,7 +184,8 @@ function levelColor(level: number, count: number): [number, number, number] {
  * - 台地：level 用有序深→浅 slate 阶梯；离散台地不再被连续绿色渐变糊掉（根因 F）；
  * - 悬崖：只画描边不画填充 —— 边缘格压成硬暗线（根因 G 的一半）；
  * - 斜坡：跨 level 的可走格用暖色 + (x+y)%2 低频抖动近似斜纹，从台地里浮出来；
- * - 不可走：不再红涂，只压暗去饱和（饱和色预算留给单位/建筑/标记）。
+ * - 不可走：不渲染任何暗色（2026-08-21 用户拍板：压暗被误读为矿影，移除；
+ *   悬崖描边保留、悬浮窗按格给出可走性）。
  *
  * placeable 不进默认地形（它是编辑器背景，F14 在真实地面上放标记时用）。
  */
@@ -193,14 +205,8 @@ export function bakeTerrain(
     for (let x = 0; x < w; x += 1) {
       const src = srcRow * w + x;
       let [r, g, b] = levelColor(levels[src]!, count);
-      const walk = !pathable || pathable.at(x, srcRow) > 0;
-      if (!walk) {
-        // 不可走：压暗去饱和（不用红色平涂抢对比度）
-        const gray = (r + g + b) / 3;
-        r = Math.round((r * 0.35 + gray * 0.65) * 0.62);
-        g = Math.round((g * 0.35 + gray * 0.65) * 0.62);
-        b = Math.round((b * 0.35 + gray * 0.65) * 0.62);
-      }
+      // 不可走不再压暗（用户拍板「全都没有深色」：压暗分布随地形天然不对称，
+      // 被误读成"矿的阴影"；悬崖信息由硬描边承担，可走性由悬浮窗按格给）
       if (ramps[src]) {
         // 斜坡：暖色抖动（隔格）—— 低频纹理近似斜纹，烤一次零运行时成本
         if ((x + srcRow) % 2 === 0) {
@@ -235,4 +241,59 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
     return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)))));
   };
   return [f(0), f(8), f(4)];
+}
+
+/* ---------------- 地形分类（F18：鼠标格子信息悬浮窗，U15 显示层） ---------------- */
+
+/** 一格的地形信息（null = 该栅格未下发，如实未知） */
+export interface TerrainInfo {
+  /** 台地级（量化后索引） */
+  level: number;
+  /** 台地总级数 */
+  levels: number;
+  /** 悬崖边缘（4 邻域跨 level） */
+  cliff: boolean;
+  /** 斜坡（跨 level 的可走格） */
+  ramp: boolean;
+  pathable: boolean | null;
+  placeable: boolean | null;
+}
+
+/**
+ * 地形分类器（F18）：给定格点坐标 → 该格的地形信息。量化/边缘检测与 bakeTerrain
+ * 同源（U15：显示层量化，一旦斜坡要被命名/被谓词引用就必须上移后端）。
+ * height 未下发时返回 null（悬浮窗只显示坐标，不编造地形）。
+ */
+export function terrainClassifier(map: MapStatic): ((x: number, y: number) => TerrainInfo) | null {
+  const t = map.terrain;
+  if (!t?.height) return null;
+  const h = decodeGrid(t.height);
+  const { levels, count } = quantizeLevels(h);
+  const cliffs = cliffMask(levels, h.w, h.h);
+  const path = t.pathable ? decodeGrid(t.pathable) : null;
+  const ramps = rampMask(levels, path, h.w, h.h);
+  const place = t.placeable ? decodeGrid(t.placeable) : null;
+  return (x: number, y: number): TerrainInfo => {
+    const gx = Math.floor(x);
+    const gy = Math.floor(y);
+    const inBounds = gx >= 0 && gy >= 0 && gx < h.w && gy < h.h;
+    const i = inBounds ? gy * h.w + gx : -1;
+    const walk = path !== null && inBounds ? path.at(gx, gy) > 0 : null;
+    return {
+      level: i >= 0 ? levels[i]! : 0,
+      levels: count,
+      cliff: i >= 0 && cliffs[i] === 1,
+      ramp: i >= 0 && ramps[i] === 1,
+      pathable: walk,
+      placeable: place !== null && inBounds ? place.at(gx, gy) > 0 : null,
+    };
+  };
+}
+
+/** 地形信息的 zh 短名（悬浮窗用；判定优先级：悬崖 > 斜坡 > 不可走 > 平地） */
+export function terrainKindZh(info: TerrainInfo): string {
+  if (info.cliff && info.pathable === false) return "悬崖";
+  if (info.ramp) return "斜坡";
+  if (info.pathable === false) return "不可走";
+  return "平地";
 }

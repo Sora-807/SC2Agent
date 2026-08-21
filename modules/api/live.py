@@ -47,10 +47,13 @@ class LiveSession:
     def __init__(self, *, driver: str = "sim", map_name: str = "LadderMap",
                  seconds: float = 600.0, realtime: bool = False,
                  tick_seconds: float = 0.25,
-                 label: str | None = None, python: str | None = None) -> None:
+                 label: str | None = None, python: str | None = None,
+                 map_plan: str | None = None) -> None:
         self.driver = driver
         self.label = label or (f"真机会话（{map_name}）" if driver == "sc2"
                                else "子进程沙盒（假世界，验进程分离）")
+        if map_plan:
+            self.label = (self.label + " · " + Path(map_plan).stem)
         self.state = "启动中"
         self.error: str | None = None
         self.seq = 0
@@ -71,6 +74,8 @@ class LiveSession:
         ]
         if realtime:
             cmd.append("--realtime")
+        if map_plan:
+            cmd += ["--map-plan", str(map_plan)]
         # 真机发现：`stdin=PIPE` 且保持打开会让 SC2 挂起（burnysc2 启动的 SC2 进程
         # 继承了打开的 stdin 管道句柄）。给 stdin 发 EOF（关闭写端）即可解除 ——
         # 但那样命令也写不进去了。所以：sim 用 PIPE（命令走 stdin），
@@ -145,6 +150,9 @@ class LiveSession:
                 # 注意：此刻**已经在外层 with self._lock 里**，不能再用 self._lock
                 # （普通 Lock 同线程重入 = 死锁，真机测地形时踩过）。
                 self._meta["terrain"] = obj.get("terrain")
+                if obj.get("expansions"):
+                    # 基地/扩张位置（旁挂键，不进帧 payload）：采集与诊断用
+                    self._meta["expansions"] = obj["expansions"]
                 terrain_seq = self.seq
                 terrain_time = self.game_time
                 terrain_frame = {

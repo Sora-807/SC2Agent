@@ -42,7 +42,7 @@ from planner.build_order import ProductionModuleInstance  # noqa: E402
 from planner.planner import Planner  # noqa: E402
 from production.economy import EconomyKeeper, WorkerReservations  # noqa: E402
 from production.runtime import ProductionRuntime  # noqa: E402
-from tactical_map.base import instantiate_spawn, load_ladder_map  # noqa: E402
+from tactical_map.base import instantiate_spawn, load_ladder_map, load_map_plan  # noqa: E402
 from view.port import OpRing, RecordingPort  # noqa: E402
 from view.producer import FrameProducer  # noqa: E402
 from view.proposals import parse_item  # noqa: E402
@@ -108,7 +108,8 @@ class Session:
     """一套完整装配（与 `api.session.OfflineSession` 同构）+ 命令应用 + 产帧。"""
 
     def __init__(self, *, driver: str, reader: _CommandReader,
-                 cc: Point2, map_name: str = "LadderMap") -> None:
+                 cc: Point2, map_name: str = "LadderMap",
+                 map_plan: str | None = None) -> None:
         self.driver = driver
         self.reader = reader
         self.catalog = load_terran()
@@ -118,7 +119,8 @@ class Session:
         self.game_time = 0.0
         self.stopping = False
 
-        tpl = load_ladder_map()
+        # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
+        tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
         _, layout = sorted(tpl.spawns.items())[0]
         self.layer = instantiate_spawn(tpl, layout, cc)
 
@@ -258,10 +260,22 @@ def _run_sim(session: Session, *, seconds: float, workers: int, minerals: float,
 
     world = WorldSim(catalog=session.catalog, cc_pos=Point2(30.5, 30.5), minerals=minerals)
     world.bootstrap(workers=workers)
+    # 沙盒没有 game_info —— 发真机采集的地形数据文件（ladder_terrain_view）。
+    # 必须在**首个 on_state（statics）之后**发：早于 static/map 的话前端 store
+    # 的 terrain→map 合并会丢帧（B16 的教训）。
+    terrain_sent = False
     while world.t <= seconds and not session.stopping:
         started = time.monotonic()
         gs = world.game_state()
         session.on_state(gs)
+        if not terrain_sent:
+            terrain_sent = True
+            from view.encode import to_json
+            from view.statics import ladder_terrain_view
+
+            terrain = ladder_terrain_view()
+            if terrain is not None:
+                _emit({"_": "terrain", "terrain": to_json(terrain)})
         world.apply(session.sink.drain())
         world.tick(1.0)
         if tick_seconds > 0:
@@ -289,12 +303,15 @@ def _run_sc2(session: Session, *, map_name: str, seconds: int, realtime: bool) -
     port = SC2GamePort(map_name=map_name, race=Race.Terran, difficulty=Difficulty.Easy,
                        sink=_RawSink(), game_time_limit=seconds, realtime=realtime,
                        catalog=session.catalog)
-    # B4：game_info 就绪后把静态地形推出去（父进程合并进 static/terrain）
+    # B4：game_info 就绪后把静态地形推出去（父进程合并进 static/terrain）。
+    # expansions（基地/扩张位置）走同一控制行的**旁挂键**：不进 terrain 帧 payload
+    #（契约干净），父进程存 meta 供采集/诊断。
     from view.encode import to_json
     from view.statics import terrain_static
 
     port.on_map_info(lambda info: _emit({
-        "_": "terrain", "terrain": to_json(terrain_static(info))}))
+        "_": "terrain", "terrain": to_json(terrain_static(info)),
+        "expansions": info.get("expansions") or []}))
     # 引擎发的 op 要真的下发给 SC2：把三个 RecordingPort 的内层换成真 port
     for holder in (session.engine, session.runtime, session.keeper):
         inner = getattr(holder, "_port", None)
@@ -325,6 +342,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="会话子进程（帧出 stdout、命令入 stdin）")
     ap.add_argument("--driver", choices=("sim", "sc2"), default="sim")
     ap.add_argument("--map", default="LadderMap")
+    ap.add_argument("--map-plan", default=None,
+                    help="地图规划文件路径（会话装配用它；缺省 = 手写出厂模板）")
     ap.add_argument("--seconds", type=float, default=600.0, help="时长上限（游戏秒）")
     ap.add_argument("--workers", type=int, default=12, help="sim：开局工兵数")
     ap.add_argument("--minerals", type=float, default=400.0, help="sim：开局矿")
@@ -337,7 +356,7 @@ def main() -> int:
     reader.start()
     try:
         session = Session(driver=args.driver, reader=reader, cc=Point2(30.5, 30.5),
-                          map_name=args.map)
+                          map_name=args.map, map_plan=args.map_plan)
         if args.driver == "sim":
             _run_sim(session, seconds=args.seconds, workers=args.workers,
                      minerals=args.minerals, tick_seconds=args.tick_seconds)

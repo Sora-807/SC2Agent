@@ -10,6 +10,9 @@
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from game.catalog import Catalog
 from game.geometry import Grid
 from game.production import QueueOp, WorkerTask
@@ -28,6 +31,7 @@ from view.schema import (
     CatalogEntryView,
     CatalogStatic,
     CostView,
+    GridB64,
     LeafRegionView,
     MapStatic,
     PosMarkView,
@@ -152,6 +156,58 @@ def terrain_static(raw: dict) -> TerrainView:
         pathable=grid_to_b64(raw.get("pathable")),
         placeable=grid_to_b64(raw.get("placeable")),
     )
+
+
+#: 真机采集的 LadderMap 地形（一次采集、进版本库；离线夹具/沙盒/地图规划共用）
+LADDER_TERRAIN_JSON = (Path(__file__).resolve().parents[1] / "tactical_map"
+                       / "data" / "ladder_map" / "terrain.json")
+
+
+def ladder_terrain_view() -> TerrainView | None:
+    """真机地形数据文件 → TerrainView（文件不存在 = None，调用方如实降级）。
+
+    来源：2026-08-21 真机会话 static/terrain 帧落盘（height 非零格 17760，
+    与 d42aa1e 真机验证记录一致）。离线从此能看到**真实地图**的台地/悬崖/可建区，
+    不再是 B16 的合成地形 —— 合成生成器保留为无数据文件时的兜底。
+    """
+    raw = _ladder_map_data()
+    if raw is None:
+        return None
+
+    def g(key: str) -> GridB64 | None:
+        b64 = raw.get(key)
+        return GridB64(w=int(raw["size"][0]), h=int(raw["size"][1]),
+                       data_b64=b64) if b64 else None
+
+    return TerrainView(height=g("height_b64"), pathable=g("pathable_b64"),
+                       placeable=g("placeable_b64"))
+
+
+def ladder_resource_nodes() -> list[ResourceNodeView] | None:
+    """真机采集的全图资源点（矿脉/气井）→ ResourceNodeView 列表。
+
+    中性资源**不受战争迷雾限制**（迷雾只藏敌方单位）：一次采集拿到全图
+    98 矿脉 + 24 气井 / 14 个矿区（2026-08-21 真机实测）。离线规划页因此
+    能看到每个基地的真实矿脉线 —— 槽位该绕开矿区这件事终于有数据可依。
+    """
+    raw = _ladder_map_data()
+    resources = (raw or {}).get("resources")
+    if not resources:
+        return None
+    out = []
+    for i, r in enumerate(resources):
+        kind = "geyser" if r.get("kind") == "geyser" else "mineral"
+        out.append(ResourceNodeView(
+            tag=i, stable_id=_GEYSER_STABLE if kind == "geyser" else _MINERAL_STABLE,
+            pos=(float(r["pos"][0]), float(r["pos"][1])), kind=kind))
+    return out
+
+
+def _ladder_map_data() -> dict | None:
+    try:
+        return json.loads(LADDER_TERRAIN_JSON.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def schema_static() -> SchemaStatic:

@@ -51,8 +51,9 @@ def test_project_simple_chain_completion_times():
     assert last.buildings.get("terran/supplydepot") == 1
     assert last.buildings.get("terran/barracks") == 1
     assert last.units.get("terran/marine") == 1
-    # 只有前置等待 stall（barracks 等 depot、marine 等 barracks），无资源卡
-    assert all("前置" in (e.reason or "") for e in curve.stalls())
+    # 全程无死局卡点：barracks 等 depot、marine 等 barracks 都是「前置在途」的
+    # 时序等待（新语义：等待不产生 stalled 事件，只有死局才报）
+    assert curve.stalls() == [], [e.reason for e in curve.stalls()]
     # time_to
     assert curve.time_to(lambda pt: pt.units.get("terran/marine", 0) >= 1) == 85
 
@@ -94,3 +95,46 @@ def test_project_income_accumulates():
     # 10 秒收入：12 × 0.6 × 10 = 72（浮点 approx）
     assert curve.points[-1].minerals == pytest.approx(72.0)
     assert curve.points[-1].mineral_workers == 12
+
+
+# ---------------- 等待 vs 死局（stalled 只报死局） ----------------
+
+def test_wait_not_recorded_mineral_shortage_with_income():
+    """缺矿但有矿工在采 = 时序等待（攒钱），不产生 stalled 警报。"""
+    cat = load_terran()
+    p = Planner(cat)
+    gs = _start_with_cc_and_scv(minerals=0, gas=0)   # 0 矿 12 矿工
+    register_module("test_depot_only", lambda p: [Build("terran/supplydepot")])
+    curve = p.project(gs, [ProductionModuleInstance("m0", "test_depot_only")], until=60)
+    assert curve.stalls() == []
+    completed = {e.type for e in curve.events if e.kind == "completed"}
+    assert "terran/supplydepot" in completed, "攒够钱后正常开工落成"
+
+
+def test_deadlock_gas_never_coming():
+    """产建筑齐全、气为 0、无精炼厂无气工 → 气永远为 0 → 死局警报「缺气」。"""
+    cat = load_terran()
+    p = Planner(cat)
+    gs = _gs(
+        [_unit(1, "COMMANDCENTER"), _unit(2, "FACTORY"), _unit(3, "FACTORYTECHLAB"),
+         _unit(100, "SCV", orders=[Order(ability="Gather", target_tag=900)])],
+        resources=[_unit(900, "MINERALFIELD", owner=Owner.NEUTRAL)],
+        minerals=5000, vespene=0)
+    curve = p.project(gs, [Train("terran/siegetank")], until=30)
+    stalls = curve.stalls()
+    assert stalls and stalls[0].reason == "缺气"
+
+
+def test_deadlock_supply_at_cap_200():
+    """供给顶到 200 上限：守卫不再插 depot（插了也不涨），「缺供给」浮出为死局。"""
+    cat = load_terran()
+    p = Planner(cat)
+    gs = _gs(
+        [_unit(1, "COMMANDCENTER"), _unit(2, "BARRACKS"),
+         _unit(100, "SCV", orders=[Order(ability="Gather", target_tag=900)])],
+        resources=[_unit(900, "MINERALFIELD", owner=Owner.NEUTRAL)],
+        minerals=5000, vespene=500, supply_used=200, supply_cap=200)
+    curve = p.project(gs, [Train("terran/marine")] * 1, until=20)
+    stalls = curve.stalls()
+    assert stalls and stalls[0].reason == "缺供给"
+    assert all(pt.supply_cap == 200 for pt in curve.points), "守卫不得在 200 后插 depot"

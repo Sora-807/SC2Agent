@@ -44,11 +44,15 @@ interface Frames {
   schema: SchemaStatic | null;
   /** 策略图结构（static/strategy）：F4 的图与 F9 的编辑器都靠它 */
   strategy: StrategyStatic | null;
+  /** terrain 先于 map 到达时的挂起载荷（真机 on_step 曾先发地形后发静态面；
+   *  帧序不可假设 —— A5 快照语义，合并必须两个方向都成立） */
+  pendingTerrain: MapStatic["terrain"];
 }
 
 const EMPTY_FRAMES: Frames = {
   session: null, world: null, flow: null, production: null, economy: null, ops: null, projection: null,
   alerts: null, proposals: null, map: null, catalog: null, schema: null, strategy: null,
+  pendingTerrain: null,
 };
 
 interface FramesStore extends Frames {
@@ -197,11 +201,17 @@ export const useFrames = create<FramesStore>((set, get) => {
         src.subscribe("frame/projection", (e) => set({ projection: e.payload })),
         src.subscribe("frame/alerts", (e) => set({ alerts: e.payload })),
         src.subscribe("proposals", (e) => set({ proposals: e.payload })),
-        src.subscribe("static/map", (e) => set({ map: e.payload })),
+        src.subscribe("static/map", (e) => set((s2) => ({
+          map: { ...e.payload, terrain: e.payload.terrain ?? s2.pendingTerrain ?? null },
+          pendingTerrain: null,
+        }))),
         // B4：地形晚到（真机上 game_info 在 bot 第一个 on_step 才可用）。
         // 合并进 map.terrain —— 不是重发一张完整 static/map。
+        // 顺序不可假设（A5）：terrain 先到就先挂 pendingTerrain，map 到了再并 ——
+        // 真机 driver 曾先发地形后发静态面，这里丢过一整局的地形（"地形不可用"）。
         src.subscribe("static/terrain", (e) => set((s2) => ({
           map: s2.map ? { ...s2.map, terrain: e.payload } : null,
+          pendingTerrain: s2.map ? null : e.payload,
         }))),
         src.subscribe("static/catalog", (e) => set({ catalog: e.payload })),
         src.subscribe("static/schema", (e) => set({ schema: e.payload })),

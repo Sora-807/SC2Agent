@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -114,6 +115,36 @@ def load_base_template(path: str | Path) -> BaseTemplate:
         region_name=d.get("region_name", "main_base"),
         spawns=spawns,
     )
+
+
+def load_map_plan(path: str | Path) -> BaseTemplate:
+    """地图规划文件 → BaseTemplate；兼容 base_layout 原形态（spawns 双分支）。
+
+    单出生点形态（view.map_plans 的规划文件）没有 spawns 节 —— 包一层再走
+    同一条解析，校验/合并/会话装配共用解析逻辑（不另写一份字段解读）。
+    """
+    d = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    if d.get("spawns"):
+        return load_base_template(path)
+    side = str(d.get("spawn") or "bl")
+    wrapped = {
+        "map_name": d.get("map_name") or "unknown",
+        "region_name": "main_base",
+        "spawns": {side: {
+            "origin": d.get("origin") or [0, 0],
+            "anchor": d.get("anchor") or [0, 0],
+            "build_slots": d.get("build_slots") or {},
+            "pos_marks": d.get("pos_marks") or {},
+        }},
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False,
+                                     encoding="utf-8") as f:
+        yaml.safe_dump(wrapped, f, allow_unicode=True)
+        tmp = f.name
+    try:
+        return load_base_template(tmp)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 def load_ladder_map() -> BaseTemplate:

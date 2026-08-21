@@ -15,6 +15,7 @@ from game import GameState, Owner
 from game.catalog import Catalog, Role
 
 from planner.curve import ProjectionPoint
+from planner.slots import reactor_map
 
 
 @dataclass
@@ -106,4 +107,11 @@ def derive_from(gs: GameState, catalog: Catalog) -> SimState:
         supply_used=gs.supply_used, supply_cap=gs.supply_cap,
         total_workers=total, mineral_workers=mineral, gas_workers=gas, idle_workers=idle,
         buildings=buildings, units=units, in_flight=in_flight,
+        # B15：live 快照里挂件是独立建筑 —— 从建筑计数推出反应堆数，否则投影会把
+        # 已有 reactor 的兵营当 1 槽（旧代码只在投影内落成时才更新 addons）。
+        addons={
+            parent: n
+            for parent, sid in reactor_map(catalog).items()
+            if (n := buildings.get(sid, 0)) > 0
+        },
     )

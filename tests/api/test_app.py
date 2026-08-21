@@ -6,12 +6,14 @@
 2. **握手先给 rev**，前端才能在渲染前判契约版本（红线 C8）。
 """
 import json
+import threading
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from api.sources import SourceInfo
 from view.encode import envelope
 from view.schema import REV, TOPICS
 
@@ -180,6 +182,134 @@ def test_ws_unknown_source_reports_error(client: TestClient):
     with client.websocket_connect("/api/frames?source=nope") as ws:
         msg = json.loads(ws.receive_text())
         assert msg["topic"] == "_error" and "nope" in msg["detail"]
+
+
+class _BootLaterLive:
+    """模拟真机时序的 live 源：connect 时一帧没有（SC2 开机 1-2 分钟），
+    静态面稍后才以 **game_time=0** 落地（burnysc2 首个 on_step 的 bot.time=0）。
+
+    between() 逐字复刻 LiveSession 的 game_time 过滤 —— 静态帧 game_time=0
+    永远落在游标后面，这正是要回归锁死的 bug。
+    """
+
+    id = "live"
+
+    def __init__(self) -> None:
+        self.frames: list[dict] = []
+        self._statics: list[dict] = []
+
+    def add(self, frame: dict) -> None:
+        if frame["topic"].startswith("static/"):
+            self._statics.append(frame)
+        self.frames.append(frame)
+
+    def info(self) -> SourceInfo:
+        times = [f["game_time"] for f in self.frames] or [0.0]
+        return SourceInfo(id="live", label="boot-later", kind="live",
+                          envelopes=len(self.frames), from_time=min(times),
+                          to_time=max(times),
+                          topics=sorted({f["topic"] for f in self.frames}),
+                          snapshots=[])
+
+    def statics(self) -> list[dict]:
+        return list(self._statics)
+
+    def latest_at(self, game_time: float, topics: set[str] | None = None) -> list[dict]:
+        chosen: dict[str, dict] = {}
+        for f in self.frames:
+            if topics is not None and f["topic"] not in topics:
+                continue
+            if f["game_time"] <= game_time + 1e-9:
+                chosen[f["topic"]] = f
+        for f in self._statics:
+            if topics is not None and f["topic"] not in topics:
+                continue
+            chosen.setdefault(f["topic"], f)
+        return list(chosen.values())
+
+    def between(self, after: float, until: float,
+                topics: set[str] | None = None) -> list[dict]:
+        return [f for f in self.frames
+                if after + 1e-9 < f["game_time"] <= until + 1e-9
+                and (topics is None or f["topic"] in topics)]
+
+
+def test_ws_live_forwards_statics_landing_at_game_time_zero(client: TestClient):
+    """真机 bug 回归（实机地图页一直「等待 static/map」而生产页有数据）：
+
+    前端在会话出帧前 attach（真机常态），静态面以 game_time=0 落地 ——
+    live 泵的游标过滤（> cursor）永远发不出它们。静态帧必须走
+    「快照出现即发」通道，不受 game_time 门控。
+
+    心跳线程持续产 world 帧：若回归（静态帧永远不来），receive 不会挂死，
+    而是耗尽 `_recv_until` 的限额后**快速失败**。
+    """
+    stub = _BootLaterLive()
+    client.app.state.session = stub
+    stop = threading.Event()
+
+    def _tick_frames() -> None:
+        t = 1
+        while not stop.is_set():
+            t += 1
+            stub.add(envelope("frame/world", seq=2 + t, game_time=float(t), wall_ms=0,
+                              payload={"tick": t}))
+            stop.wait(0.05)
+
+    with client.websocket_connect("/api/frames?source=live") as ws:
+        assert json.loads(ws.receive_text())["topic"] == "_hello"
+        # 会话启动后首帧到达：静态面 game_time=0，动态面 game_time=1
+        stub.add(envelope("static/map", seq=1, game_time=0.0, wall_ms=0,
+                          payload={"map_name": "M"}))
+        stub.add(envelope("static/catalog", seq=2, game_time=0.0, wall_ms=0,
+                          payload={"entries": []}))
+        stub.add(envelope("frame/world", seq=3, game_time=1.0, wall_ms=0,
+                          payload={"tick": 1}))
+        threading.Thread(target=_tick_frames, daemon=True).start()
+        try:
+            assert _recv_until(ws, "static/map")["payload"]["map_name"] == "M"
+            assert _recv_until(ws, "static/catalog")["topic"] == "static/catalog"
+            assert _recv_until(ws, "frame/world")["payload"]["tick"] == 1
+        finally:
+            stop.set()
+
+
+def test_ws_live_without_session_does_not_fake_a_world(client: TestClient):
+    """live 无会话 = 如实说「未连接」，**不**惰性建假世界（回归锁）。
+
+    旧行为：WS source=live 一连就顺手建一个进程内 OfflineSession —— 假世界的
+    出厂模板槽位 + 逐秒假帧，曾让前端把「SC2 没启动」误读成
+    「时间线连上了、地图空、却有来历不明的槽位」。
+    """
+    with client.websocket_connect("/api/frames?source=live") as ws:
+        assert json.loads(ws.receive_text())["topic"] == "_hello"
+        sess = json.loads(ws.receive_text())
+        assert sess["topic"] == "frame/session"
+        assert sess["payload"]["state"] == "未连接"
+        assert sess["payload"]["frame_source"] == "live"
+        # 没有会话被创建：连接本身不应该是「启动一个假世界」的副作用
+        assert client.app.state.session is None
+    # REST 读面同样如实：无会话 404，而不是悄悄造一个
+    r = client.get("/api/sources/live/statics")
+    assert r.status_code == 404
+    assert "没有活跃会话" in r.json()["detail"]
+
+
+def test_ws_live_picks_up_session_started_after_attach(client: TestClient):
+    """前端 attach 在先、会话启动在后（真机常态：开机 1-2 分钟）：
+    同一条 WS 连接在会话出现后自动接上 —— 不需要前端重连。"""
+    stub = _BootLaterLive()
+    with client.websocket_connect("/api/frames?source=live") as ws:
+        assert json.loads(ws.receive_text())["topic"] == "_hello"
+        assert json.loads(ws.receive_text())["payload"]["state"] == "未连接"
+        # 会话现在才出现（换会话对象 → pump 重置游标并补发全量快照）
+        client.app.state.session = stub
+        stub.add(envelope("static/map", seq=1, game_time=0.0, wall_ms=0,
+                          payload={"map_name": "M"}))
+        stub.add(envelope("frame/world", seq=2, game_time=1.0, wall_ms=0,
+                          payload={"tick": 1}))
+        assert _recv_until(ws, "static/map")["payload"]["map_name"] == "M"
+        assert _recv_until(ws, "frame/world")["payload"]["tick"] == 1
 
 
 @pytest.mark.skipif(not (FIXTURES / "opening.jsonl").is_file(), reason="夹具未生成")

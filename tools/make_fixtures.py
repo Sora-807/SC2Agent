@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "modules"))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from game.catalog import load_terran  # noqa: E402
-from game.geometry import Point2  # noqa: E402
+from game.geometry import Grid, Point2  # noqa: E402
 from game.ports import ApplyResult  # noqa: E402
 from game.production import PlacementInRegion, QueueItem, QueueOp, WorkerTask  # noqa: E402
 from flow.allocator import Allocator  # noqa: E402
@@ -37,6 +37,7 @@ from view.port import OpRing, RecordingPort  # noqa: E402
 from view.producer import FrameProducer  # noqa: E402
 from view.recorder import ViewRecorder  # noqa: E402
 from view.schema import HunkView, ProposalsFrame, ProposalView  # noqa: E402
+from view.statics import ladder_terrain_view, terrain_static  # noqa: E402
 from worldsim import WorldSim  # noqa: E402
 
 CAT = load_terran()
@@ -64,6 +65,61 @@ def _layer(cc: Point2):
     tpl = load_ladder_map()
     _, layout = sorted(tpl.spawns.items())[0]
     return instantiate_spawn(tpl, layout, cc)
+
+
+# ---------------- 合成地形（B16） ----------------
+
+def _synth_terrain() -> dict:
+    """确定性合成地形（固定形状，无随机）：以主基为中心的三级方形台地。
+
+    离线夹具没有 SC2 game_info，但 F11 的台地-悬崖-斜坡渲染和 F14 的 placeable
+    编辑背景都需要 static/terrain。夹具本来就是假世界（WorldSim），这里合成一份
+    **结构可信**的地形，让离线规划页与真机看到的语言一致：
+    - 高度：切比雪夫距离方形台地（0/10/20/30 四级，量化后是 4 个 level）；
+    - 悬崖：台地交界环不可走（前端画硬描边 + 压暗）；
+    - 斜坡：y∈[28,32] 的东西走廊切开悬崖墙（pathable 的交界格 → 前端暖色斜纹）；
+    - placeable：3×3 邻域同 level 且可走（平坦可建）—— 悬崖边/斜坡上/远端高地不可建。
+    """
+    W, H = 176, 160
+    cx, cy = 30, 30
+
+    def level_at(x: int, y: int) -> int:
+        d = max(abs(x - cx), abs(y - cy))
+        if d <= 24:
+            return 0
+        if d <= 34:
+            return 10
+        if d <= 46:
+            return 20
+        return 30
+
+    def pathable_at(x: int, y: int) -> int:
+        if 28 <= y <= 32:
+            return 1   # 斜坡走廊：贯穿东西，切开所有悬崖墙
+        d = max(abs(x - cx), abs(y - cy))
+        if d in (25, 35, 47):
+            return 0   # 悬崖墙（台地交界环）
+        if d > 90:
+            return 0   # 远端高地：不可走（前端压暗去饱和）
+        return 1
+
+    def placeable_at(x: int, y: int) -> int:
+        if x < 1 or y < 1 or x >= W - 1 or y >= H - 1:
+            return 0
+        if not pathable_at(x, y):
+            return 0
+        lv = level_at(x, y)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if level_at(x + dx, y + dy) != lv:
+                    return 0
+        return 1
+
+    return {
+        "height": Grid(W, H, [[level_at(x, y) for x in range(W)] for y in range(H)]),
+        "pathable": Grid(W, H, [[pathable_at(x, y) for x in range(W)] for y in range(H)]),
+        "placeable": Grid(W, H, [[placeable_at(x, y) for x in range(W)] for y in range(H)]),
+    }
 
 
 # ---------------- 策略 ----------------
@@ -249,8 +305,15 @@ class SceneRunner:
         self.world.tick(1.0)
 
     def run(self, seconds: int) -> None:
-        for _ in range(seconds + 1):
+        for i in range(seconds + 1):
             self.tick()
+            if i == 0:
+                # B16：首帧（statics 已落盘）之后补发地形。必须在 static/map **之后**：
+                # 前端 store 的合并逻辑是「map 到了才把 terrain 并进去」，早到会被丢。
+                # 优先用**真机采集**的地形数据文件（2026-08-21 落盘，离线即真实地图）；
+                # 文件缺失才退回 B16 的合成台地（确定性兜底）。
+                terrain = ladder_terrain_view() or terrain_static(_synth_terrain())
+                self.emit_extra("static/terrain", terrain)
 
     def emit_extra(self, topic: str, payload) -> None:
         """补发一条非周期性的帧（如提案样本）。"""

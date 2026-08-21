@@ -12,17 +12,26 @@ import { SessionBar } from "./shell/SessionBar";
 import { StatusChip } from "./shell/StatusChip";
 import { Timeline } from "./shell/Timeline";
 import { useRoute, planTabOf } from "./shell/route";
+import { homePageOf, railGroups } from "./shell/rail";
+import { useFrames } from "./store/frames";
 import { Overview } from "./pages/Overview";
 import { MapPage } from "./pages/MapPage";
 import { DebugPage } from "./pages/DebugPage";
 import { FlowPage } from "./pages/FlowPage";
 import { PlanningPage } from "./pages/PlanningPage";
 import { ProductionPage } from "./pages/ProductionPage";
-import { useFrames } from "./store/frames";
 
 export function App() {
   const [page, go] = useRoute();
+  const mode = useFrames((s) => s.mode);
   const { init, error, loading, fixtures } = useFrames();
+
+  // P1：导航是模式的函数 —— 当前页不属于本模式（切模式 / 旧链接直达）时跳到该模式首页。
+  // 驾驶页在离线模式仍有意义吗？没有：离线没有"正在发生的世界"（用户拍板）。
+  useEffect(() => {
+    const valid = railGroups(mode).some((g) => g.items.some((p) => p.key === page));
+    if (!valid) go(homePageOf(mode));
+  }, [mode, page, go]);
   // 提案选中态放在外壳：对话栏点开 → 主区显示审批（双投影图在 320px 侧栏里没法看）
   const [openProposal, setOpenProposal] = useState<string | null>(null);
   const proposals = useFrames((s) => s.proposals);
@@ -42,8 +51,8 @@ export function App() {
         <pre className="mt-3 whitespace-pre-wrap text-sm">{error}</pre>
         <p className="mt-3 text-dim">
           如果是"夹具清单读不到"，先在 web/ 下跑 <code>pnpm gen:fixtures</code>。
-          如果是实时驾驶连不上（常见：后端还没有活跃会话），点下面返回离线，
-          到实时驾驶模式里先「启动沙盒/启动真机」再切回来。
+          如果是实时驾驶连不上（后端没在跑 / 契约版本不符），点下面返回离线，
+          到实时驾驶模式里点「启动真机」再试。
         </p>
         {/* 全屏错误不能死锁：一键回离线（清 error + 回夹具源） */}
         <button
