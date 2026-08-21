@@ -92,7 +92,22 @@ export function SessionBar() {
                 title={disabled
                   ? "实时驾驶需要后端 API：先启动 python tools/serve_api.py"
                   : MODE_META[m].tip}
-                onClick={() => void setMode(m)}
+                onClick={async () => {
+                  if (m !== "drive") {
+                    await setMode(m);
+                    return;
+                  }
+                  // drive：先看后端有没有活跃会话 —— 没有就**不 attach**（连了必失败，
+                  // 全屏错误屏就是之前「点实时驾驶黑屏」的来源），进模式等用户启动会话
+                  const info = await fetchSessionInfo();
+                  if (info?.alive) {
+                    await setMode("drive");
+                    setSessInfo(info);
+                    return;
+                  }
+                  useFrames.setState({ mode: "drive", error: null });
+                  setSessInfo(info);
+                }}
                 className={
                   "px-2.5 py-1 " + T.label + " " +
                   (active
@@ -203,7 +218,9 @@ export function SessionBar() {
           <i className={"inline-block h-2 w-2 rounded-full " + meta.dot} />
           {mode === "replay" || (mode === "drive" && reviewing)
             ? `只读回看 ${fmtTime(position)}`
-            : meta.tip}
+            : mode === "drive" && !live
+              ? "等待会话：点「启动沙盒 / 启动真机」后自动接入"
+              : meta.tip}
         </span>
 
         <div className="ml-auto flex gap-2">

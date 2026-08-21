@@ -42,7 +42,17 @@ export function App() {
         <pre className="mt-3 whitespace-pre-wrap text-sm">{error}</pre>
         <p className="mt-3 text-dim">
           如果是"夹具清单读不到"，先在 web/ 下跑 <code>pnpm gen:fixtures</code>。
+          如果是实时驾驶连不上（常见：后端还没有活跃会话），点下面返回离线，
+          到实时驾驶模式里先「启动沙盒/启动真机」再切回来。
         </p>
+        {/* 全屏错误不能死锁：一键回离线（清 error + 回夹具源） */}
+        <button
+          className="mt-4 rounded border border-neutral-600 px-3 py-1 text-sm text-neutral-200"
+          onClick={() => {
+            useFrames.setState({ error: null });
+            void useFrames.getState().setMode("offline");
+          }}
+        >返回离线模式</button>
       </div>
     );
   }

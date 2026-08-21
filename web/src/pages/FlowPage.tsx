@@ -250,44 +250,55 @@ export function FlowPage() {
                       fill={isActive ? "rgba(52,211,153,0.14)" : "rgba(38,38,38,0.6)"}
                       stroke={n.id === selected ? "#e5e7eb" : isActive ? "#34d399" : "#525252"}
                       strokeWidth={isActive ? 2 : 1} />
-                {/* 头部：step_id + 热度 + 起点标 */}
-                <text x={8} y={17} fontSize={12} fontWeight={600}
+                {/* 头部两行：左=step_id/起点；右=活跃点+耗时+进入次数（互不重叠） */}
+                <text x={8} y={16} fontSize={12} fontWeight={600}
                       fill={isActive ? "#d1fae5" : "#d4d4d4"}>{n.id}</text>
-                {entered > 1 && (
-                  <text x={NODE_W - 8} y={17} textAnchor="end" fontSize={10} fill="#a3a3a3">×{entered}</text>
-                )}
                 {n.id === graph.initial_step && (
-                  <text x={NODE_W - (entered > 1 ? 34 : 8)} y={17} textAnchor="end" fontSize={9} fill="#737373">起点</text>
+                  <text x={8} y={27} fontSize={9} fill="#737373">△ 起点</text>
+                )}
+                {entered > 1 && (
+                  <text x={NODE_W - 8} y={27} textAnchor="end" fontSize={9} fill="#a3a3a3">进入 ×{entered}</text>
                 )}
                 {isActive && (
                   <>
-                    <circle cx={NODE_W - 10} cy={10} r={4} fill="#34d399">
+                    <circle cx={NODE_W - 12} cy={12} r={4} fill="#34d399">
                       <animate attributeName="opacity" values="1;0.25;1" dur="1.4s" repeatCount="indefinite" />
                     </circle>
-                    <text x={NODE_W - 18} y={17} textAnchor="end" fontSize={9} fill="#6ee7b7">
+                    <text x={NODE_W - 22} y={16} textAnchor="end" fontSize={9} fill="#6ee7b7">
                       {state?.step_elapsed.toFixed(1)}s
                     </text>
                   </>
                 )}
-                {/* 主体：一行一个 branch（条件 chip + 去向）；本帧命中行高亮 */}
+                {/* 主体：一行一个 branch（foreignObject 左右分栏：左条件可换行，右去向不换行） */}
                 {branches.map((b, idx) => {
                   const y = HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H;
                   const hit = hitIdx === b.index;
-                  const when = (b.when ?? "else").slice(0, 34);
+                  const target = targetOf(b.index);
                   return (
                     <g key={b.index}>
                       {hit && (
                         <rect x={2} y={y} width={NODE_W - 4} height={BRANCH_ROW_H}
                               fill="rgba(52,211,153,0.16)" />
                       )}
-                      <title>{b.when ?? "else（无条件）"} → {targetOf(b.index)}</title>
-                      <text x={8} y={y + 12} fontSize={10} fill={hit ? "#a7f3d0" : "#7dd3fc"}>
-                        {when}{(b.when ?? "else").length > 34 ? "…" : ""}
-                      </text>
-                      <text x={NODE_W - 6} y={y + 12} textAnchor="end" fontSize={10}
-                            fill={hit ? "#fbbf24" : "#a3a3a3"}>
-                        → {targetOf(b.index)}
-                      </text>
+                      <foreignObject x={4} y={y} width={NODE_W - 8} height={BRANCH_ROW_H}>
+                        <div
+                             title={`${b.when ?? "else（无条件）"} → ${target}`}
+                             className={"flex h-full items-center gap-1 "
+                               + (hit ? "text-emerald-200" : "")}>
+                          <span className={"min-w-0 flex-1 break-all "
+                            + (hit ? "text-emerald-200" : "text-sky-300")}
+                                style={{ display: "-webkit-box", WebkitLineClamp: 2,
+                                         WebkitBoxOrient: "vertical", overflow: "hidden",
+                                         fontSize: "10px", lineHeight: "12px" }}>
+                            {b.when ?? "else"}
+                          </span>
+                          <span className={"shrink-0 whitespace-nowrap "
+                            + (hit ? "text-amber-300" : "text-neutral-400")}
+                                style={{ fontSize: "10px", lineHeight: "12px" }}>
+                            → {target}
+                          </span>
+                        </div>
+                      </foreignObject>
                     </g>
                   );
                 })}
