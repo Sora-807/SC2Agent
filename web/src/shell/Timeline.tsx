@@ -18,7 +18,7 @@ const MARKER_STYLE: Record<TimelineMarker["kind"], { color: string; zh: string; 
 };
 
 export function Timeline() {
-  const { range, position, markers, caps, mode, seek } = useFrames();
+  const { range, position, markers, caps, timeline, seek } = useFrames();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragging = useRef(false);
 
@@ -43,7 +43,7 @@ export function Timeline() {
         ref={trackRef}
         className={
           "relative h-10 rounded border " +
-          (mode === "review" ? "border-amber-700/60 bg-amber-950/20" : "border-neutral-800 bg-neutral-900/60") +
+          (timeline === "review" ? "border-amber-700/60 bg-amber-950/20" : "border-neutral-800 bg-neutral-900/60") +
           (caps.seek ? " cursor-pointer" : " cursor-not-allowed opacity-60")
         }
         onPointerDown={(e) => {
@@ -60,7 +60,7 @@ export function Timeline() {
       >
         {/* 已播放区间 */}
         <div
-          className={"absolute inset-y-0 left-0 rounded-l " + (mode === "review" ? "bg-amber-900/25" : "bg-emerald-900/20")}
+          className={"absolute inset-y-0 left-0 rounded-l " + (timeline === "review" ? "bg-amber-900/25" : "bg-emerald-900/20")}
           style={{ width: pct(position) + "%" }}
         />
         {/* 标记 */}
@@ -77,17 +77,17 @@ export function Timeline() {
         })}
         {/* 游标 */}
         <div
-          className={"absolute inset-y-0 w-0.5 " + (mode === "review" ? "bg-amber-400" : "bg-emerald-400")}
+          className={"absolute inset-y-0 w-0.5 " + (timeline === "review" ? "bg-amber-400" : "bg-emerald-400")}
           style={{ left: pct(position) + "%" }}
         >
-          <div className={"absolute -top-0.5 left-1 whitespace-nowrap rounded px-1 text-[10px] " +
-            (mode === "review" ? "bg-amber-400 text-black" : "bg-emerald-400 text-black")}>
+          <div className={"absolute -top-0.5 left-1 whitespace-nowrap rounded px-1 text-note " +
+            (timeline === "review" ? "bg-amber-400 text-black" : "bg-emerald-400 text-black")}>
             {fmtTime(position)}
           </div>
         </div>
       </div>
 
-      <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
+      <div className="mt-1 flex items-center justify-between text-note text-faint">
         <span>{fmtTime(range.from)}</span>
         <span className="flex gap-3">
           {(Object.keys(MARKER_STYLE) as TimelineMarker["kind"][])
@@ -98,7 +98,7 @@ export function Timeline() {
                 {MARKER_STYLE[k].zh} {markers.filter((m) => m.kind === k).length}
               </span>
             ))}
-          {!caps.seek && <span className="text-neutral-600">该帧源不支持 seek</span>}
+          {!caps.seek && <span className="text-ghost">该帧源不支持 seek</span>}
         </span>
         <span>{fmtTime(range.to)}</span>
       </div>

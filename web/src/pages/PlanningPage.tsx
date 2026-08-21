@@ -1,9 +1,10 @@
 /**
- * 规划页（F9）—— 离线三工作台。
+ * 规划页（F9/F13）—— 离线三工作台。
  *
  * 红线（ADR-0022 反例 / R5）：
  * 1. 离线草稿**绝不默认叠加 live** —— 本页不读 live 会话，只读静态面；
- * 2. live 中不出现模块/Strategy 的创建与编辑入口（R5）；
+ * 2. live（实时驾驶模式）中不出现模块/Strategy 的创建与编辑入口（R5）——
+ *    守卫读**模式轴**（F13 修根因 W：旧代码读 sourceKind==="live"，但那个值永远产生不出来）；
  * 3. 所有画布操作转成**结构化草稿**（DraftItem / hunk），人与 agent 同一表示。
  */
 import { useMemo, useState } from "react";
@@ -13,6 +14,7 @@ import {
   describeItem, draftCost, draftToHunks, emptyItem, placementOptions,
   type DraftItem,
 } from "../planning/queue-draft";
+import { PLAN_GATE_REASON } from "../shell/rail";
 import { Card, Empty, PAGE_SCROLL } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { CatalogStatic, MapStatic, SchemaStatic, StrategyStatic } from "../contract";
@@ -23,32 +25,46 @@ const TABS = [
   ["flow", "Flow 装配"],
 ] as const;
 
-export function PlanningPage() {
-  const { catalog, map, strategy, schema, api, sourceKind } = useFrames();
-  const [tab, setTab] = useState<"map" | "production" | "flow">("production");
+export function PlanningPage(props: { initialTab?: "map" | "production" | "flow" }) {
+  const { catalog, map, strategy, schema, api, mode } = useFrames();
+  const [tab, setTab] = useState<"map" | "production" | "flow">(
+    props.initialTab ?? "production",
+  );
+  // R5 门控：实时驾驶（live）下 authoring 全部置灰 + 理由（G7 不静默隐藏）
+  const gated = mode === "drive";
 
   return (
     <div className={PAGE_SCROLL + " space-y-3"}>
       <Card title="规划（离线工作台）"
-            right={<span className="text-[11px] text-amber-500">
-              {sourceKind === "live"
-                ? "当前是 live 源：本页只看静态面，绝不叠加 live"
+            right={<span className={gated ? "text-note text-red-400" : "text-note text-amber-500"}>
+              {gated
+                ? PLAN_GATE_REASON + " —— 切回离线编辑或复盘模式后再改"
                 : "草稿只在本页；提为提案后才进入审批流（§6）"}
             </span>}>
         <div className="flex gap-2 text-xs">
           {TABS.map(([k, label]) => (
-            <button key={k} onClick={() => setTab(k)}
+            <button key={k} onClick={() => setTab(k)} disabled={gated}
+                    title={gated ? PLAN_GATE_REASON : undefined}
                     className={"rounded border px-2 py-1 "
-                      + (tab === k ? "border-neutral-500" : "border-neutral-800 text-neutral-500")}>
+                      + (gated ? "cursor-not-allowed border-neutral-800 text-ghost" : "")
+                      + (!gated && tab === k ? "border-neutral-500" : "")
+                      + (!gated && tab !== k ? "border-neutral-800 text-faint" : "")}>
               {label}
             </button>
           ))}
         </div>
       </Card>
 
-      {tab === "map" && <MapPlanning map={map} />}
-      {tab === "production" && <ProductionPlanning catalog={catalog} map={map} apiOk={api.ok} />}
-      {tab === "flow" && <FlowAssembly graph={strategy} schema={schema} />}
+      {!gated && tab === "map" && <MapPlanning map={map} />}
+      {!gated && tab === "production" && (
+        <ProductionPlanning catalog={catalog} map={map} apiOk={api.ok} />
+      )}
+      {!gated && tab === "flow" && <FlowAssembly graph={strategy} schema={schema} />}
+      {gated && (
+        <Card title="实时驾驶中不可编辑">
+          <Empty text={PLAN_GATE_REASON + " —— 切回「离线编辑」或「复盘」模式后再来"} />
+        </Card>
+      )}
     </div>
   );
 }
@@ -62,44 +78,44 @@ function MapPlanning(props: { map: MapStatic | null }) {
         <ul className="max-h-72 space-y-1 overflow-auto">
           {map.build_slots.map((s) => (
             <li key={s.name} className="text-neutral-300">
-              <b>{s.name}</b> <span className="text-neutral-500">{s.kind} {s.size}×{s.size}</span>
-              <span className="ml-2 text-[10px] text-neutral-600">
+              <b>{s.name}</b> <span className="text-faint">{s.kind} {s.size}×{s.size}</span>
+              <span className="ml-2 text-note text-ghost">
                 tl {s.tl.join(",")} → br {s.br.join(",")}
               </span>
             </li>
           ))}
         </ul>
-        <div className="mt-1 text-[10px] text-neutral-600">
+        <div className="mt-1 text-note text-ghost">
           br / build_point / reported_position 由后端按 ADR-0027 算好 —— 前端零几何换算。
         </div>
       </Card>
       <Card title="点位与区域">
-        <div className="text-neutral-400">点位（PosMark）</div>
+        <div className="text-dim">点位（PosMark）</div>
         <ul className="space-y-1">
           {map.pos_marks.map((m) => (
             <li key={m.name} className="text-neutral-300">
-              <b>{m.name}</b> <span className="text-neutral-500">({m.pos.join(", ")})</span>
-              {m.description_zh && <span className="ml-1 text-[11px] text-neutral-600">{m.description_zh}</span>}
+              <b>{m.name}</b> <span className="text-faint">({m.pos.join(", ")})</span>
+              {m.description_zh && <span className="ml-1 text-note text-ghost">{m.description_zh}</span>}
             </li>
           ))}
         </ul>
-        <div className="mt-2 text-neutral-400">区域（leaf）</div>
+        <div className="mt-2 text-dim">区域（leaf）</div>
         <ul className="space-y-1">
           {map.regions.leaf.map((r) => (
             <li key={r.stable_id} className="text-neutral-300">
-              <b>{r.display_name_zh}</b> <span className="text-neutral-500">({r.stable_id})</span>
+              <b>{r.display_name_zh}</b> <span className="text-faint">({r.stable_id})</span>
               {r.build_slots.length > 0 && (
-                <span className="ml-1 text-[10px] text-neutral-600">槽位 {r.build_slots.join(", ")}</span>
+                <span className="ml-1 text-note text-ghost">槽位 {r.build_slots.join(", ")}</span>
               )}
             </li>
           ))}
         </ul>
       </Card>
       <Card title="放置语法速查">
-        <pre className="rounded bg-neutral-950 p-2 text-[11px] text-neutral-300">
+        <pre className="rounded bg-neutral-950 p-2 text-note text-neutral-300">
           {'{ kind: "exact", mark: "rax_1" }\n{ kind: "in_region", region: "main_build" }'}
         </pre>
-        <div className="mt-1 text-[10px] text-neutral-600">
+        <div className="mt-1 text-note text-ghost">
           没有 placement 的 build 在编译期就非法。地形
           {map.terrain ? "已下发（可在地图页看）" : "未下发（sim/离线为纯色底）"}。
         </div>
@@ -159,7 +175,7 @@ function ProductionPlanning(props: {
   };
 
   return (
-    <Card title="生产规划" right={<span className="text-[11px] text-neutral-500">
+    <Card title="生产规划" right={<span className="text-note text-faint">
       矿 {cost.minerals} · 气 {cost.vespene} · 供给 {cost.supply}
       {cost.missing.length > 0 && (
         <span className="ml-1 text-amber-400">缺目录项：{cost.missing.join(", ")}</span>
@@ -170,7 +186,7 @@ function ProductionPlanning(props: {
                 onClick={() => setItems((l) => [...l, emptyItem()])}>+ 加一项</button>
         <button className="rounded border border-neutral-700 px-2 py-1 text-xs"
                 onClick={() => setItems([])}>清空</button>
-        <span className="text-[11px] text-neutral-600">
+        <span className="text-note text-ghost">
           build 必须有 placement；train / assign_workers 不需要
         </span>
       </div>
@@ -180,7 +196,7 @@ function ProductionPlanning(props: {
           {items.map((it, i) => (
             <div key={it.id} className="rounded border border-neutral-800 p-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="w-6 text-neutral-600">{i}.</span>
+                <span className="w-6 text-ghost">{i}.</span>
                 <select value={it.op}
                         onChange={(e) => update(it.id, { op: e.target.value as DraftItem["op"] })}
                         className="rounded border border-neutral-700 bg-neutral-950 px-1 text-xs">
@@ -200,7 +216,7 @@ function ProductionPlanning(props: {
                     <input type="number" min={0} value={it.count}
                            onChange={(e) => update(it.id, { count: Number(e.target.value) })}
                            className="w-16 rounded border border-neutral-700 bg-neutral-950 px-1 text-xs" />
-                    <span className="text-[10px] text-neutral-600">目标值（维持 N 个，幂等）</span>
+                    <span className="text-note text-ghost">目标值（维持 N 个，幂等）</span>
                   </>
                 ) : (
                   <>
@@ -231,7 +247,7 @@ function ProductionPlanning(props: {
                 <button className="ml-auto text-red-400"
                         onClick={() => setItems((l) => l.filter((x) => x.id !== it.id))}>×</button>
               </div>
-              <div className="mt-0.5 pl-8 text-[10px] text-neutral-600">{describeItem(it)}</div>
+              <div className="mt-0.5 pl-8 text-note text-ghost">{describeItem(it)}</div>
             </div>
           ))}
         </div>
@@ -273,8 +289,8 @@ function FlowAssembly(props: {
                     className={"w-full rounded border p-2 text-left "
                       + (n.id === step?.step_id ? "border-neutral-500" : "border-neutral-800")}>
               <span className="font-medium text-neutral-200">{n.id}</span>
-              {n.id === graph.initial_step && <span className="ml-2 text-[10px] text-neutral-500">起点</span>}
-              <span className="ml-2 text-[10px] text-neutral-600">
+              {n.id === graph.initial_step && <span className="ml-2 text-note text-faint">起点</span>}
+              <span className="ml-2 text-note text-ghost">
                 {graph.edges
                   .filter((e: { from: string }) => e.from === n.id)
                   .map((e: { to: string }) => "→" + e.to)
@@ -283,7 +299,7 @@ function FlowAssembly(props: {
             </button>
           ))}
         </div>
-        <div className="mt-2 text-[10px] text-neutral-600">
+        <div className="mt-2 text-note text-ghost">
           转移上限 {Object.entries(graph.loop_limits).map(([k, v]) => k + "=" + v).join("、") || "—"} ·
           槽位 {graph.group_slots.map((s: string) => s + "→" + (graph.bindings[s] ?? "?")).join("、")}
         </div>
@@ -294,15 +310,15 @@ function FlowAssembly(props: {
             {branches.map((b) => (
               <li key={b.index} className="rounded border border-neutral-800 p-2">
                 <div className="flex gap-2 text-xs">
-                  <span className="text-neutral-500">#{b.index}</span>
+                  <span className="text-faint">#{b.index}</span>
                   <span>{b.id ?? "（未命名）"}</span>
-                  <span className="text-neutral-500">{b.when === null ? "else" : "when"}</span>
+                  <span className="text-faint">{b.when === null ? "else" : "when"}</span>
                 </div>
                 {b.when !== null && <code className="mt-1 block text-sky-300">{b.when}</code>}
                 {b.actions.length > 0 && (
                   <ul className="mt-1 text-xs text-neutral-300">
                     {b.actions.map((a, i) => (
-                      <li key={i} className={a.forbidden ? "text-neutral-600" : ""}>
+                      <li key={i} className={a.forbidden ? "text-ghost" : ""}>
                         → {a.text}
                         {a.forbidden && <span className="ml-1 text-amber-600">（不可用：{a.forbidden}）</span>}
                       </li>
@@ -317,7 +333,7 @@ function FlowAssembly(props: {
       <Card title="声明与别名" className="lg:col-span-2">
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           <div>
-            <div className="text-neutral-400">参数声明</div>
+            <div className="text-dim">参数声明</div>
             {Object.entries(graph.params).map(([k, v]) => (
               <div key={k} className="text-xs">
                 {k} : {String((v as Record<string, unknown>)["type"])}
@@ -326,14 +342,14 @@ function FlowAssembly(props: {
             ))}
           </div>
           <div>
-            <div className="text-neutral-400">别名（definitions）</div>
+            <div className="text-dim">别名（definitions）</div>
             {Object.entries(graph.definitions).map(([k, v]) => (
               <div key={k} className="text-xs">{k} = <code>{renderValue(v)}</code></div>
             ))}
             {Object.keys(graph.definitions).length === 0 && <Empty text="无" />}
           </div>
         </div>
-        <div className="mt-2 border-t border-neutral-800 pt-2 text-[10px] text-neutral-600">
+        <div className="mt-2 border-t border-neutral-800 pt-2 text-note text-ghost">
           AST 编辑（改结构）按决策 U8 留到 next —— 现在先把「看与导出」做扎实；
           导出按钮把 static/strategy 原样存为 JSON。
         </div>

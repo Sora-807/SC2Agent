@@ -52,13 +52,13 @@ export function ChatDock(props: {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="ml-2 flex w-8 shrink-0 flex-col items-center gap-2 rounded border border-neutral-800 py-2 text-xs text-neutral-500"
+        className="ml-2 flex w-8 shrink-0 flex-col items-center gap-2 rounded border border-neutral-800 py-2 text-xs text-faint"
         title="展开对话栏"
       >
         <span>◀</span>
         <span className="[writing-mode:vertical-rl]">对话</span>
         {pending.length > 0 && (
-          <span className="rounded bg-fuchsia-700 px-1 text-[10px] text-white">{pending.length}</span>
+          <span className="rounded bg-fuchsia-700 px-1 text-note text-white">{pending.length}</span>
         )}
       </button>
     );
@@ -69,20 +69,20 @@ export function ChatDock(props: {
       <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-2">
         <span className="font-semibold">对话</span>
         {pending.length > 0 && (
-          <span className="rounded bg-fuchsia-700 px-1.5 text-[11px] text-white">
+          <span className="rounded bg-fuchsia-700 px-1.5 text-note text-white">
             待审批 {pending.length}
           </span>
         )}
         <button
-          className="ml-auto text-[11px] text-neutral-500 hover:text-neutral-300"
+          className="ml-auto text-note text-faint hover:text-neutral-300"
           onClick={() => setShowAll((v) => !v)}
         >{showAll ? "只看待审批" : "看全部"}</button>
-        <button className="text-neutral-500" onClick={() => setOpen(false)} title="收起">▶</button>
+        <button className="text-faint" onClick={() => setOpen(false)} title="收起">▶</button>
       </div>
 
       <div className="flex-1 space-y-2 overflow-auto p-3 text-sm">
         {shown.length === 0 ? (
-          <div className="text-neutral-600">
+          <div className="text-ghost">
             {rows.length === 0
               ? "暂无提案。agent 接上后（B10）会在这里推草稿，你审批。"
               : "没有待审批的提案（点上面「看全部」查看历史）。"}
@@ -96,23 +96,23 @@ export function ChatDock(props: {
                 (STATUS_TONE[p.status] ?? "border-neutral-800") +
                 (props.selected === p.id ? " ring-1 ring-neutral-400" : "")}
             >
-              <div className="flex items-baseline gap-1 text-[10px] text-neutral-500">
+              <div className="flex items-baseline gap-1 text-note text-faint">
                 <span>{p.author === "agent" ? "agent" : "你"}</span>
                 <span>· {fmtTime(p.created_at)}</span>
                 <span>· {p.kind}</span>
                 <span className="ml-auto">{p.status}</span>
               </div>
               <div className="mt-1 font-medium text-neutral-100">{p.title_zh}</div>
-              <div className="mt-1 line-clamp-3 text-neutral-400">{p.rationale_zh}</div>
-              <div className="mt-1 flex items-center gap-2 text-[10px]">
-                <span className="text-neutral-600">{p.hunks.length} 条改动</span>
+              <div className="mt-1 line-clamp-3 text-dim">{p.rationale_zh}</div>
+              <div className="mt-1 flex items-center gap-2 text-note">
+                <span className="text-ghost">{p.hunks.length} 条改动</span>
                 {p.validation?.ok === false && (
                   <span className="text-red-400">校验未通过</span>
                 )}
                 {p.preview?.kind === "projection_pair" && (
                   <span className="text-emerald-500">可看双投影</span>
                 )}
-                <span className="ml-auto text-neutral-500">
+                <span className="ml-auto text-faint">
                   {props.selected === p.id ? "收起 ▾" : "打开 ▸"}
                 </span>
               </div>
@@ -128,9 +128,9 @@ export function ChatDock(props: {
           placeholder={api.ok
             ? "和 agent 商量打法…（agent 接入见 B10；提案通道已通，后端已能收提案）"
             : "后端未连接"}
-          className="w-full resize-none rounded border border-neutral-800 bg-neutral-950 p-2 text-sm text-neutral-400 placeholder:text-neutral-600"
+          className="w-full resize-none rounded border border-neutral-800 bg-neutral-950 p-2 text-sm text-dim placeholder:text-ghost"
         />
-        <div className="mt-1 text-[10px] text-neutral-600">
+        <div className="mt-1 text-note text-ghost">
           按设计不做快捷指令按钮：agent 推草稿、你审批。
         </div>
       </div>

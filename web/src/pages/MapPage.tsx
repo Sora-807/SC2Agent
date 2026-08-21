@@ -61,9 +61,9 @@ export function MapPage() {
                       }
                     />
                     <span>{l.label}</span>
-                    {!av.ok && <span className="text-[10px] text-amber-500">不可用</span>}
+                    {!av.ok && <span className="text-note text-amber-500">不可用</span>}
                   </label>
-                  {!av.ok && <div className="ml-6 text-[10px] text-neutral-600">{av.why}</div>}
+                  {!av.ok && <div className="ml-6 text-note text-ghost">{av.why}</div>}
                 </li>
               );
             })}
@@ -72,7 +72,7 @@ export function MapPage() {
             <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)} />
             <span>位置插值</span>
           </label>
-          <div className="ml-6 text-[10px] text-neutral-600">
+          <div className="ml-6 text-note text-ghost">
             只插值坐标；进度条与计数一律用当帧原值（不伪造进度动画）
           </div>
         </Card>
@@ -92,7 +92,7 @@ export function MapPage() {
           {selected ? (
             <ul className="space-y-0.5 text-neutral-300">
               <li className="font-medium">{zhOf(selected.stable_id)}{selected.form ? `（${selected.form}）` : ""}</li>
-              <li className="text-neutral-500">{selected.stable_id} · tag {selected.tag}</li>
+              <li className="text-faint">{selected.stable_id} · tag {selected.tag}</li>
               <li>归属 {selected.owner}{selected.group_id ? ` · 组 ${selected.group_id}` : ""}</li>
               <li>坐标 {selected.pos[0].toFixed(1)}, {selected.pos[1].toFixed(1)}</li>
               <li>HP {Math.round(selected.hp)}/{Math.round(selected.hp_max)}
@@ -101,9 +101,9 @@ export function MapPage() {
                 <li className="text-amber-400">在建 {(selected.build_progress * 100).toFixed(0)}%</li>
               )}
               {selected.footprint && (
-                <li className="text-neutral-500">
+                <li className="text-faint">
                   footprint {selected.footprint.tl.join(",")} → {selected.footprint.br.join(",")}
-                  <span className="ml-1 text-[10px]">（后端按 ADR-0027 算好）</span>
+                  <span className="ml-1 text-note">（后端按 ADR-0027 算好）</span>
                 </li>
               )}
               {selected.producing && selected.producing.length > 0 && (
@@ -111,9 +111,9 @@ export function MapPage() {
               )}
               {selected.addon && <li>挂件 {selected.addon}</li>}
               {selected.order && (
-                <li className="text-neutral-400">
+                <li className="text-dim">
                   命令 {selected.order.atom ?? "（未映射）"}
-                  <span className="ml-1 text-[10px] text-neutral-600">
+                  <span className="ml-1 text-note text-ghost">
                     raw {selected.order.ability_raw}
                   </span>
                 </li>
@@ -131,15 +131,15 @@ export function MapPage() {
               {flow.groups.map((g) => (
                 <li key={g.group_id}>
                   <span className="font-medium">{g.group_id}</span>
-                  <span className="ml-2 rounded bg-neutral-800 px-1.5 text-[10px]">{g.refill_state}</span>
-                  <div className="text-neutral-400">
+                  <span className="ml-2 rounded bg-neutral-800 px-1.5 text-note">{g.refill_state}</span>
+                  <div className="text-dim">
                     {Object.entries(g.composition).map(([id, c]) => (
                       <span key={id} className="mr-2">
                         {zhOf(id)} {c.current}/{c.target}
                       </span>
                     ))}
                   </div>
-                  <div className="text-[10px] text-neutral-600">
+                  <div className="text-note text-ghost">
                     {g.center ? `组心 ${g.center[0].toFixed(1)}, ${g.center[1].toFixed(1)}` : "组心 —"}
                     {g.hp_ratio !== null ? ` · HP ${(g.hp_ratio * 100).toFixed(0)}%` : ""}
                   </div>
@@ -155,20 +155,20 @@ export function MapPage() {
               {production.in_flight.map((f, i) => (
                 <li key={i}>
                   {zhOf(f.stable_id)}
-                  <span className="ml-1 text-[10px] text-neutral-500">
+                  <span className="ml-1 text-note text-faint">
                     {f.kind} · 等待 {f.frames_waited} 帧
                     {f.retries > 0 ? ` · 重试 ${f.retries}` : ""}
                     {f.builder_tag === null ? " · 待重试" : ""}
                   </span>
                   {f.attempted_slots.length > 0 && (
-                    <div className="text-[10px] text-neutral-600">
+                    <div className="text-note text-ghost">
                       已试槽位 {f.attempted_slots.join("、")}
                     </div>
                   )}
                 </li>
               ))}
             </ul>
-            <div className="mt-1 text-[10px] text-neutral-600">
+            <div className="mt-1 text-note text-ghost">
               开启「摆放调试」图层可在地图上看到期望落点与已试槽位
             </div>
           </Card>

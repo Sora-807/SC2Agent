@@ -109,7 +109,7 @@ export function ProjectionChart(props: { frame: ProjectionFrame; height?: number
   return (
     <div>
       <UPlotChart data={data} options={options} height={props.height ?? 190} />
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-faint">
         <span>视野 {fmtMMSS(series.from)} → {fmtMMSS(series.to)}（+{Math.round(series.to - series.from)}s）</span>
         <span>采样 {series.t.length} 点 / 1 秒一点</span>
         <span>基于 seq {props.frame.based_on_seq}</span>
@@ -118,7 +118,7 @@ export function ProjectionChart(props: { frame: ProjectionFrame; height?: number
             ? "当前队列 " + props.frame.source.queue_name
             : "草稿 " + props.frame.source.plan_id}
         </span>
-        <span className="text-neutral-600">
+        <span className="text-ghost">
           竖虚线=卡点 · 底部长刻度=完成 · 短刻度=开工
         </span>
         {markers.filter((m) => m.kind === "stalled").length > 0 && (

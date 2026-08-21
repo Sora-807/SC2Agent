@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/*
+ * G6 字号/暗度 token（F13d）—— 全站只有这 6 个字号。
+ * px 值与 canvas/theme.ts 的 FONT_PX 是同一套 token（theme.test.ts 锁死两边同步）；
+ * DOM 侧类名由 tailwind v4 @utility 提供，页面里禁止再出现裸 text-[Npx]。
+ */
+@utility text-metric-xl { font-size: 22px; line-height: 1.75rem; }
+@utility text-metric { font-size: 15px; line-height: 1.25rem; }
+@utility text-label { font-size: 12px; line-height: 1rem; }
+@utility text-body { font-size: 13px; line-height: 1.25rem; }
+@utility text-note { font-size: 11px; line-height: 1rem; }
+@utility text-mono { font-size: 11px; line-height: 1rem; font-family: ui-monospace, monospace; }
+
+/* 次级文字三档暗度：dim 能读 / faint 辅助说明 / ghost 出处与红线注释（不删但不能和数据同权重） */
+@utility text-dim { color: var(--color-neutral-400); }
+@utility text-faint { color: var(--color-neutral-500); }
+@utility text-ghost { color: var(--color-neutral-600); }
+
 :root { color-scheme: dark; }
 body { margin: 0; background: #0b0d10; color: #d7dae0;
   font-family: ui-sans-serif, system-ui, "Microsoft YaHei", sans-serif; }

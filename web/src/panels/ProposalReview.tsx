@@ -21,7 +21,7 @@ const STATUS_TONE: Record<string, string> = {
   "待审批": "bg-fuchsia-900/60 text-fuchsia-200",
   "已接受": "bg-emerald-900/60 text-emerald-200",
   "部分接受": "bg-sky-900/60 text-sky-200",
-  "已拒绝": "bg-neutral-800 text-neutral-400",
+  "已拒绝": "bg-neutral-800 text-dim",
   "已失效": "bg-amber-900/50 text-amber-300",
 };
 
@@ -70,19 +70,19 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
     <div className="space-y-3">
       <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className={"rounded px-1.5 text-[11px] " + (STATUS_TONE[p.status] ?? "bg-neutral-800")}>
+          <span className={"rounded px-1.5 text-note " + (STATUS_TONE[p.status] ?? "bg-neutral-800")}>
             {p.status}
           </span>
           <h2 className="font-semibold text-neutral-100">{p.title_zh}</h2>
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-note text-faint">
             {p.author === "agent" ? "agent 提出" : "你提出"} · {fmtTime(p.created_at)} · {p.kind}
           </span>
         </div>
         <div className="mt-2 rounded bg-neutral-950/60 p-2 text-neutral-300">
-          <span className="text-neutral-500">理由：</span>{p.rationale_zh}
+          <span className="text-faint">理由：</span>{p.rationale_zh}
         </div>
         {p.anchor && (
-          <div className="mt-1 text-[11px] text-neutral-500">
+          <div className="mt-1 text-note text-faint">
             基于 seq {p.anchor.seq}（{fmtTime(p.anchor.game_time)}）
             {anchorAge !== null && anchorAge > 0 && ` · 已过去 ${anchorAge.toFixed(0)}s`}
             {stale && <span className="ml-1 text-amber-400">
@@ -99,7 +99,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
           </div>
         )}
         {p.decision && (
-          <div className="mt-2 text-[11px] text-neutral-400">
+          <div className="mt-2 text-note text-dim">
             决定于 {fmtTime(p.decision.at)}
             {p.decision.accepted_hunks.length > 0 &&
               ` · 接受了 ${p.decision.accepted_hunks.join("、")}`}
@@ -127,7 +127,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
                 />
                 <div>
                   <div className="text-neutral-200">{h.text_zh}</div>
-                  <div className="text-[10px] text-neutral-600">
+                  <div className="text-note text-ghost">
                     {h.id} · {h.kind} · {JSON.stringify(h.payload)}
                   </div>
                 </div>
@@ -140,7 +140,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
       <PreviewBlock proposal={p} pair={pair} error={previewErr} zhOf={zhOf} />
 
       {!canAct && (
-        <div className="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-[12px] text-neutral-400">
+        <div className="rounded border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-label text-dim">
           不能接受：{(gate as { reason: string }).reason}
         </div>
       )}
@@ -164,7 +164,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
               title={reason.trim() ? "" : "拒绝必须填理由（理由会回流给 agent）"}
               onClick={() => void act(() => rejectProposal(p.id, reason))}
             >拒绝</button>
-            <span className="text-[11px] text-neutral-500">
+            <span className="text-note text-faint">
               接受 = 走与 agent 相同的命令路径（不开后门）
             </span>
           </div>
@@ -173,7 +173,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="拒绝理由（必填）／接受时的备注（可选）—— 理由会回流给 agent，否则它会重复推同一个提案"
-            className="w-full resize-none rounded border border-neutral-800 bg-neutral-950 p-2 text-sm placeholder:text-neutral-600"
+            className="w-full resize-none rounded border border-neutral-800 bg-neutral-950 p-2 text-sm placeholder:text-ghost"
           />
           {error && <div className="text-red-400">{error}</div>}
         </div>
@@ -203,19 +203,19 @@ function PreviewBlock(props: {
         ) : props.pair ? (
           <ProjectionPairChart current={props.pair.current} proposed={props.pair.proposed} />
         ) : (
-          <div className="text-neutral-500">正在算两条未来…</div>
+          <div className="text-faint">正在算两条未来…</div>
         )
       ) : kind === "map_overlay" ? (
-        <div className="text-neutral-500">
+        <div className="text-faint">
           地图叠加要 F9 的 `map_plan` patch 模型 —— 后端目前也不能应用这类提案。
         </div>
       ) : kind === "graph_diff" ? (
-        <div className="text-neutral-500">
+        <div className="text-faint">
           策略图 diff 要 F9 的 AST 编辑器 —— 而 flow 提交必须 validate + compile（R6），
           且 live 不能编辑 Strategy（R5）。
         </div>
       ) : (
-        <div className="text-neutral-500">
+        <div className="text-faint">
           这类提案没有可视预览（后端的 validation 里通常写了为什么不能应用）。
         </div>
       )}

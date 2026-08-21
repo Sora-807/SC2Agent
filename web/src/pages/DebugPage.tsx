@@ -44,7 +44,7 @@ export function DebugPage() {
 
   return (
     <div className={PAGE_SCROLL + " space-y-3"}>
-      <Card title="会话" right={<span className="text-[11px] text-neutral-500">
+      <Card title="会话" right={<span className="text-note text-faint">
         游标 {fmtTime(position)} / 范围 {fmtTime(range.from)}–{fmtTime(range.to)}
       </span>}>
         <div className="flex flex-wrap gap-4 text-neutral-300">
@@ -60,7 +60,7 @@ export function DebugPage() {
       <Card
         title="命令流水"
         right={
-          <div className="flex gap-2 text-[11px]">
+          <div className="flex gap-2 text-note">
             <select className="rounded border border-neutral-700 bg-neutral-900 px-1"
                     value={originFilter} onChange={(e) => setOriginFilter(e.target.value)}>
               <option value="">全部来源</option>
@@ -79,7 +79,7 @@ export function DebugPage() {
         ) : (
           <div className="max-h-72 overflow-auto">
             <table className="w-full text-left">
-              <thead className="sticky top-0 bg-neutral-900 text-neutral-500">
+              <thead className="sticky top-0 bg-neutral-900 text-faint">
                 <tr>
                   <th className="w-12">op</th><th className="w-14">seq</th><th className="w-14">时间</th>
                   <th className="w-20">来源</th><th className="w-32">动作</th>
@@ -94,18 +94,18 @@ export function DebugPage() {
                     <td>{o.seq}</td>
                     <td>{fmtTime(o.at)}</td>
                     <td>
-                      <span className="rounded bg-neutral-800 px-1 text-[10px]">{o.origin}</span>
+                      <span className="rounded bg-neutral-800 px-1 text-note">{o.origin}</span>
                     </td>
                     <td>{o.action}</td>
-                    <td className="text-neutral-400" title={o.unit_tags.join(", ")}>
+                    <td className="text-dim" title={o.unit_tags.join(", ")}>
                       {o.unit_tags.length === 1 ? o.unit_tags[0] : o.unit_tags.length + " 个"}
                     </td>
-                    <td className="truncate text-neutral-400" title={JSON.stringify(o.params)}>
+                    <td className="truncate text-dim" title={JSON.stringify(o.params)}>
                       {JSON.stringify(o.params)}
                     </td>
                     <td>
                       {o.apply === null ? (
-                        <span className="text-neutral-600" title="后端没有回报">未知</span>
+                        <span className="text-ghost" title="后端没有回报">未知</span>
                       ) : o.apply.failed ? (
                         <span className="text-red-400" title={o.apply.detail ?? ""}>失败</span>
                       ) : o.apply.ok === null ? (
@@ -116,7 +116,7 @@ export function DebugPage() {
                     </td>
                     <td>
                       {o.landing === null ? (
-                        <span className="text-neutral-600" title="需后端 B9（D7 GameEvent）">未知</span>
+                        <span className="text-ghost" title="需后端 B9（D7 GameEvent）">未知</span>
                       ) : (
                         <span>{o.landing.kind}</span>
                       )}
@@ -127,7 +127,7 @@ export function DebugPage() {
             </table>
           </div>
         )}
-        <div className="mt-1 text-[10px] text-neutral-600">
+        <div className="mt-1 text-note text-ghost">
           `origin` 由后端 `RecordingPort` 打标（不给 `Operation` 加字段）。
           "应用/落地"在 B9 之前恒为"未知" —— 显示未知而不是留空，才不会让人以为一切正常。
         </div>
@@ -137,14 +137,14 @@ export function DebugPage() {
         <Card title="求值诊断">
           {strategy && strategy.eval_diagnostics.length > 0 ? (
             <table className="w-full text-left">
-              <thead className="text-neutral-500">
+              <thead className="text-faint">
                 <tr><th>step</th><th>类型</th><th>细节</th><th className="w-12">次数</th></tr>
               </thead>
               <tbody>
                 {strategy.eval_diagnostics.map((d, i) => (
                   <tr key={i}>
                     <td>{d.step_id}</td><td>{d.kind}</td>
-                    <td className="text-neutral-400">{d.detail}</td><td>{d.count}</td>
+                    <td className="text-dim">{d.detail}</td><td>{d.count}</td>
                   </tr>
                 ))}
               </tbody>
@@ -152,7 +152,7 @@ export function DebugPage() {
           ) : (
             <Empty text="没有诊断记录（条件都正常求出了值）" />
           )}
-          <div className="mt-1 text-[10px] text-neutral-600">
+          <div className="mt-1 text-note text-ghost">
             引擎在这里记"条件其实没求出来"（比较遇 None 降级为 False 等）——
             不看它，一条永远为假的分支会静默地把策略卡住。
           </div>
@@ -164,12 +164,12 @@ export function DebugPage() {
               {production.dropped.map((d, i) => (
                 <li key={i}>
                   <span className="text-red-400">{d.op}</span> {zhOf(d.stable_id)}
-                  <div className="text-neutral-400">{d.reason}</div>
+                  <div className="text-dim">{d.reason}</div>
                 </li>
               ))}
             </ul>
           ) : <Empty text="没有被丢弃的队列项" />}
-          <div className="mt-1 text-[10px] text-neutral-600">
+          <div className="mt-1 text-note text-ghost">
             R7：配置错误降级但**不静默** —— 丢弃必须留下原因。
           </div>
         </Card>
@@ -181,8 +181,8 @@ export function DebugPage() {
             {alerts.alerts.map((a) => (
               <li key={a.id + a.at}>
                 <span className={sevClass(a.severity)}>[{a.severity}]</span>{" "}
-                <span className="text-neutral-500">{fmtTime(a.at)}</span> {a.text_zh}
-                <span className="ml-1 text-[10px] text-neutral-600">
+                <span className="text-faint">{fmtTime(a.at)}</span> {a.text_zh}
+                <span className="ml-1 text-note text-ghost">
                   {a.kind} · 来源 {a.source}
                   {a.eta !== null ? " · eta " + a.eta + "s" : ""}
                 </span>
@@ -195,7 +195,7 @@ export function DebugPage() {
       <Card
         title="原始帧检查器"
         right={
-          <select className="rounded border border-neutral-700 bg-neutral-900 px-1 text-[11px]"
+          <select className="rounded border border-neutral-700 bg-neutral-900 px-1 text-note"
                   value={inspect} onChange={(e) => setInspect(e.target.value as Topic)}>
             {(["frame/world", "frame/flow", "frame/production", "frame/economy",
                "frame/projection", "frame/ops", "frame/alerts", "frame/session"] as Topic[])
@@ -204,7 +204,7 @@ export function DebugPage() {
         }
       >
         <RawInspector topic={inspect} />
-        <div className="mt-1 text-[10px] text-neutral-600">
+        <div className="mt-1 text-note text-ghost">
           这里是唯一允许出现 burnysc2 原生名的地方（`ability_raw` 是诊断字段，不是类型身份）。
         </div>
       </Card>
@@ -226,7 +226,7 @@ function RawInspector(props: { topic: Topic }) {
   if (!payload) return <Empty text="该 topic 本帧没有数据" />;
   const text = JSON.stringify(payload, null, 1);
   return (
-    <pre className="max-h-72 overflow-auto rounded bg-neutral-950 p-2 text-[11px] text-neutral-300">
+    <pre className="max-h-72 overflow-auto rounded bg-neutral-950 p-2 text-note text-neutral-300">
       {text.length > 40000 ? text.slice(0, 40000) + "\n…（已截断）" : text}
     </pre>
   );

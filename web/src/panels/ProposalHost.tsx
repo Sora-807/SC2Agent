@@ -32,7 +32,7 @@ export function ProposalHost(props: {
 
   return (
     <div className={PAGE_SCROLL + " space-y-2"}>
-      <button className="text-[11px] text-neutral-500 hover:text-neutral-300"
+      <button className="text-note text-faint hover:text-neutral-300"
               onClick={props.onClose}>← 返回</button>
       {err && <div className="text-red-400">取提案失败：{err}</div>}
       {p ? (

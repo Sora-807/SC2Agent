@@ -22,7 +22,7 @@ export function StatusChip() {
   return (
     <div className="pointer-events-none absolute bottom-2 right-2 z-20 flex flex-col items-end gap-1">
       {open && (
-        <div className="pointer-events-auto w-80 rounded border border-neutral-700 bg-neutral-950/95 p-2 text-[11px] leading-relaxed text-neutral-400 shadow-lg">
+        <div className="pointer-events-auto w-80 rounded border border-neutral-700 bg-neutral-950/95 p-2 text-note leading-relaxed text-dim shadow-lg">
           <div className="mb-1 font-medium text-neutral-200">契约与来源</div>
           <ul className="space-y-0.5">
             <li>
@@ -33,7 +33,7 @@ export function StatusChip() {
                   <span className={drift ? "text-red-400" : "text-neutral-200"}>{api.rev ?? "—"}</span>
                 </>
               ) : (
-                <span className="ml-1 text-neutral-600">（后端未连接）</span>
+                <span className="ml-1 text-ghost">（后端未连接）</span>
               )}
             </li>
             <li>帧源 <span className="text-neutral-200">{sourceKind}</span> · 当前 seq {seq}</li>
@@ -51,10 +51,10 @@ export function StatusChip() {
       )}
       <button
         className={
-          "pointer-events-auto rounded border px-1.5 py-0.5 text-[10px] tabular-nums " +
+          "pointer-events-auto rounded border px-1.5 py-0.5 text-note tabular-nums " +
           (drift
             ? "border-red-700 bg-red-950/60 text-red-300"
-            : "border-neutral-800 bg-neutral-900/80 text-neutral-500 hover:text-neutral-300")
+            : "border-neutral-800 bg-neutral-900/80 text-faint hover:text-neutral-300")
         }
         title="契约版本与帧源"
         onClick={() => setOpen((v) => !v)}

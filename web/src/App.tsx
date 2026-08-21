@@ -11,7 +11,7 @@ import { IconRail } from "./shell/IconRail";
 import { SessionBar } from "./shell/SessionBar";
 import { StatusChip } from "./shell/StatusChip";
 import { Timeline } from "./shell/Timeline";
-import { useRoute } from "./shell/route";
+import { useRoute, planTabOf } from "./shell/route";
 import { Overview } from "./pages/Overview";
 import { MapPage } from "./pages/MapPage";
 import { DebugPage } from "./pages/DebugPage";
@@ -40,7 +40,7 @@ export function App() {
       <div className="h-[100dvh] overflow-y-auto p-6 text-red-400">
         <h1 className="text-lg font-bold">帧源出错</h1>
         <pre className="mt-3 whitespace-pre-wrap text-sm">{error}</pre>
-        <p className="mt-3 text-neutral-400">
+        <p className="mt-3 text-dim">
           如果是"夹具清单读不到"，先在 web/ 下跑 <code>pnpm gen:fixtures</code>。
         </p>
       </div>
@@ -61,7 +61,7 @@ export function App() {
         <IconRail page={page} go={go} />
         <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-3">
           {loading || fixtures.length === 0 ? (
-            <div className="p-6 text-neutral-500">加载帧…</div>
+            <div className="p-6 text-faint">加载帧…</div>
           ) : openProposal ? (
             <ProposalHost id={openProposal} fromFrame={reviewing}
                           onClose={() => setOpenProposal(null)} />
@@ -71,7 +71,10 @@ export function App() {
               {page === "map" && <MapPage />}
               {page === "production" && <ProductionPage />}
               {page === "flow" && <FlowPage />}
-              {page === "planning" && <PlanningPage />}
+              {/* 规划三入口同组件：rail 键 → 初始 tab（F13c） */}
+              {(page === "plan-map" || page === "plan-production" || page === "plan-flow") && (
+                <PlanningPage initialTab={planTabOf(page)} />
+              )}
               {page === "debug" && <DebugPage />}
             </>
           )}

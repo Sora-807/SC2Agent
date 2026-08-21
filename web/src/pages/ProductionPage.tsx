@@ -28,7 +28,7 @@ function useCommands() {
 function CommandBanner(props: { last: CommandResult | null; writable: boolean }) {
   if (!props.writable) {
     return (
-      <div className="rounded border border-neutral-800 bg-neutral-900/60 px-2 py-1 text-[11px] text-neutral-500">
+      <div className="rounded border border-neutral-800 bg-neutral-900/60 px-2 py-1 text-note text-faint">
         只读：当前帧源是本地夹具。把帧源切到「后端 API」并启动沙盒会话后可以下命令。
       </div>
     );
@@ -36,14 +36,14 @@ function CommandBanner(props: { last: CommandResult | null; writable: boolean })
   if (!props.last) return null;
   if (props.last.ok) {
     return (
-      <div className="rounded border border-emerald-800 bg-emerald-950/40 px-2 py-1 text-[11px] text-emerald-300">
+      <div className="rounded border border-emerald-800 bg-emerald-950/40 px-2 py-1 text-note text-emerald-300">
         已接受（seq {props.last.accepted_seq}）· 下一 step 生效
       </div>
     );
   }
   const tone = props.last.reason === "stale" ? "amber" : "red";
   return (
-    <div className={`rounded border px-2 py-1 text-[11px] ${tone === "amber"
+    <div className={`rounded border px-2 py-1 text-note ${tone === "amber"
       ? "border-amber-800 bg-amber-950/40 text-amber-300"
       : "border-red-800 bg-red-950/40 text-red-300"}`}>
       {props.last.reason === "stale"
@@ -72,7 +72,7 @@ export function ProductionPage() {
           title="生产队列"
           className="xl:col-span-2"
           right={
-            <span className="text-[11px] text-neutral-500">
+            <span className="text-note text-faint">
               队首门控：队首不可行则整队冻结
             </span>
           }
@@ -84,11 +84,11 @@ export function ProductionPage() {
                   <span className="font-medium">{q.name}</span>
                   <span
                     className={
-                      "rounded px-1.5 text-[11px] " +
+                      "rounded px-1.5 text-note " +
                       (q.head_status === "阻塞"
                         ? "bg-amber-900/60 text-amber-300"
                         : q.head_status === "空"
-                          ? "bg-neutral-800 text-neutral-400"
+                          ? "bg-neutral-800 text-dim"
                           : "bg-emerald-900/50 text-emerald-300")
                     }
                   >
@@ -106,7 +106,7 @@ export function ProductionPage() {
                   <Empty text="队列为空" />
                 ) : (
                   <table className="w-full text-left">
-                    <thead className="text-neutral-500">
+                    <thead className="text-faint">
                       <tr>
                         <th className="w-8">#</th><th className="w-28">op</th>
                         <th>目标</th><th className="w-12">数量</th>
@@ -122,11 +122,11 @@ export function ProductionPage() {
                           <td>{it.op}</td>
                           <td>
                             {it.op === "assign_workers"
-                              ? <>维持 {it.task} <span className="text-[10px] text-neutral-500">（目标值语义）</span></>
+                              ? <>维持 {it.task} <span className="text-note text-faint">（目标值语义）</span></>
                               : zhOf(it.stable_id)}
                           </td>
                           <td>{it.count}</td>
-                          <td className="text-neutral-400">
+                          <td className="text-dim">
                             {it.placement
                               ? it.placement.kind === "exact"
                                 ? "槽位 " + it.placement.mark
@@ -140,7 +140,7 @@ export function ProductionPage() {
                               <>
                                 {it.index > 0 && (
                                   <button
-                                    className="mr-1 rounded border border-neutral-700 px-1 text-[10px]"
+                                    className="mr-1 rounded border border-neutral-700 px-1 text-note"
                                     title="上移一位"
                                     onClick={() => {
                                       const n = q.items.length;
@@ -153,7 +153,7 @@ export function ProductionPage() {
                                   >↑</button>
                                 )}
                                 <button
-                                  className="rounded border border-neutral-700 px-1 text-[10px] text-red-400"
+                                  className="rounded border border-neutral-700 px-1 text-note text-red-400"
                                   title="从队列移除"
                                   onClick={() => void cmd.run({ kind: "queue", op: "remove",
                                     body: { name: q.name, index: it.index } })}
@@ -173,11 +173,11 @@ export function ProductionPage() {
           {production && production.dropped.length > 0 && (
             <div className="mt-2 border-t border-neutral-800 pt-2">
               <div className="text-red-400">掉项审计（R7：降级但不静默）</div>
-              <ul className="mt-1 space-y-0.5 text-neutral-400">
+              <ul className="mt-1 space-y-0.5 text-dim">
                 {production.dropped.map((d, i) => (
                   <li key={i}>
                     {d.op} {zhOf(d.stable_id)} —— {d.reason}
-                    <span className="ml-1 text-[10px] text-neutral-600">
+                    <span className="ml-1 text-note text-ghost">
                       {d.at === null ? "（后端未记时间）" : fmtTime(d.at)}
                     </span>
                   </li>
@@ -188,14 +188,14 @@ export function ProductionPage() {
         </Card>
 
         <Card title="经济维持器" right={
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-note text-faint">
             {economy ? `领地 ${economy.domain_workers} 人` : ""}
           </span>
         }>
           {economy ? (
             <>
               <table className="w-full text-left">
-                <thead className="text-neutral-500">
+                <thead className="text-faint">
                   <tr><th>任务</th><th>配额</th><th>可达</th><th>实际</th></tr>
                 </thead>
                 <tbody>
@@ -219,7 +219,7 @@ export function ProductionPage() {
                             }}
                           />
                         ) : t.quota === null ? (
-                          <span className="text-neutral-600">按比例</span>
+                          <span className="text-ghost">按比例</span>
                         ) : t.quota}
                       </td>
                       <td>{t.target}</td>
@@ -228,11 +228,11 @@ export function ProductionPage() {
                   ))}
                 </tbody>
               </table>
-              <div className="mt-1 text-[10px] text-neutral-600">
+              <div className="mt-1 text-note text-ghost">
                 配额是<b>持久</b>的（气矿没建好也挂着）；可达目标受节点容量与人数夹紧
               </div>
               <div className="mt-2 border-t border-neutral-800 pt-2">
-                <div className="text-neutral-400">
+                <div className="text-dim">
                   本帧差量 {economy.emitted_count} 条
                   {economy.emitted_count === 0 && (
                     <span className="ml-1 text-emerald-400">（稳定态零命令）</span>
@@ -244,12 +244,12 @@ export function ProductionPage() {
                       key={n.tag}
                       title={`${n.kind} #${n.tag} ${n.workers}/${n.capacity}`}
                       className={
-                        "rounded px-1 text-[10px] " +
+                        "rounded px-1 text-note " +
                         (n.saturated
                           ? "bg-emerald-900/60 text-emerald-300"
                           : n.workers > 0
                             ? "bg-sky-900/50 text-sky-300"
-                            : "bg-neutral-800 text-neutral-500")
+                            : "bg-neutral-800 text-faint")
                       }
                     >
                       {n.kind === "gas" ? "气" : "矿"}{n.workers}/{n.capacity}
@@ -257,10 +257,10 @@ export function ProductionPage() {
                   ))}
                 </div>
                 {economy.reserved.length > 0 && (
-                  <div className="mt-2 text-neutral-400">
+                  <div className="mt-2 text-dim">
                     建造征用 {economy.reserved.length} 人：
                     {economy.reserved.map((r) => `${r.tag}(${r.owner})`).join("、")}
-                    <div className="text-[10px] text-neutral-600">
+                    <div className="text-note text-ghost">
                       征用期间维持器不会改派它们（否则会毁掉在途建造）
                     </div>
                   </div>
@@ -276,7 +276,7 @@ export function ProductionPage() {
           ? "投影 · 当前队列 " + projection.source.queue_name
           : "投影 · 参考计划"}
         right={
-          <span className="text-[11px]">
+          <span className="text-note">
             {projection?.source.kind === "draft" ? (
               <span className="text-amber-500">
                 队列为空，显示的是参考计划 {projection.source.plan_id}
@@ -289,10 +289,10 @@ export function ProductionPage() {
       >
         {projection ? <ProjectionChart frame={projection} /> : <Empty />}
         {projection && projection.skipped.length > 0 && (
-          <div className="mt-1 text-[11px] text-amber-400">
+          <div className="mt-1 text-note text-amber-400">
             有 {projection.skipped.length} 项没进投影：
             {projection.skipped.map((s) => s.op + "（" + s.reason + "）").join("；")}
-            <span className="ml-1 text-neutral-600">—— 曲线比真实队列少算了这部分</span>
+            <span className="ml-1 text-ghost">—— 曲线比真实队列少算了这部分</span>
           </div>
         )}
       </Card>
@@ -303,11 +303,11 @@ export function ProductionPage() {
 
       <div className="flex gap-2 text-xs">
         <button
-          className={"rounded border px-2 py-1 " + (tab === "queue" ? "border-neutral-500" : "border-neutral-800 text-neutral-500")}
+          className={"rounded border px-2 py-1 " + (tab === "queue" ? "border-neutral-500" : "border-neutral-800 text-faint")}
           onClick={() => setTab("queue")}
         >在途与产线</button>
         <button
-          className={"rounded border px-2 py-1 " + (tab === "catalog" ? "border-neutral-500" : "border-neutral-800 text-neutral-500")}
+          className={"rounded border px-2 py-1 " + (tab === "catalog" ? "border-neutral-500" : "border-neutral-800 text-faint")}
           onClick={() => setTab("catalog")}
         >目录</button>
       </div>
@@ -316,7 +316,7 @@ export function ProductionPage() {
         <Card title="在途建造">
           {production && production.in_flight.length > 0 ? (
             <table className="w-full text-left">
-              <thead className="text-neutral-500">
+              <thead className="text-faint">
                 <tr><th>队列</th><th>目标</th><th>类型</th><th>建造者</th><th>等待</th><th>重试</th><th>已试槽位</th></tr>
               </thead>
               <tbody>
@@ -326,7 +326,7 @@ export function ProductionPage() {
                     <td>{f.builder_tag ?? <span className="text-amber-400">待重试</span>}</td>
                     <td>{f.frames_waited} 帧</td>
                     <td className={f.retries > 0 ? "text-amber-400" : ""}>{f.retries}</td>
-                    <td className="text-neutral-400">{f.attempted_slots.join("、") || "—"}</td>
+                    <td className="text-dim">{f.attempted_slots.join("、") || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -373,8 +373,8 @@ function Gantt(props: { frame: ProjectionFrame; zhOf: (id: string | null) => str
   return (
     <div className="space-y-1">
       {bars.slice(0, 24).map((b) => (
-        <div key={b.id} className="flex items-center gap-2 text-[11px]">
-          <span className="w-24 shrink-0 truncate text-neutral-400">{b.label}</span>
+        <div key={b.id} className="flex items-center gap-2 text-note">
+          <span className="w-24 shrink-0 truncate text-dim">{b.label}</span>
           <div className="relative h-3 flex-1 rounded bg-neutral-900">
             <div
               className={"absolute inset-y-0 rounded " + (b.done ? "bg-emerald-700/70" : "bg-amber-700/60")}
@@ -388,13 +388,13 @@ function Gantt(props: { frame: ProjectionFrame; zhOf: (id: string | null) => str
                    style={{ left: ((s.t - t0) / span) * 100 + "%" }} />
             ))}
           </div>
-          <span className="w-24 shrink-0 text-right text-neutral-600">
+          <span className="w-24 shrink-0 text-right text-ghost">
             {fmtTime(b.from)} → {b.done ? fmtTime(b.to) : "未完"}
           </span>
         </div>
       ))}
       {stalls.length > 0 && (
-        <div className="pt-1 text-[11px] text-red-400">
+        <div className="pt-1 text-note text-red-400">
           卡点：{stalls.map((s) => `${fmtTime(s.t)} ${props.zhOf(s.stable_id)} ${s.reason ?? ""}`).join("；")}
         </div>
       )}
@@ -443,7 +443,7 @@ function CatalogPicker(props: {
         if (rows.length === 0) return null;
         return (
           <div key={role} className="mb-2">
-            <div className="text-neutral-500">{label}</div>
+            <div className="text-faint">{label}</div>
             <div className="mt-1 flex flex-wrap gap-1">
               {rows.map((e) => {
                 const missing = e.prerequisites.filter((p) => !have.has(p));
@@ -467,14 +467,14 @@ function CatalogPicker(props: {
                     onClick={() => item && props.onAdd(item)}
                     title={why + `｜矿 ${e.cost.minerals} 气 ${e.cost.vespene} 供给 ${e.cost.supply} 时间 ${e.build_time}s`}
                     className={
-                      "rounded border px-1.5 py-0.5 text-[11px] " +
+                      "rounded border px-1.5 py-0.5 text-note " +
                       (disabled
-                        ? "border-neutral-800 text-neutral-600"
+                        ? "border-neutral-800 text-ghost"
                         : "border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100")
                     }
                   >
                     {e.display_name_zh}
-                    <span className="ml-1 text-[10px] text-neutral-500">
+                    <span className="ml-1 text-note text-faint">
                       {e.cost.minerals}/{e.cost.vespene}
                     </span>
                   </button>
@@ -484,7 +484,7 @@ function CatalogPicker(props: {
           </div>
         );
       })}
-      <div className="mt-1 text-[10px] text-neutral-600">
+      <div className="mt-1 text-note text-ghost">
         置灰 = 前置不满足 / 只读 / 后端不支持（前置与原因都来自后端，前端不硬编码）。
         建筑默认丢到 home 区域自动找位 —— 没有 placement 的 build 在编译期就非法。
         不支持的队列 op：{Object.entries(props.unsupported).map(([k, v]) => `${k}（${v}）`).join("；") || "无"}

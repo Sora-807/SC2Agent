@@ -199,7 +199,7 @@ export function MapCanvas(props: {
           props.onSelect(hit === null ? null : { kind: "unit", tag: hit });
         }}
       />
-      <div className={"pointer-events-none absolute bottom-1 right-2 text-neutral-500 " + T.note}>
+      <div className={"pointer-events-none absolute bottom-1 right-2 text-faint " + T.note}>
         滚轮缩放 · 拖动平移 · 点击选中 · {vp ? vp.scale.toFixed(1) : "?"} px/格
       </div>
     </div>

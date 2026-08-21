@@ -99,8 +99,8 @@ export function ProjectionPairChart(props: {
   return (
     <div>
       <UPlotChart data={data} options={options} height={props.height ?? 200} />
-      <table className="mt-2 w-full text-left text-[11px]">
-        <thead className="text-neutral-500">
+      <table className="mt-2 w-full text-left text-note">
+        <thead className="text-faint">
           <tr><th>读数</th><th>当前</th><th>提案后</th><th>差</th></tr>
         </thead>
         <tbody>
@@ -110,10 +110,10 @@ export function ProjectionPairChart(props: {
             const delta = b - a;
             return (
               <tr key={label}>
-                <td className="text-neutral-400">{label}</td>
+                <td className="text-dim">{label}</td>
                 <td>{get(current)}</td>
                 <td>{get(proposed)}</td>
-                <td className={delta === 0 ? "text-neutral-600"
+                <td className={delta === 0 ? "text-ghost"
                   : (label === "卡点数" ? delta < 0 : delta > 0) ? "text-emerald-400" : "text-amber-400"}>
                   {delta === 0 ? "—" : (delta > 0 ? "+" : "") + delta}
                 </td>
@@ -122,7 +122,7 @@ export function ProjectionPairChart(props: {
           })}
         </tbody>
       </table>
-      <div className="mt-1 text-[10px] text-neutral-600">
+      <div className="mt-1 text-note text-ghost">
         虚线 = 当前队列 · 实线 = 提案后 · 红虚线 = 提案后的卡点。
         两条曲线同一个 GameState 起点，所以差异只来自队列本身。
       </div>

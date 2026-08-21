@@ -1,11 +1,11 @@
 /**
- * F11a / G6：字号 token 机制化。
+ * F11a/F13d / G6：字号 token 机制化（F13 起全量生效，allowlist 已清空）。
  *
- * 规则：全站 6 个字号 token；裸 `text-[Npx]` 只允许出现在 `web/src/shell/tokens.ts`
- * （token 的 DOM 载体）。本测试扫描 web/src 下所有 .tsx，超出 allowlist 的违规当场红。
- *
- * allowlist 是 F11 之前就存在的遗留字号（F13(d)「字号 token 全站化」的清理范围）：
- * F11 只保证**不新增**；F13 清空这个 allowlist 后，任何 tsx 里再出现裸字号都会失败。
+ * 规则：全站 6 个字号 token + 三档暗度 token：
+ * - DOM 侧：tailwind @utility（text-note / text-label / …，定义在 src/index.css）；
+ * - canvas 侧：canvas/theme.ts 的 FONT_PX；
+ * 两边是同一套 token 的两种载体，本测试锁死 px 值同步。
+ * 任何 tsx 里出现裸 `text-[Npx]` 都会失败 —— 想加字号先去改 token（并想清楚值不值得）。
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -15,23 +15,6 @@ import { FONT_PX } from "../src/canvas/theme";
 import { T } from "../src/shell/tokens";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
-
-/** F13(d) 的清理清单：这些文件里的遗留裸字号在本轮放行（只许减少，不许增加） */
-const LEGACY_ALLOWLIST = new Set([
-  "charts/ProjectionPairChart.tsx",
-  "pages/DebugPage.tsx",
-  "pages/FlowPage.tsx",
-  "pages/MapPage.tsx",
-  "pages/Overview.tsx",
-  "pages/PlanningPage.tsx",
-  "pages/ProductionPage.tsx",
-  "panels/ProposalHost.tsx",
-  "panels/ProposalReview.tsx",
-  "shell/ChatDock.tsx",
-  "shell/IconRail.tsx",
-  "shell/StatusChip.tsx",
-  "shell/Timeline.tsx",
-]);
 
 const BARE_SIZE = /text-\[\d+(?:\.\d+)?px\]/g;
 
@@ -44,36 +27,30 @@ function* tsxFiles(dir: string): Generator<string> {
 }
 
 describe("G6 字号 token", () => {
-  it("tsx 里没有裸 text-[Npx]（allowlist 之外；allowlist 是 F13(d) 的清理清单）", () => {
+  it("tsx 里没有裸 text-[Npx]（全量生效，无 allowlist）", () => {
     const violations: string[] = [];
     for (const file of tsxFiles(SRC)) {
       const rel = file.slice(SRC.length + 1).replace(/\\/g, "/");
-      if (LEGACY_ALLOWLIST.has(rel)) continue;
       const text = readFileSync(file, "utf8");
       const hits = text.match(BARE_SIZE);
       if (hits) violations.push(`${rel}: ${hits.join(", ")}`);
     }
-    expect(violations, `裸字号只允许出现在 shell/tokens.ts：\n${violations.join("\n")}`).toEqual([]);
+    expect(violations, `裸字号禁止出现，改用 shell/tokens 的 T token：\n${violations.join("\n")}`).toEqual([]);
   });
 
-  it("allowlist 文件确实还有遗留字号（清单过期 = 该从 allowlist 里删掉）", () => {
-    const stale: string[] = [];
-    for (const rel of LEGACY_ALLOWLIST) {
-      const text = readFileSync(join(SRC, rel), "utf8");
-      if (!BARE_SIZE.test(text)) stale.push(rel);
-      BARE_SIZE.lastIndex = 0;
-    }
-    expect(stale, `这些文件已干净，应从 allowlist 移除：${stale.join(", ")}`).toEqual([]);
-  });
-
-  it("tokens.ts 与 canvas/theme.ts 是同一套 token（DOM 载体与 px 值一一对齐）", () => {
+  it("index.css 的 @utility 与 canvas/theme.ts 的 FONT_PX 是同一套 token（px 值一一对齐）", () => {
+    const css = readFileSync(join(SRC, "index.css"), "utf8");
     const keys = Object.keys(FONT_PX) as Array<keyof typeof FONT_PX>;
     expect(keys).toHaveLength(6);
     for (const key of keys) {
-      const cls = T[key];
-      const m = new RegExp(`text-\\[(\\d+)px\\]`).exec(cls);
-      expect(m, `T.${key} 缺 text-[Npx]`).not.toBeNull();
-      expect(Number(m![1]), `T.${key} 与 FONT_PX.${key} 不一致`).toBe(FONT_PX[key]);
+      // FONT_PX 的 camelCase 键 → CSS 工具类的 kebab-case 名（metricXl → metric-xl）
+      const kebab = key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+      const re = new RegExp(`@utility\\s+text-${kebab}\\s*\\{[^}]*font-size:\\s*(\\d+)px`);
+      const m = re.exec(css);
+      expect(m, `index.css 缺 @utility text-${kebab}`).not.toBeNull();
+      expect(Number(m![1]), `text-${kebab} 与 FONT_PX.${key} 不一致`).toBe(FONT_PX[key]);
+      // tokens.ts 的 T 指到同一个工具类
+      expect(T[key], `T.${key} 应该是 text-${kebab}`).toBe(`text-${kebab}`);
     }
   });
 });

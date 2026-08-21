@@ -62,13 +62,15 @@ export async function sendCommand(cmd: CommandKind, basedOnSeq: number): Promise
   return { ok: false, reason: "invalid", message: typeof detail === "string" ? detail : JSON.stringify(detail) };
 }
 
-/** 会话控制：起/停/单步（单步是"不自动推进"时的调试入口） */
+/** 会话控制：起/停/单步（单步是"不自动推进"时的调试入口）。
+ *  `driver`：sim = 沙盒（子进程假世界）；sc2 = 真机（会启动真实 SC2 游戏）。 */
 export async function sessionAction(
   action: "start" | "stop" | "tick",
-  opts: { autotick?: boolean; count?: number } = {},
+  opts: { autotick?: boolean; count?: number; driver?: "sim" | "sc2" } = {},
 ): Promise<Record<string, unknown> | null> {
   const url = new URL("/api/session/" + action, API_BASE);
   if (action === "start" && opts.autotick === false) url.searchParams.set("autotick", "false");
+  if (action === "start" && opts.driver) url.searchParams.set("driver", opts.driver);
   if (action === "tick" && opts.count) url.searchParams.set("count", String(opts.count));
   try {
     const res = await fetch(url.toString(), { method: "POST" });

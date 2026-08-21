@@ -40,13 +40,13 @@ export const Pill = (p: { label: string; value: string; tone?: "normal" | "warn"
           : "bg-neutral-800")
     }
   >
-    <span className="text-neutral-500">{p.label} </span>
+    <span className="text-faint">{p.label} </span>
     {p.value}
   </span>
 );
 
 export const Empty = (p: { text?: string }) => (
-  <div className="text-neutral-600">{p.text ?? "该时刻无此帧"}</div>
+  <div className="text-ghost">{p.text ?? "该时刻无此帧"}</div>
 );
 
 export const sevClass = (s: "info" | "warn" | "error"): string =>
@@ -61,8 +61,8 @@ export function fmtTime(t: number): string {
 export function Stub(props: { stage: string; title: string; will: string[]; children?: ReactNode }) {
   return (
     <div className="space-y-3">
-      <Card title={props.title} right={<span className="text-xs text-neutral-500">{props.stage} 实现</span>}>
-        <div className="text-neutral-400">该页在 {props.stage} 落地，将包含：</div>
+      <Card title={props.title} right={<span className="text-xs text-faint">{props.stage} 实现</span>}>
+        <div className="text-dim">该页在 {props.stage} 落地，将包含：</div>
         <ul className="mt-1 list-inside list-disc text-neutral-300">
           {props.will.map((w) => <li key={w}>{w}</li>)}
         </ul>

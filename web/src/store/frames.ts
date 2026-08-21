@@ -15,6 +15,7 @@ import { MockLiveFrameSource } from "../source/mock-live";
 import { ReviewableSource } from "../source/reviewable";
 import { WsFrameSource, probeApi } from "../source/ws";
 import type { FrameSource, TimelineMarker, Unsubscribe } from "../source/types";
+import { defaultSource, type Mode } from "../shell/mode";
 
 /**
  * 帧源种类：
@@ -58,7 +59,10 @@ interface FramesStore extends Frames {
   /** 后端在不在（不在就把 api 选项置灰，而不是让 UI 转圈） */
   api: { ok: boolean; rev?: number; sources?: string[] };
   caps: { live: boolean; seek: boolean };
-  mode: "live" | "review";
+  /** 回看子状态（跟随/回看，只对可回看源有意义）——与模式轴 `mode` 是两个东西 */
+  timeline: "live" | "review";
+  /** 模式轴（F13/U19）：离线编辑 / 实时驾驶 / 复盘 */
+  mode: Mode;
   range: { from: number; to: number };
   position: number;
   /** 当前帧的 seq —— 命令的 `based_on_seq` 取它（R8） */
@@ -69,6 +73,7 @@ interface FramesStore extends Frames {
 
   init(): Promise<void>;
   attach(kind: SourceKind, fixtureKey: string): Promise<void>;
+  setMode(m: Mode): Promise<void>;
   seek(t: number): void;
   returnToLive(): void;
   /** 夹具/复盘的自动前进（live 源不需要） */
@@ -94,7 +99,7 @@ export const useFrames = create<FramesStore>((set, get) => {
         range: s.range(),
         position: s.position(),
         markers: s.markers(),
-        mode: isReviewable(s) ? s.mode() : "live",
+        timeline: isReviewable(s) ? s.mode() : "live",
       });
     };
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(flush);
@@ -105,7 +110,7 @@ export const useFrames = create<FramesStore>((set, get) => {
     ...EMPTY_FRAMES,
     fixtures: [], fixtureKey: null, sourceKind: "fixture",
     api: { ok: false },
-    caps: { live: false, seek: true }, mode: "live",
+    caps: { live: false, seek: true }, timeline: "live", mode: "offline",
     range: { from: 0, to: 0 }, position: 0, seq: 0, markers: [],
     error: null, loading: false,
 
@@ -132,7 +137,9 @@ export const useFrames = create<FramesStore>((set, get) => {
         return;
       }
       let text = "";
-      if (kind !== "api") {
+      if (kind !== "api" && kind !== "live") {
+        // 注：live 也不读本地夹具（它的帧全部来自后端推送；F13 修：之前 live 会误走
+        // loadFixture(undefined) —— 但旧 SessionBar 从不产生 "live"，所以一直没炸）
         try {
           text = await loadFixture(meta!);
         } catch (err) {
@@ -195,9 +202,27 @@ export const useFrames = create<FramesStore>((set, get) => {
       set({
         sourceKind: kind, fixtureKey, loading: false, caps: src.caps,
         range: src.range(), position: src.position(), markers: src.markers(),
-        mode: isReviewable(src) ? src.mode() : "live",
+        timeline: isReviewable(src) ? src.mode() : "live",
       });
       syncMeta();
+    },
+
+    async setMode(m) {
+      // 切模式 = 换到该模式的默认帧源（模式→合法帧源的映射在 shell/mode.ts，UI 不自算）
+      const { mode: current, fixtureKey, fixtures, api } = get();
+      if (m === current) return;
+      const target = defaultSource(m, fixtures, api.ok, fixtureKey);
+      if (target === null) {
+        set({
+          mode: m,
+          error: m === "drive"
+            ? "实时驾驶需要后端 API：先启动 python tools/serve_api.py，再回到这里切模式"
+            : "该模式没有可用帧源（没有夹具？先在 web/ 下跑 pnpm gen:fixtures）",
+        });
+        return;
+      }
+      set({ mode: m });
+      await get().attach(target.kind, target.fixtureKey);
     },
 
     seek(t) {

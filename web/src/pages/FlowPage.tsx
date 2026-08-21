@@ -54,7 +54,7 @@ export function FlowPage() {
       <Card
         title={`策略图 · ${graph.id} v${graph.version}`}
         right={
-          <span className="text-[11px] text-neutral-500">
+          <span className="text-note text-faint">
             {state
               ? `转移 ${state.transition_count}/${state.transition_limit}`
               : "无运行状态"}
@@ -126,7 +126,7 @@ export function FlowPage() {
             })}
           </svg>
         </div>
-        <div className="mt-1 flex flex-wrap gap-3 text-[10px] text-neutral-600">
+        <div className="mt-1 flex flex-wrap gap-3 text-note text-ghost">
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-neutral-600 align-middle" />未走过</span>
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-emerald-400 align-middle" />走过</span>
           <span><i className="mr-1 inline-block h-0.5 w-4 bg-amber-400 align-middle" />最近一次</span>
@@ -137,7 +137,7 @@ export function FlowPage() {
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Card title={`分支 · ${selected ?? "—"}`} right={
           state?.branch_hit?.step_id === selected
-            ? <span className="text-[11px] text-emerald-400">
+            ? <span className="text-note text-emerald-400">
                 本帧命中 {state.branch_hit.branch_id ?? "#" + state.branch_hit.index}
               </span>
             : undefined
@@ -153,22 +153,22 @@ export function FlowPage() {
                         ? "border-emerald-700 bg-emerald-950/30"
                         : "border-neutral-800")}>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-neutral-500">#{b.index}</span>
+                      <span className="text-faint">#{b.index}</span>
                       <span className="font-medium">{b.id ?? "（未命名）"}</span>
-                      {hit && <span className="text-[10px] text-emerald-400">← 本帧命中</span>}
+                      {hit && <span className="text-note text-emerald-400">← 本帧命中</span>}
                     </div>
                     <div className="mt-1 text-neutral-300">
                       {b.when === null
-                        ? <span className="text-neutral-500">else（无条件，只能放最后）</span>
+                        ? <span className="text-faint">else（无条件，只能放最后）</span>
                         : <code className="text-sky-300">{b.when}</code>}
                     </div>
                     {b.actions.length > 0 && (
                       <ul className="mt-1 space-y-0.5">
                         {b.actions.map((a, i) => (
-                          <li key={i} className={a.forbidden ? "text-neutral-600" : "text-neutral-300"}>
+                          <li key={i} className={a.forbidden ? "text-ghost" : "text-neutral-300"}>
                             → {a.text}
                             {a.forbidden && (
-                              <span className="ml-1 text-[10px] text-amber-600">
+                              <span className="ml-1 text-note text-amber-600">
                                 （不可用：{a.forbidden}）
                               </span>
                             )}
@@ -188,9 +188,9 @@ export function FlowPage() {
             {state && state.transitions.length > 0 ? (
               <ol className="space-y-0.5">
                 {[...state.transitions].reverse().map((t, i) => (
-                  <li key={i} className={i === 0 ? "text-amber-300" : "text-neutral-400"}>
+                  <li key={i} className={i === 0 ? "text-amber-300" : "text-dim"}>
                     {fmtTime(t.at)} {t.from} → {t.to}
-                    <span className="ml-1 text-[10px] text-neutral-600">
+                    <span className="ml-1 text-note text-ghost">
                       {t.kind}/{t.reason}
                     </span>
                   </li>
@@ -203,7 +203,7 @@ export function FlowPage() {
                   <div className="h-1 rounded bg-sky-500"
                        style={{ width: Math.min(100, (state.transition_count / Math.max(1, state.transition_limit)) * 100) + "%" }} />
                 </div>
-                <div className="mt-0.5 text-[10px] text-neutral-600">
+                <div className="mt-0.5 text-note text-ghost">
                   转移上限是**兜底**不是出口（ADR-0021 §4）：每个环必须有自己的 exit
                 </div>
               </div>
@@ -217,7 +217,7 @@ export function FlowPage() {
 
           <Card title="绑定与参数">
             <div className="space-y-1">
-              <div className="text-neutral-400">
+              <div className="text-dim">
                 槽位 {graph.group_slots.map((s: string) => `${s}→${graph.bindings[s] ?? "?"}`).join("、")}
               </div>
               {flow?.groups.map((g) => (
@@ -226,19 +226,19 @@ export function FlowPage() {
                   {Object.entries(g.composition).map(([id, c]) => (
                     <span key={id} className="ml-2">{zhOf(id)} {c.current}/{c.target}</span>
                   ))}
-                  <span className="ml-2 rounded bg-neutral-800 px-1.5 text-[10px]">{g.refill_state}</span>
+                  <span className="ml-2 rounded bg-neutral-800 px-1.5 text-note">{g.refill_state}</span>
                 </div>
               ))}
-              <div className="border-t border-neutral-800 pt-1 text-neutral-400">
+              <div className="border-t border-neutral-800 pt-1 text-dim">
                 {Object.entries(state?.params ?? {}).map(([k, v]) => (
                   <span key={k} className="mr-3">{k}={JSON.stringify(v)}</span>
                 ))}
               </div>
               {Object.keys(graph.definitions).length > 0 && (
-                <div className="text-[11px] text-neutral-500">
+                <div className="text-note text-faint">
                   别名：{Object.entries(graph.definitions).map(([k, v]) => (
                     <div key={k} className="ml-2">
-                      <span className="text-neutral-400">{k}</span> = <code>{renderValue(v)}</code>
+                      <span className="text-dim">{k}</span> = <code>{renderValue(v)}</code>
                     </div>
                   ))}
                 </div>
