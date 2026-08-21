@@ -42,17 +42,6 @@
 - **建议归属**：涉及 flow/manifest.py + view/schema.py + 前端 FlowPage/PlanningPage，
   建议与 I1 合并成一个「策略可读性」B 项（一次 REV+1）。
 
-## I3 live 会话期间 WS 断线的前端行为未验证
-
-- **现状**：F13 打通了 live attach，但「会话停止/崩溃后 WsFrameSource 的断线表现」
-  没有专门验收（浏览器端是静默等待还是报错、要不要自动重连）。
-- **影响**：真机调试中会话结束（game_time_limit 到点）后的驾驶舱体验未定义。
-- **附加待验**：「停止会话树杀 SC2」的端到端验证 —— 顺序 bug（先杀根后 taskkill /T
-  导致枚举不到子树）已修（先树杀后补刀），单测锁了 taskkill 调用；但验证时测试会话
-  恰好先跑完 game_time_limit 自退，未能现场确认 SC2 被杀。下次真机会话：启动 → 停止 →
-  任务管理器确认无 SC2_x64 残留。
-- **建议归属**：真机欠账清单（ARCHITECTURE §10.2）追加一条；F14 后做一轮真机回归时一并验。
-
 ## I4 面板可读性：标识符前缀与组名没有解释，缺「怎么看这张表」的入口
 
 - **现状**：策略图条件里的 `参数.min_units / 变量.x / 别名.front` 前缀、
@@ -98,6 +87,10 @@
 ---
 
 ## 已处理（留档）
+
+- ~~live 会话期间 WS 断线行为未验证（I3）~~ —— 2026-08-21 修复并给出确切答案：审查确认代码里原本**没有任何**断线处理。
+  WsFrameSource 加 onDisconnect/disconnected（三态语义：握手后 close=断线 / dispose 不算 / 握手失败不算）；
+  store 加 disconnected + reconnect()；SessionBar 红色横幅 +「重连」按钮。测试 tests/ws.test.ts 4 条。见 commit 8569c47。
 
 - ~~实时驾驶点击后全屏错误屏（近黑底红字）且无恢复入口~~ —— 2026-08-21 修复：
   无活跃会话时进 drive 模式不再 attach（顶栏提示「等待会话」）；全屏错误屏加「返回离线模式」按钮。
