@@ -13,7 +13,7 @@
  * live 下这页只读（R5）；节点拖动是图内坐标（不是面板 dock，U9 界线）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { matchExitBranch, renderBranches, renderValue, storageKey } from "../graph/ast";
+import { branchExit, matchExitBranch, renderBranches, renderValue, storageKey } from "../graph/ast";
 import { PanZoom, type SvgViewport } from "../graph/PanZoom";
 import {
   BRANCH_ROW_H, GAP_X, HEADER_H, LANE_H, NODE_PAD_Y, NODE_W,
@@ -108,11 +108,20 @@ export function FlowPage() {
   const lastT = state?.transitions.at(-1) ?? null;
 
   // 节点拖动：图坐标 = 原位 + 屏幕位移 / scale（PanZoom 的 vp 由 onViewport 持续同步）
-  const nodeDrag = useRef<{ id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
-  const persist = (): void => {
+  const nodeDrag = useRef<{
+    id: string; sx: number; sy: number; ox: number; oy: number; moved: boolean;
+    /** 最近一次 move 算出的图坐标（落盘读它，不读渲染闭包） */
+    last?: { x: number; y: number };
+  } | null>(null);
+  /**
+   * 落盘节点位置。**必须吃传进来的 map**，不能读渲染闭包里的 `overrides` ——
+   * 快拖后立刻松手时，最后一次 pointermove 的 setState 可能还没提交重渲染，
+   * 闭包里是上一帧的旧值，于是存下的位置比实际松手点少最后一小段，下次进来节点"回跳"。
+   */
+  const persist = (next: Map<string, { x: number; y: number }>): void => {
     if (!graphKey) return;
     const obj: Record<string, [number, number]> = {};
-    for (const [id, p] of overrides) obj[id] = [p.x, p.y];
+    for (const [id, p] of next) obj[id] = [p.x, p.y];
     try {
       localStorage.setItem(graphKey, JSON.stringify(obj));
     } catch {
@@ -164,6 +173,7 @@ export function FlowPage() {
         <PanZoom
           contentW={Math.max(1, contentW)}
           contentH={Math.max(1, contentH)}
+          fitKey={graph.id + "@" + graph.version}
           centerRequest={centerReq}
           onViewport={(v) => { vpRef.current = v; }}
         >
@@ -210,11 +220,21 @@ export function FlowPage() {
             const isActive = n.id === active;
             const entered = entryCount.get(n.id) ?? 0;
             const hitIdx = state?.branch_hit?.step_id === n.id ? state.branch_hit.index : null;
-            // 该 branch 行的去向（有边 → 目标节点；没有 → 留在本步）
-            const targetOf = (idx: number): string => {
-              const e = (graph.edges as { from: string; to: string; kind: string; reason: string }[])
-                .find((ed) => ed.from === n.id && matchExitBranch(step?.branches ?? [], ed) === idx);
-              return e ? e.to : "留在本步";
+            // 该 branch 行的**出口三态**：转场（去某 step）/ 终局（策略结束）/ 留在本步。
+            // 之前只判"有没有边"，于是"终局"和"继续等待"共用一句「留在本步」——
+            // 策略图里最重要的终态语义被画成了等待（详情卡里才有真相）。
+            const outcomeOf = (idx: number): { text: string; tone: "step" | "end" | "stay" } => {
+              const ex = branchExit(step?.branches?.[idx]);
+              if (ex.kind === "end") {
+                return { text: "✕ 结束策略 · " + ex.reason, tone: "end" };
+              }
+              if (ex.kind === "step") {
+                const e = (graph.edges as { from: string; to: string; kind: string; reason: string }[])
+                  .find((ed) => ed.from === n.id && matchExitBranch(step?.branches ?? [], ed) === idx);
+                // 声明了 exit_step 却找不到边 = 数据异常，如实说，不假装"留在本步"
+                return e ? { text: e.to, tone: "step" } : { text: "（缺边）" + ex.reason, tone: "step" };
+              }
+              return { text: "留在本步", tone: "stay" };
             };
             return (
               <g key={n.id}
@@ -240,14 +260,25 @@ export function FlowPage() {
                    const dx = (cx - dr.sx) / vpRef.current.scale;
                    const dy = (cy - dr.sy) / vpRef.current.scale;
                    if (Math.abs(dx) + Math.abs(dy) > 2) dr.moved = true;
-                   setOverrides((m) => new Map(m).set(n.id, { x: dr.ox + dx, y: dr.oy + dy }));
+                   const at = { x: dr.ox + dx, y: dr.oy + dy };
+                   dr.last = at;            // 落盘读它，不读渲染闭包（否则丢最后一段位移）
+                   setOverrides((m) => new Map(m).set(n.id, at));
                  }}
                  onPointerUp={(e) => {
                    const dr = nodeDrag.current;
                    nodeDrag.current = null;
                    (e.target as Element).releasePointerCapture?.(e.pointerId);
-                   if (dr && !dr.moved) setPicked(n.id);   // 点击（没拖）= 选中
-                   else persist();
+                   if (dr && !dr.moved) {
+                     setPicked(n.id);       // 点击（没拖）= 选中
+                   } else if (dr) {
+                     // 用 dr.last 合并出最终 map 再落盘 —— setState 提交与否都不影响结果
+                     setOverrides((m) => {
+                       const next = new Map(m);
+                       if (dr.last) next.set(dr.id, dr.last);
+                       persist(next);
+                       return next;
+                     });
+                   }
                  }}
                  onDoubleClick={() => setCenterReq({ x: n.x + NODE_W / 2, y: n.y + n.h / 2 })}
               >
@@ -281,8 +312,8 @@ export function FlowPage() {
                 {branches.map((b, idx) => {
                   const y = HEADER_H + NODE_PAD_Y + idx * BRANCH_ROW_H;
                   const hit = hitIdx === b.index;
-                  const target = targetOf(b.index);
-                  const hasEdge = target !== "留在本步";
+                  const oc = outcomeOf(b.index);
+                  const hasEdge = oc.tone === "step";
                   return (
                     <g key={b.index} className="cursor-pointer"
                        onClick={(ev) => {
@@ -303,9 +334,15 @@ export function FlowPage() {
                         <circle cx={NODE_W} cy={y + BRANCH_ROW_H / 2} r={4}
                                 fill={hit ? "#fbbf24" : "#8a8f98"} stroke="#0d1117" strokeWidth={1.5} />
                       )}
+                      {/* 终局用**方块**终结符，与转场的出口圆点形状不同 ——
+                          「结束整个策略」和「转到下一步」是两件事，不能只靠文字区分 */}
+                      {oc.tone === "end" && (
+                        <rect x={NODE_W - 3.5} y={y + BRANCH_ROW_H / 2 - 3.5} width={7} height={7}
+                              fill={hit ? "#fca5a5" : "#f87171"} stroke="#0d1117" strokeWidth={1.5} />
+                      )}
                       <foreignObject x={4} y={y} width={NODE_W - 8} height={BRANCH_ROW_H}>
                         <div
-                             title={`${b.when ?? "else（无条件）"} → ${target}`}
+                             title={`${b.when ?? "else（无条件）"} → ${oc.text}`}
                              className={"flex h-full items-center gap-1 "
                                + (hit ? "text-emerald-200" : "")}>
                           <span className={"min-w-0 flex-1 break-all "
@@ -316,9 +353,15 @@ export function FlowPage() {
                             {b.when ?? "else"}
                           </span>
                           <span className={"shrink-0 whitespace-nowrap "
-                            + (hit ? "text-amber-300" : "text-neutral-400")}
+                            + (hit
+                              ? "text-amber-300"
+                              : oc.tone === "end"
+                                ? "text-red-300"
+                                : oc.tone === "stay"
+                                  ? "text-neutral-500"
+                                  : "text-neutral-400")}
                                 style={{ fontSize: "10px", lineHeight: "12px" }}>
-                            → {target}
+                            {oc.tone === "end" ? oc.text : "→ " + oc.text}
                           </span>
                         </div>
                       </foreignObject>

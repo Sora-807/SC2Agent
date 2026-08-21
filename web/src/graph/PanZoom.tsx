@@ -20,9 +20,17 @@ export interface SvgViewport {
 }
 
 export function PanZoom(props: {
-  /** 内容尺寸（图坐标）；变化 = 换图 → 重新 fit（G2） */
+  /** 内容尺寸（图坐标）：用于 fit 与 resize 重锚的**计算**，但不作为"换图"信号 */
   contentW: number;
   contentH: number;
+  /**
+   * **图身份**键（如 `id@version`）：只有它变化才重新 fit（G2）。
+   *
+   * 曾经用 `contentW x contentH` 当这个信号 —— 而节点拖动恰好会改内容包围盒，
+   * 于是把最右/最下的节点往外拖时每移动一点就 fit 一次：视口反复缩放平移、
+   * 节点相对光标"加速滑走"，拖拽和视口互相打架。内容包围盒不是"换图"。
+   */
+  fitKey?: string;
   children: ReactNode;
   /** 双击居中请求：对象引用变化即触发（x/y 为内容坐标；scale 不动） */
   centerRequest?: { x: number; y: number } | null;
@@ -49,20 +57,23 @@ export function PanZoom(props: {
     return () => ro.disconnect();
   }, []);
 
-  // fit：只在换图（内容尺寸变化）或首次尺寸就绪时做；resize 保住 scale（G2）
+  // fit：只在**换图**（fitKey 变）或首次尺寸就绪时做；容器 resize 保住 scale 重锚中心（G2）
+  const fitKey = props.fitKey ?? `${props.contentW}x${props.contentH}`;
   const fitted = useRef<string | null>(null);
   useEffect(() => {
-    const key = `${props.contentW}x${props.contentH}`;
-    const needFit = fitted.current !== key;
-    fitted.current = key;
+    const needFit = fitted.current !== fitKey;
+    fitted.current = fitKey;
     setVp((old) => {
       if (needFit) return fit(size.w, size.h, props.contentW, props.contentH);
-      // resize：内容中心锚回容器中心
+      // 容器 resize：内容中心锚回容器中心
       const cx = old.tx + (props.contentW * old.scale) / 2;
       const cy = old.ty + (props.contentH * old.scale) / 2;
       return { ...old, tx: size.w / 2 - cx, ty: size.h / 2 - cy };
     });
-  }, [size.w, size.h, props.contentW, props.contentH]);
+    // 依赖**刻意不含** contentW/contentH：节点拖动会改内容包围盒，把它放进依赖 =
+    // 每拖一下就 fit（或重新居中），拖拽与视口打架。effect 体里读到的仍是当次渲染的值。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey, size.w, size.h]);
 
   // 滚轮缩放：native + passive:false（G3），锚定光标
   useEffect(() => {
@@ -122,7 +133,9 @@ export function PanZoom(props: {
         <button className="rounded border border-neutral-700 bg-neutral-900/80 px-2 py-0.5 text-note"
                 onClick={doFit}>适应窗口</button>
         <button className="rounded border border-neutral-700 bg-neutral-900/80 px-2 py-0.5 text-note"
-                onClick={() => setVp((v) => ({ ...v, scale: 1 }))}>1:1</button>
+                title="缩放回 100%（保住当前视图中心）"
+                onClick={() => setVp((v) => zoomAtPoint(v, size.w / 2, size.h / 2, 1 / v.scale))}
+        >1:1</button>
       </div>
       <div className="pointer-events-none absolute bottom-1 left-2 text-note text-ghost">
         滚轮缩放 · 拖动平移 · 双击节点居中 · {vp.scale.toFixed(2)}×

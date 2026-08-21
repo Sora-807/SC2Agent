@@ -229,3 +229,31 @@ describe("P2 接受按钮禁用但可见（2026-08-21 审查发现）", () => {
     expect(review).toMatch(/!canReject\(reason\) \|\| settled/);
   });
 });
+
+describe("Flow 图的两处交互修复（2026-08-21 审查发现）", () => {
+  it("PanZoom 的 fit 触发键是**图身份**，不是内容包围盒", () => {
+    const pz = code("graph/PanZoom.tsx");
+    expect(pz).toContain("fitKey");
+    // fit effect 的依赖必须**恰好**是 [fitKey, size.w, size.h]：contentW/contentH 会被节点
+    // 拖动改，一旦进依赖就是"每拖一下 fit 一次"，拖拽与视口打架。
+    // （不能写成"全文不得出现这些依赖"——「适应窗口」按钮的 doFit 本该用当前内容尺寸，
+    //   那条负向断言会误伤合法代码，第一版就踩了。）
+    expect(pz).toMatch(/\}, \[fitKey, size\.w, size\.h\]\);/);
+    const page = code("pages/FlowPage.tsx");
+    expect(page).toMatch(/fitKey=\{graph\.id/);
+  });
+
+  it("节点位置落盘吃传入的 map，不读渲染闭包（否则丢最后一段位移）", () => {
+    const page = code("pages/FlowPage.tsx");
+    expect(page).toMatch(/const persist = \(next: Map/);
+    expect(page).toContain("dr.last");
+    expect(page).not.toMatch(/else persist\(\);/);
+  });
+
+  it("终局分支有独立视觉，不与转场出口圆点撞形", () => {
+    const page = code("pages/FlowPage.tsx");
+    expect(page).toContain("outcomeOf");
+    expect(page).toMatch(/oc\.tone === "end"/);
+    expect(page).not.toMatch(/const hasEdge = target !== "留在本步"/);
+  });
+});

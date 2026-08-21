@@ -9,7 +9,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseEnvelopeLine, type FlowFrame, type StrategyStatic } from "../src/contract";
-import { matchExitBranch, renderBranches, renderValue, storageKey } from "../src/graph/ast";
+import { branchExit, matchExitBranch, renderBranches, renderValue, storageKey } from "../src/graph/ast";
 import { layout } from "../src/graph/layout";
 
 const FIX_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", "fixtures");
@@ -146,5 +146,35 @@ describe("F12：边锚定与位置持久化", () => {
   it("storageKey 含 version：换 version 不复用旧坐标（重编译的策略结构已变）", () => {
     expect(storageKey("s", 1)).toBe("flow-node-pos:s@1");
     expect(storageKey("s", 2)).not.toBe(storageKey("s", 1));
+  });
+});
+
+describe("branchExit：DSL 的两种 exit 必须分得开（2026-08-21 审查发现）", () => {
+  const mk = (dos: Record<string, unknown>[]) => ({ do: dos } as Record<string, unknown>);
+
+  it("exit_step → 转场（有边）", () => {
+    const ex = branchExit(mk([{ op: "exit_step", kind: "done", reason: "READY" }]));
+    expect(ex.kind).toBe("step");
+    expect(ex.kind === "step" && ex.reason).toBe("READY");
+  });
+
+  it("exit_strategy → 终局（无边），不能被当成「留在本步」", () => {
+    const ex = branchExit(mk([{ op: "exit_strategy", kind: "done", reason: "ARRIVED" }]));
+    expect(ex.kind).toBe("end");
+    expect(ex.kind === "end" && ex.reason).toBe("ARRIVED");
+  });
+
+  it("没有 exit → 留在本步", () => {
+    expect(branchExit(mk([{ op: "group_action" }])).kind).toBe("stay");
+    expect(branchExit(mk([])).kind).toBe("stay");
+    expect(branchExit(undefined).kind).toBe("stay");
+  });
+
+  it("matchExitBranch 只认 exit_step —— exit_strategy 不抢边", () => {
+    const branches = [
+      mk([{ op: "exit_strategy", kind: "done", reason: "X" }]),
+      mk([{ op: "exit_step", kind: "done", reason: "X" }]),
+    ];
+    expect(matchExitBranch(branches, { kind: "done", reason: "X" })).toBe(1);
   });
 });

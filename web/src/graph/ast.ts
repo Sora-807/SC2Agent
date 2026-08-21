@@ -90,6 +90,33 @@ function renderAction(a: Record<string, unknown>): string {
 }
 
 /**
+ * 一个 branch 的**出口语义**。DSL 有两种 exit，图上必须分得开：
+ * - `exit_step`      转场：edges 里有对应边 → 去某个 step；
+ * - `exit_strategy`  **终局**：edges 里没有边 → 整个策略结束；
+ * - 没有 exit         本帧动作做完，下一帧仍在本步求值 → 留在本步。
+ *
+ * 之前 FlowPage 只判"有没有边"，于是后两者共用一句「留在本步」——
+ * 策略图里最重要的终态语义被画成了"继续等待"，真相只能点开详情卡才看得到。
+ */
+export type BranchExit =
+  | { kind: "step"; exitKind: string; reason: string }
+  | { kind: "end"; exitKind: string; reason: string }
+  | { kind: "stay" };
+
+export function branchExit(branch: Record<string, unknown> | undefined): BranchExit {
+  const dos = Array.isArray(branch?.["do"]) ? (branch["do"] as Record<string, unknown>[]) : [];
+  for (const a of dos) {
+    if (a["op"] === "exit_step") {
+      return { kind: "step", exitKind: String(a["kind"]), reason: String(a["reason"]) };
+    }
+    if (a["op"] === "exit_strategy") {
+      return { kind: "end", exitKind: String(a["kind"]), reason: String(a["reason"]) };
+    }
+  }
+  return { kind: "stay" };
+}
+
+/**
  * F12b：边 ↔ branch 的对应关系（修根因 M：branch 才是边，边要锄在它所在的 branch 行上）。
  *
  * 编译期已保证：每条声明边 (kind, reason) 与某个 exit_step/exit_strategy 分支一一对应
@@ -103,7 +130,10 @@ export function matchExitBranch(
   for (let i = 0; i < branches.length; i += 1) {
     const b = branches[i]!;
     const dos = Array.isArray(b["do"]) ? (b["do"] as Record<string, unknown>[]) : [];
-    const exit = dos.find((a) => a["op"] === "exit_step" || a["op"] === "exit_strategy");
+    // **只认 exit_step**：edges 里的边只由 exit_step 产生，exit_strategy 是终局、没有边。
+    // 之前两者一起 find，于是同 step 内 exit_strategy 与 exit_step 的 (kind,reason) 撞车时
+    // （编译器并不禁止这种撞车），exit_step 的边会被锚到 exit_strategy 那一行，两行去向互换。
+    const exit = dos.find((a) => a["op"] === "exit_step");
     if (exit && String(exit["kind"]) === edge.kind && String(exit["reason"]) === edge.reason) {
       return i;
     }
