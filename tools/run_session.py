@@ -304,7 +304,24 @@ def _run_sc2(session: Session, *, map_name: str, seconds: int, realtime: bool) -
     _emit({"_": "bye", "reason": "run_game 返回"})
 
 
+def _redirect_loguru_to_stderr() -> None:
+    """burnysc2 的 `sc2.main` 在导入时执行 `logger.add(sys.stdout, level="INFO")` ——
+    那会把日志写进**帧协议管道**（stdout 是父进程读帧的通道，混入日志会污染协议）。
+
+    真机实测：子进程 stdout 的第一行是带颜色的 loguru 日志，父进程把它当成"非 JSON"记录。
+    修法：把 loguru 重新指到 stderr（stderr 本来就是诊断通道，父进程只保留尾巴）。
+    """
+    try:
+        from loguru import logger
+
+        logger.remove()
+        logger.add(sys.stderr, level="INFO")
+    except ImportError:
+        pass  # 没装 loguru 就无所谓
+
+
 def main() -> int:
+    _redirect_loguru_to_stderr()
     ap = argparse.ArgumentParser(description="会话子进程（帧出 stdout、命令入 stdin）")
     ap.add_argument("--driver", choices=("sim", "sc2"), default="sim")
     ap.add_argument("--map", default="LadderMap")

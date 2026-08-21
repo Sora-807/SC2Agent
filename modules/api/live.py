@@ -69,8 +69,13 @@ class LiveSession:
         ]
         if realtime:
             cmd.append("--realtime")
+        # 真机发现：`stdin=PIPE` 且保持打开会让 SC2 挂起（burnysc2 启动的 SC2 进程
+        # 继承了打开的 stdin 管道句柄）。给 stdin 发 EOF（关闭写端）即可解除 ——
+        # 但那样命令也写不进去了。所以：sim 用 PIPE（命令走 stdin），
+        # sc2 用 DEVNULL（真机没有 stdin 命令通道，也不该有 —— 它的写面只有 op 队列）。
+        stdin_mode = subprocess.DEVNULL if driver == "sc2" else subprocess.PIPE
         self.proc = subprocess.Popen(
-            cmd, cwd=str(ROOT), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            cmd, cwd=str(ROOT), stdin=stdin_mode, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1,
         )
         self._reader = threading.Thread(target=self._pump_stdout, daemon=True)
@@ -89,8 +94,12 @@ class LiveSession:
             try:
                 obj = json.loads(line)
             except ValueError:
-                # 子进程往 stdout 写了非 JSON（比如某个库的 print）→ 记下来，不当帧
-                self._note_error(f"子进程 stdout 出现非 JSON：{line[:160]}")
+                # 子进程往 stdout 写了非 JSON（比如某个库的 print）→ 记到诊断尾部，
+                # **不动 error**：一行日志不意味着会话崩了，帧流还在继续。
+                self._meta.setdefault("stdout_noise", [])
+                noise = self._meta["stdout_noise"]
+                noise.append(line[:160])
+                del noise[-5:]
                 continue
             if "_" in obj:
                 self._control(obj)
@@ -116,6 +125,8 @@ class LiveSession:
 
     def _control(self, obj: dict) -> None:
         kind = obj.get("_")
+        need_frame = False
+        terrain_frame: dict = {}
         with self._lock:
             if kind == "meta":
                 self._meta.update({k: v for k, v in obj.items() if k != "_"})
@@ -126,7 +137,23 @@ class LiveSession:
             elif kind == "error":
                 self._note_error(str(obj.get("detail") or "未知错误"), fatal=bool(obj.get("fatal")))
             elif kind == "terrain":
+                # B4：地形是**事件式静态面** —— 控制行转成真正的 `static/terrain` 帧，
+                # 这样前端订阅静态面时自然合并进 map.terrain（不搞特殊通道）。
+                # 控制行里没有 seq/game_time（driver 发在 on_step 之外），用当前游标补齐。
+                # 注意：此刻**已经在外层 with self._lock 里**，不能再用 self._lock
+                # （普通 Lock 同线程重入 = 死锁，真机测地形时踩过）。
                 self._meta["terrain"] = obj.get("terrain")
+                terrain_seq = self.seq
+                terrain_time = self.game_time
+                terrain_frame = {
+                    "topic": "static/terrain",
+                    "rev": 9,
+                    "seq": terrain_seq,
+                    "game_time": terrain_time,
+                    "wall_ms": 0,
+                    "payload": obj.get("terrain"),
+                }
+                need_frame = True
             elif kind == "projection":
                 slot = self._pending.get(int(obj.get("id") or -1))
                 if slot is not None:
@@ -136,6 +163,8 @@ class LiveSession:
                 if self.state != "崩溃":
                     self.state = "已结束"
                 self._meta["bye"] = obj.get("reason")
+        if need_frame:
+            self._frame(terrain_frame)
 
     def _frame(self, frame: dict) -> None:
         with self._lock:
@@ -204,6 +233,8 @@ class LiveSession:
     def _send(self, obj: dict) -> None:
         if self.proc.poll() is not None:
             raise RuntimeError(f"会话已结束（{self.state}）：{self.error or '子进程已退出'}")
+        if self.proc.stdin is None:
+            raise RuntimeError("该会话没有 stdin 命令通道（sc2 驱动；写面只有 op 队列）")
         assert self.proc.stdin is not None
         self.proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()

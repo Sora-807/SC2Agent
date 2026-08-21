@@ -19,10 +19,12 @@ from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2 as SC2Point2
 
 from game import (
+    GAME_EVENTS,
     ApplyResult,
     GameEvent,
     GamePort,
     Grid,
+    OpApply,
     Operation,
     Point2,
     RawGameState,
