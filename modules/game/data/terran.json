@@ -1,8 +1,8 @@
 {
   "terran/scv": {
     "burnysc2_name": "SCV",
-    "display_name_zh": "工程兵",
-    "short_name_zh": "工兵",
+    "display_name_zh": "农民",
+    "short_name_zh": "农民",
     "role": "worker",
     "capabilities": [
       "gather",
@@ -120,8 +120,8 @@
   },
   "terran/reactor": {
     "burnysc2_name": "BARRACKSREACTOR",
-    "display_name_zh": "反应堆（双倍挂件）",
-    "short_name_zh": "反应",
+    "display_name_zh": "双倍",
+    "short_name_zh": "双倍",
     "role": "building",
     "capabilities": [
       "addon"
@@ -291,8 +291,8 @@
   },
   "terran/factoryreactor": {
     "burnysc2_name": "FACTORYREACTOR",
-    "display_name_zh": "工厂反应堆",
-    "short_name_zh": "工反",
+    "display_name_zh": "工厂双倍",
+    "short_name_zh": "工双",
     "role": "building",
     "capabilities": [
       "addon"

@@ -197,12 +197,25 @@ def test_double_projection_works_on_live_via_subprocess(client: TestClient):
 
 
 def test_sc2_driver_needs_real_game(client: TestClient):
-    """sc2 模式在没有 SC2 的环境里应该优雅失败（会话崩溃态 + 原因），而不是挂起 api。"""
+    """sc2 会话不能把 api 拖死：要么建起来，要么报错 —— 两种都算活着。
+
+    ⚠️ 这个测试会**真的启动一个 SC2 游戏**（run_session --driver sc2 → burnysc2 run_game），
+    所以默认跳过，只在 SC2_INTEGRATION=1 时跑（真机集成，不是单测）。
+    历史教训：之前无条件跑，每执行一次 pytest 就后台多一个 SC2 黑屏窗口 ——
+    而且 V1 停止会话只 kill 子进程、不 kill SC2（sc2_adapter 里「显式 kill SC2 待补」），
+    游戏进程就成了孤儿。真机集成测试必须自己收拾：finally 里 stop 会话，
+    SC2 进程要靠 game_time_limit 自止或手动 taskkill。
+    """
     import importlib.util
+    import os
 
     if importlib.util.find_spec("sc2") is None:
         pytest.skip("burnysc2 没装")
-    # 这里不真跑（测试环境未必有 SC2），只验 start 不会把 api 拖死
+    if os.environ.get("SC2_INTEGRATION") != "1":
+        pytest.skip("真机集成测试：设 SC2_INTEGRATION=1 才跑（会启动真实 SC2 游戏）")
     r = client.post("/api/session/start", params={"driver": "sc2"})
-    # 要么建起来（有 SC2），要么会话报错 —— 两种都算"没把 api 拖死"
-    assert r.status_code in (200, 500)
+    try:
+        # 要么建起来（有 SC2），要么会话报错 —— 两种都算"没把 api 拖死"
+        assert r.status_code in (200, 500)
+    finally:
+        client.post("/api/session/stop")
