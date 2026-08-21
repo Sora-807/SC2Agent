@@ -7,10 +7,16 @@
  *    守卫读**模式轴**（F13 修根因 W：旧代码读 sourceKind==="live"，但那个值永远产生不出来）；
  * 3. 所有画布操作转成**结构化草稿**（DraftItem / hunk），人与 agent 同一表示。
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createProposal } from "../api/proposals";
+import { MapCanvas } from "../canvas/MapCanvas";
+import { defaultLayers } from "../canvas/layers";
 import { renderBranches, renderValue } from "../graph/ast";
 import { layout } from "../graph/layout";
+import {
+  applyDraft, loadDraft, nextMarkName, saveDraft, snapToCellCenter,
+  type MapPlanHunk,
+} from "../planning/map-draft";
 import {
   describeItem, draftCost, draftToHunks, emptyItem, placementOptions,
   type DraftItem,
@@ -19,6 +25,7 @@ import { PLAN_GATE_REASON } from "../shell/rail";
 import { Card, Empty, PAGE_SCROLL } from "../shell/ui";
 import { useFrames } from "../store/frames";
 import type { CatalogStatic, MapStatic, SchemaStatic, StrategyStatic } from "../contract";
+import { T } from "../shell/tokens";
 
 const TABS = [
   ["map", "地图规划"],
@@ -72,55 +79,142 @@ export function PlanningPage(props: { initialTab?: "map" | "production" | "flow"
 
 function MapPlanning(props: { map: MapStatic | null }) {
   const { map } = props;
+  const world = useFrames((s) => s.world);
+  const production = useFrames((s) => s.production);
+  const catalog = useFrames((s) => s.catalog);
+  const economy = useFrames((s) => s.economy);
+
+  // F14 切片 1：结构化草稿（hunk 序列）是真相源，画布吃 applyDraft 的投影结果。
+  // 持久化到 localStorage —— 离线画完关页面不丢；B14 落地后同一批 hunk 直接进提案信封。
+  const [draft, setDraft] = useState<MapPlanHunk[]>([]);
+  const [placeMode, setPlaceMode] = useState(false);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  useEffect(() => {
+    setDraft(loadDraft(map));
+    setDraftLoaded(true);
+    // map 静态面换了 = 换一张图，草稿也换一份（键带 map_name）
+  }, [map]);
+  useEffect(() => {
+    if (draftLoaded) saveDraft(map, draft);
+  }, [draft, draftLoaded, map]);
+
+  const marks = useMemo(
+    () => (map ? applyDraft(map.pos_marks, draft) : []),
+    [map, draft],
+  );
+  // "草稿新增"的名单（列表里打标记用）
+  const addedNames = useMemo(() => new Set(draft
+    .filter((h) => h.kind === "add_mark").map((h) => (h as { name: string }).name)), [draft]);
+
   if (!map) return <Card title="地图规划"><Empty text="等 static/map…" /></Card>;
+
+  const place = (pos: [number, number]): void => {
+    const snapped = snapToCellCenter(pos);
+    const name = nextMarkName(marks.map((m) => m.name));
+    setDraft((d) => [...d, { kind: "add_mark", name, pos: snapped }]);
+  };
+
+  const rename = (from: string, to: string): void => {
+    const clean = to.trim();
+    if (!clean || clean === from) return;
+    if (marks.some((m) => m.name === clean)) return;   // 查重失败 = 忽略（不打扰）
+    setDraft((d) => [...d, { kind: "rename_mark", from, to: clean }]);
+  };
+
+  const remove = (name: string): void => {
+    setDraft((d) => [...d, { kind: "del_mark", name }]);
+  };
+
   return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-      <Card title="建造槽位">
-        <ul className="max-h-72 space-y-1 overflow-auto">
-          {map.build_slots.map((s) => (
-            <li key={s.name} className="text-neutral-300">
-              <b>{s.name}</b> <span className="text-faint">{s.kind} {s.size}×{s.size}</span>
-              <span className="ml-2 text-note text-ghost">
-                tl {s.tl.join(",")} → br {s.br.join(",")}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <div className="mt-1 text-note text-ghost">
-          br / build_point / reported_position 由后端按 ADR-0027 算好 —— 前端零几何换算。
+    <div className="flex gap-3">
+      <div className="min-w-0 flex-1">
+        <div className="relative h-[62vh] min-h-[420px] overflow-hidden rounded border border-neutral-800">
+          <MapCanvas
+            map={map}
+            world={world}
+            production={production}
+            catalog={catalog}
+            economy={economy}
+            layers={defaultLayers()}
+            smooth={false}
+            selection={null}
+            onSelect={() => {}}
+            marksOverride={marks}
+            onBlankClick={placeMode ? place : undefined}
+          />
+          {placeMode && (
+            <div className="pointer-events-none absolute left-2 top-2 rounded border border-amber-700 bg-amber-950/80 px-2 py-1 text-note text-amber-300">
+              放置模式：点击地图放点位（自动吸附格心）· 点「＋ 点位」退出
+            </div>
+          )}
         </div>
-      </Card>
-      <Card title="点位与区域">
-        <div className="text-dim">点位（PosMark）</div>
-        <ul className="space-y-1">
-          {map.pos_marks.map((m) => (
-            <li key={m.name} className="text-neutral-300">
-              <b>{m.name}</b> <span className="text-faint">({m.pos.join(", ")})</span>
-              {m.description_zh && <span className="ml-1 text-note text-ghost">{m.description_zh}</span>}
-            </li>
-          ))}
-        </ul>
-        <div className="mt-2 text-dim">区域（leaf）</div>
-        <ul className="space-y-1">
-          {map.regions.leaf.map((r) => (
-            <li key={r.stable_id} className="text-neutral-300">
-              <b>{r.display_name_zh}</b> <span className="text-faint">({r.stable_id})</span>
-              {r.build_slots.length > 0 && (
-                <span className="ml-1 text-note text-ghost">槽位 {r.build_slots.join(", ")}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </Card>
-      <Card title="放置语法速查">
-        <pre className="rounded bg-neutral-950 p-2 text-note text-neutral-300">
-          {'{ kind: "exact", mark: "rax_1" }\n{ kind: "in_region", region: "main_build" }'}
-        </pre>
         <div className="mt-1 text-note text-ghost">
-          没有 placement 的 build 在编译期就非法。地形
-          {map.terrain ? "已下发（可在地图页看）" : "未下发（sim/离线为纯色底）"}。
+          菱形 = 点位标记（U16：与建筑矩形、单位 chip 不同形）。草稿合并显示：新增/改名/删除即时可见。
         </div>
-      </Card>
+      </div>
+
+      <div className="w-80 shrink-0 space-y-3">
+        <Card title="点位工具">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPlaceMode((v) => !v)}
+              className={"rounded border px-2 py-1 text-note " + (placeMode
+                ? "border-amber-600 bg-amber-950/40 text-amber-300"
+                : "border-neutral-700 text-neutral-300")}
+            >{placeMode ? "退出放置" : "＋ 点位"}</button>
+            <span className="text-note text-ghost">点击地图空白处放置，吸附格心</span>
+          </div>
+          <div className="mt-2 border-t border-neutral-800 pt-2 text-note text-ghost">
+            草稿已存本地（浏览器 localStorage），关页面不丢。
+            提为提案要等 B14：<code>map_plan</code> 的写回通道还没建。
+          </div>
+          <button
+            disabled
+            title="map_plan 提案的后端应用通道还没落地（B14）—— 草稿本地保存，通道建好后这批 hunk 直接进提案"
+            className="mt-2 w-full rounded border border-neutral-800 px-2 py-1 text-note text-faint disabled:opacity-50"
+          >提为提案（待 B14）</button>
+        </Card>
+
+        <Card title={"点位（" + marks.length + "）"}>
+          <ul className="max-h-64 space-y-1 overflow-auto">
+            {marks.map((m) => (
+              <li key={m.name} className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-neutral-900/60">
+                <input
+                  defaultValue={m.name}
+                  onBlur={(e) => rename(m.name, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  className={"w-32 rounded border border-transparent bg-transparent px-1 py-0.5 "
+                    + "hover:border-neutral-700 focus:border-sky-700 focus:bg-neutral-950 " + T.mono}
+                />
+                <span className={"ml-auto text-note text-faint " + T.mono}>
+                  {m.pos[0].toFixed(1)}, {m.pos[1].toFixed(1)}
+                </span>
+                <button
+                  className="shrink-0 text-red-400/70 hover:text-red-300"
+                  title={"删除" + (addedNames.has(m.name) ? "（草稿新增）" : "（草稿覆盖静态点位）")}
+                  onClick={() => remove(m.name)}
+                >×</button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 text-note text-ghost">名字回车/失焦即改（重名忽略）；× 从草稿删除。</div>
+        </Card>
+
+        <Card title="建造槽位（只读）">
+          <ul className="max-h-56 space-y-1 overflow-auto">
+            {map.build_slots.map((s) => (
+              <li key={s.name} className="text-note">
+                <b className="text-neutral-300">{s.name}</b>
+                <span className="ml-1 text-faint">{s.kind} {s.size}×{s.size}</span>
+                <span className="ml-1 text-ghost">tl {s.tl.join(",")} → br {s.br.join(",")}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 text-note text-ghost">
+            槽位的放置编辑是 F14 切片 2（footprint 吸附 + placeable 校验）；现在只读。
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -16,6 +16,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, EconomyFrame, MapStatic, WorldFrame, ProductionFrame } from "../contract";
+import type { MarkView } from "../planning/map-draft";
 import { bakeGrid, bakeTerrain, decodeGrid, regionColor, type Palette } from "./grid";
 import { clusterUnits } from "./cluster";
 import { ALPHA_BUDGET, COLOR, LOD, SHAPE, fontCss, ownerColor, slotColor } from "./theme";
@@ -43,6 +44,13 @@ export function MapCanvas(props: {
   smooth: boolean;
   selection: Selection | null;
   onSelect: (s: Selection | null) => void;
+  /**
+   * F14：草稿合并后的标记表。非 null 时**替代** map.pos_marks 渲染 ——
+   * 画布对草稿零认知，谁要叠加草稿谁自己用 applyDraft 算好传进来（决策 U1 的画布版）。
+   */
+  marksOverride?: MarkView[] | null;
+  /** F14：点击空白处（未命中任何单位）时回调，放点位工具用。不提供则维持纯只读。 */
+  onBlankClick?: (worldPos: [number, number]) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -213,6 +221,7 @@ export function MapCanvas(props: {
           const [wx, wy] = screenToWorld(vp, e.clientX - r.left, e.clientY - r.top);
           const hit = nearestUnit(props.world, wx, wy, 12 / vp.scale);
           props.onSelect(hit === null ? null : { kind: "unit", tag: hit });
+          if (hit === null) props.onBlankClick?.([wx, wy]);
         }}
         onPointerCancel={() => { drag.current = null; }}
       />
@@ -341,7 +350,8 @@ function paint(
   // 形状用菱形而非矩形/圆：U16 要求标记与建筑(矩形)、单位(chip) 不撞形。
   if (layersOn(props, "marks")) {
     ctx.lineWidth = 1.2;
-    for (const m of map.pos_marks) {
+    const marks = props.marksOverride ?? map.pos_marks;
+    for (const m of marks) {
       const [sx, sy] = worldToScreen(vp, m.pos[0], m.pos[1]);
       const half = Math.max(SHAPE.mark.diamondHalf, vp.scale * 0.5);
       ctx.beginPath();

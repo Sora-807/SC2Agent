@@ -257,3 +257,34 @@ describe("Flow 图的两处交互修复（2026-08-21 审查发现）", () => {
     expect(page).not.toMatch(/const hasEdge = target !== "留在本步"/);
   });
 });
+
+describe("F14 切片 1：地图规划画布（2026-08-21）", () => {
+  it("规划页的地图 tab 是画布不是列表", () => {
+    const page = code("pages/PlanningPage.tsx");
+    expect(page).toContain("<MapCanvas");
+    expect(page).toContain("marksOverride");
+    expect(page).toContain("onBlankClick");
+    expect(page).toContain("applyDraft");
+    // 回归：曾是三张只读列表、没有 canvas（用户最初问题 3 的"规划与地图错位"）
+    expect(page).not.toContain('Card title="放置语法速查"');
+  });
+
+  it("画布不感知草稿 —— marksOverride 非 null 才替代 map.pos_marks", () => {
+    const canvas = code("canvas/MapCanvas.tsx");
+    expect(canvas).toContain("props.marksOverride ?? map.pos_marks");
+    expect(canvas).toContain("props.onBlankClick?.(");
+  });
+
+  it("草稿模型是 hunk 序列，画布只吃投影（applyDraft 纯函数）", () => {
+    const md = code("planning/map-draft.ts");
+    expect(md).toContain("export function applyDraft");
+    expect(md).toContain("localStorage");
+    expect(md).toContain("map-plan-draft:");
+  });
+
+  it("提为提案按钮诚实置灰（B14 没落地不装成能用）", () => {
+    const page = code("pages/PlanningPage.tsx");
+    expect(page).toContain("提为提案（待 B14）");
+    expect(page).toMatch(/<button\s*\n?\s*disabled/);
+  });
+});
