@@ -196,6 +196,55 @@ def test_double_projection_works_on_live_via_subprocess(client: TestClient):
     assert r.status_code == 200 and r.json()["status"] == "已接受"
 
 
+def test_start_same_driver_is_idempotent(client: TestClient):
+    """同 driver 重复 start **不换会话**（防多开）：真机上一个会话 = 一个 SC2 游戏进程，
+    连点两次「启动真机」不能再开一扇黑屏窗口。"""
+    _start(client)
+    _wait_seq(client, 2)
+    first = client.app.state.session
+    assert first is not None and hasattr(first, "proc")
+    pid1 = first.proc.pid
+    again = client.post("/api/session/start", params={"driver": "sim"}).json()
+    assert again["pid"] == pid1, "幂等返回：同 driver 不重建进程"
+    assert client.app.state.session is first
+    assert first.proc.poll() is None, "原会话没被动过"
+
+
+def test_start_different_driver_replaces_session(client: TestClient):
+    """换 driver 才允许换会话：旧的先 stop（含树杀，防孤儿 SC2）再起。"""
+    _start(client)
+    _wait_seq(client, 2)
+    first = client.app.state.session
+    assert first is not None and hasattr(first, "proc")
+    client.post("/api/session/start", params={"driver": "offline"})
+    assert first.proc.poll() is not None, "旧子进程会话应已退出"
+
+
+def test_stop_kills_process_tree(client: TestClient, monkeypatch):
+    """stop 必须树杀：SC2 是孙进程，只 kill 直接子进程会留桌面黑屏孤儿（真机欠账 §10.3）。"""
+    import os
+
+    import api.live as live_mod
+
+    _start(client)
+    _wait_seq(client, 2)
+    calls: list = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        class _R:
+            returncode = 0
+            stdout = b""
+            stderr = b""
+        return _R()
+
+    monkeypatch.setattr(live_mod.subprocess, "run", fake_run)
+    client.post("/api/session/stop")
+    if os.name == "nt":
+        assert any("/T" in map(str, c) and "/F" in map(str, c) and "/PID" in map(str, c)
+                   for c in calls), f"应调用 taskkill /T /F 树杀，实际调用：{calls}"
+
+
 def test_sc2_driver_needs_real_game(client: TestClient):
     """sc2 会话不能把 api 拖死：要么建起来，要么报错 —— 两种都算活着。
 

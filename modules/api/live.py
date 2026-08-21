@@ -16,6 +16,8 @@ ProactorEventLoop，而 uvicorn 的循环策略不由我们定 —— 一个 dae
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -334,6 +336,32 @@ class LiveSession:
 
     # ---- 生命周期 ----
 
+    def _kill_tree(self) -> None:
+        """杀掉**整棵进程树**（run_session + 它启的 SC2）。
+
+        真机欠账 §10.3 的根修：`proc.kill()` 只杀直接子进程，SC2 是孙进程 ——
+        子进程死了它变孤儿，留在桌面上的就是那些黑屏窗口。
+        - Windows：`taskkill /T /F`（/T = 整棵树）
+        - POSIX：进程组 SIGKILL（Popen 里没设 start_new_session，退化为只杀子进程 ——
+          本项目主要跑 Windows，POSIX 路径是尽力而为）
+        进程已遇时 taskkill 会报错，静默即可（幂等）。
+        """
+        if self.proc.poll() is not None and not _pid_has_children(self.proc.pid):
+            return
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(self.proc.pid)],
+                    capture_output=True, timeout=10, check=False,
+                )
+            else:
+                try:
+                    os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    self.proc.kill()
+        except (OSError, subprocess.SubprocessError):
+            pass
+
     def stop(self) -> None:
         try:
             self._send({"op": "stop"})
@@ -344,6 +372,9 @@ class LiveSession:
         except subprocess.TimeoutExpired:
             # 真机上 run_game 不一定听我们的 —— 到点就 kill，别把 api 拖住
             self.proc.kill()
+        # 无论子进程是否自己退出：SC2 是它的子进程，只有树杀才不会变孤儿黑屏。
+        # 子进程已退时 taskkill 报"找不到进程"被静默；SC2 还在则被连坐。
+        self._kill_tree()
         with self._lock:
             if self.state != "崩溃":
                 self.state = "已结束"
@@ -359,3 +390,19 @@ class LiveSession:
                 "meta": {k: v for k, v in self._meta.items() if k != "stderr_tail"},
                 "queues": [],   # 队列由子进程持有；UI 从 frame/production 看（单一真相源）
             }
+
+
+def _pid_has_children(pid: int) -> bool:
+    """该 pid 是否还有活着的子进程（决定 _kill_tree 是否还有活可干）。
+
+    Windows 上枚举父子关系要 WMI，太重；简化为：只要目标进程还活着就交给 taskkill /T
+    （它对无子进程的 pid 是无害的 no-op），已死则直接跳过。POSIX 同理只看进程本身。
+    """
+    if os.name == "nt":
+        # taskkill /T 对已退出的 pid 只是报错破锁；直接返回 True 走 taskkill 兜底
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False

@@ -147,13 +147,19 @@ def create_app(frame_dir: Path | str | None = None,
 
         必须是 `async def`：`asyncio.create_task` 需要运行中的事件循环，
         而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
+
+        **幂等守卫（防多开 SC2）**：同 driver 且现有子进程会话还活着 → 直接返回现状，
+        **不重启**。真机上一个会话就是一个 SC2 游戏进程，重复 start 会一个接一个地
+        开游戏（且 V1 时代旧 SC2 不会被连带杀掉，全成桌面黑屏孤儿）。
+        换 driver 才允许换会话：旧会话先 stop（含树杀），再起新的。
         """
-        if app.state.session is not None:
-            # 换驱动 = 换会话：旧会话自动停止。让用户先手动 stop 是坏体验 ——
-            # 也是刚才实测踩过的坑（残留会话导致新会话起不来，Node 侧 fetch 409 然后超时）。
-            old = app.state.session
-            if hasattr(old, "proc"):
-                old.stop()
+        old = app.state.session
+        if old is not None and hasattr(old, "proc"):
+            alive = old.describe().get("alive")
+            same_driver = getattr(old, "driver", None) == driver
+            if alive and same_driver:
+                return old.describe()   # 已在同一种会话上：幂等返回，不多开
+            old.stop()                 # 换驱动（或旧会话已死）：先收尾（树杀，防孤儿 SC2）
             app.state.session = None
         if driver in ("sim", "sc2"):
             app.state.session = LiveSession(driver=driver)

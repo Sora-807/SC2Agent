@@ -7,7 +7,8 @@
  * 2. 模式的视觉不可忽略：顶部 2px 色带 + 呼吸点/状态文字 —— 不看下拉就知道在线离线；
  * 3. 真机入口就在这里：实时驾驶模式的会话操作区（沙盒 sim / 真机 sc2 / 停止）。
  */
-import { sessionAction } from "../api/commands";
+import { useEffect, useState } from "react";
+import { fetchSessionInfo, sessionAction, type SessionInfo } from "../api/commands";
 import { useFrames, type SourceKind } from "../store/frames";
 import { MODE_META, allowedSources, type Mode } from "./mode";
 import { Pill, fmtTime } from "./ui";
@@ -24,11 +25,48 @@ const SOURCE_LABEL: Record<SourceKind, string> = {
 
 export function SessionBar() {
   const {
-    mode, timeline, setMode,
+    mode, timeline, setMode, probe,
     fixtures, fixtureKey, sourceKind, attach,
     session, caps, position, api,
     returnToLive, play, pause,
   } = useFrames();
+
+  // 会话描述轮询（只在 drive 模式）：driver/alive 驱动按钮拦截，防止重复启动 SC2。
+  // 后端也有幂等守卫（同 driver 重复 start 不重启），前端拦截是第一道、后端是兜底。
+  const [sessInfo, setSessInfo] = useState<SessionInfo | null>(null);
+  useEffect(() => {
+    if (mode !== "drive" || !api.ok) {
+      setSessInfo(null);
+      return;
+    }
+    let stopped = false;
+    const poll = async (): Promise<void> => {
+      const s = await fetchSessionInfo();
+      if (!stopped) setSessInfo(s);
+    };
+    void poll();
+    const t = setInterval(() => void poll(), 2000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [mode, api.ok]);
+
+  const live = sessInfo?.alive === true;
+  const liveDriver = sessInfo?.driver ?? null;
+  const startSession = async (driver: "sim" | "sc2"): Promise<void> => {
+    if (driver === "sc2"
+        && !window.confirm("启动真机会话？这会打开一个 SC2 游戏进程，停止会话前别手动关它。")) {
+      return;
+    }
+    if (live && liveDriver !== null && liveDriver !== driver
+        && !window.confirm(`当前有${liveDriver === "sc2" ? "真机" : "沙盒"}会话在跑，换会话会先停止它。继续？`)) {
+      return;
+    }
+    await sessionAction("start", { driver });
+    await setMode("drive");
+    await attach("live", "live");
+  };
 
   const meta = MODE_META[mode];
   const sources = allowedSources(mode, api.ok);
@@ -69,6 +107,15 @@ export function SessionBar() {
             );
           })}
         </div>
+
+        {/* 后端未连接：可见的重连入口（G7：不静默藏起来；用户可能后启动 serve_api） */}
+        {!api.ok && (
+          <button
+            className="rounded border border-amber-800 bg-amber-950/40 px-2 py-1 text-xs"
+            title="实时驾驶与后端会话都需要 python tools/serve_api.py 在跑；启动后点这里重连"
+            onClick={probe}
+          >后端未连接 · 重试</button>
+        )}
 
         {/* 二级控件：随模式变化的数据源 / 会话操作 */}
         {mode === "offline" && (
@@ -111,34 +158,38 @@ export function SessionBar() {
         )}
 
         {mode === "drive" && (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <button
-              className="rounded border border-emerald-800 bg-emerald-900/30 px-2 py-1 text-xs"
-              title="在后端起一个离线沙盒会话（真引擎 + 假世界），起来后可以下命令"
-              onClick={async () => {
-                await sessionAction("start", { driver: "sim" });
-                await setMode("drive");
-                await attach("live", "live");
-              }}
-            >启动沙盒</button>
+              className="rounded border border-emerald-800 bg-emerald-900/30 px-2 py-1 text-xs disabled:opacity-40"
+              disabled={live && liveDriver === "sim"}
+              title={live && liveDriver === "sim"
+                ? "沙盒会话已在运行（后端也会拒绝重复启动）"
+                : "在后端起一个离线沙盒会话（真引擎 + 假世界），起来后可以下命令"}
+              onClick={() => void startSession("sim")}
+            >{live && liveDriver === "sim" ? "沙盒运行中" : "启动沙盒"}</button>
             <button
-              className="rounded border border-red-900 bg-red-900/30 px-2 py-1 text-xs"
-              title="连真实 SC2：会启动一个 SC2 游戏进程（结束后记得停止会话）"
-              onClick={async () => {
-                if (!window.confirm("启动真机会话？这会打开一个 SC2 游戏进程，停止会话前别手动关它。")) {
-                  return;
-                }
-                await sessionAction("start", { driver: "sc2" });
-                await setMode("drive");
-                await attach("live", "live");
-              }}
-            >启动真机（SC2）</button>
+              className="rounded border border-red-900 bg-red-900/30 px-2 py-1 text-xs disabled:opacity-40"
+              disabled={live && liveDriver === "sc2"}
+              title={live && liveDriver === "sc2"
+                ? "真机会话已在运行：一个会话 = 一个 SC2 游戏进程，不允许多开（后端也会拒绝）"
+                : "连真实 SC2：会启动一个 SC2 游戏进程（结束后记得停止会话）"}
+              onClick={() => void startSession("sc2")}
+            >{live && liveDriver === "sc2" ? "真机已启动" : "启动真机（SC2）"}</button>
             <button
-              className="rounded border border-neutral-700 px-2 py-1 text-xs"
+              className="rounded border border-neutral-700 px-2 py-1 text-xs disabled:opacity-40"
+              disabled={!live}
+              title="停止会话 = 杀掉整棵子进程树（含 SC2 游戏进程）"
               onClick={async () => {
                 await sessionAction("stop");
+                setSessInfo(await fetchSessionInfo());
               }}
             >停止会话</button>
+            {sessInfo && (
+              <span className={T.note + " text-faint"}>
+                {sessInfo.label ?? sessInfo.state}
+                {sessInfo.error ? ` · ${sessInfo.error}` : ""}
+              </span>
+            )}
           </div>
         )}
 

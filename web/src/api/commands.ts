@@ -80,3 +80,23 @@ export async function sessionAction(
     return null;
   }
 }
+
+/** 当前会话描述（GET /api/session）：driver/alive/state —— 前端据此拦截多开。 */
+export interface SessionInfo {
+  state: string;
+  driver?: string;
+  alive?: boolean;
+  label?: string;
+  error?: string | null;
+  detail?: string;
+}
+
+export async function fetchSessionInfo(): Promise<SessionInfo | null> {
+  try {
+    const res = await fetch(new URL("/api/session", API_BASE));
+    if (!res.ok) return null;
+    return (await res.json()) as SessionInfo;
+  } catch {
+    return null;
+  }
+}

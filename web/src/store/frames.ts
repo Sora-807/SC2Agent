@@ -74,6 +74,8 @@ interface FramesStore extends Frames {
   init(): Promise<void>;
   attach(kind: SourceKind, fixtureKey: string): Promise<void>;
   setMode(m: Mode): Promise<void>;
+  /** 重新探测后端（用户后启动 serve_api 时不用刷新页面） */
+  probe(): void;
   seek(t: number): void;
   returnToLive(): void;
   /** 夹具/复盘的自动前进（live 源不需要） */
@@ -205,6 +207,10 @@ export const useFrames = create<FramesStore>((set, get) => {
         timeline: isReviewable(src) ? src.mode() : "live",
       });
       syncMeta();
+    },
+
+    probe() {
+      void probeApi(API_BASE).then((api) => set({ api }));
     },
 
     async setMode(m) {
