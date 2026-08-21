@@ -176,6 +176,7 @@ export function Overview() {
         <div className="h-72">
           {map ? (
             <MapCanvas map={map} world={world} production={production}
+                       economy={economy} catalog={catalog}
                        layers={defaultLayers()} smooth selection={null} onSelect={() => {}} />
           ) : <Empty />}
         </div>

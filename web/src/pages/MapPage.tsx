@@ -10,7 +10,7 @@ import { Card, Empty, fmtTime } from "../shell/ui";
 import { useFrames } from "../store/frames";
 
 export function MapPage() {
-  const { map, world, production, catalog, flow } = useFrames();
+  const { map, world, production, economy, catalog, flow } = useFrames();
   const [layers, setLayers] = useState(defaultLayers);
   const [smooth, setSmooth] = useState(true);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -32,6 +32,8 @@ export function MapPage() {
           map={map}
           world={world}
           production={production}
+          economy={economy}
+          catalog={catalog}
           layers={layers}
           smooth={smooth}
           selection={selection}

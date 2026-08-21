@@ -43,7 +43,9 @@ export const LAYERS: LayerDef[] = [
   { key: "groups", label: "flow 分组", on: true,
     available: (_m, w) => (w?.units.some((u) => u.group_id) ?? false)
       ? { ok: true } : { ok: false, why: "本帧没有单位被 lease 进任何组" } },
-  { key: "resources", label: "矿区饱和度", on: true, available: always },
+  { key: "resources", label: "矿区细节", on: false, available: always },
+  // F11e：默认关 + 改名「矿区细节」—— 饱和度改由主基地那行「矿 12/16」表达，
+  // 20+ 矽点不再压过信息（根因 J）；要看细节时手动开。
   { key: "orders", label: "命令连线", on: false, available: always },
   { key: "visibility", label: "视野", on: false,
     available: (_m, w) => w?.grids?.visibility
