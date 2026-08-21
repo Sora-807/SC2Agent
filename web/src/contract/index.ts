@@ -9,6 +9,11 @@ import { z } from "zod";
 
 /**
  * 契约版本。
+ * rev 10：B12+B13 一轮两字段（F11 地图视觉语言需要）：
+ *   ① `frame/economy.nodes[]` 增 `base_tag`（节点归属基地 = 最近的己方 dropoff 建筑 tag）——
+ *     与 frame/world.units 按 tag 直接 join，主基地标签写「矿 12/16 气 3/6」不需要空间匹配；
+ *   ② `static/catalog.entries[]` 增 `short_name_zh`（≤2 字短名）—— footprint 内标签与
+ *     单位聚类 chip 的字形。后端加字段而不是前端截断（PLAN §12 结论 2：U6/C4）。
  * rev 9：新增 topic `static/terrain`（B4）。它是**事件式静态面**：
  *   `static/map` 先到（terrain=null），game_info 就绪后地形帧补到 ——
  *   前端把它的 payload **合并进 map.terrain**，而不是等一张完整的 static/map。
@@ -46,7 +51,7 @@ import { z } from "zod";
  *   `frame/production` 增队列级 `blocked`（后端 T4 已有 `runtime.blocked`：原因 + 起始时间 + 是否已告警）。
  * rev 1：初版（DSL v0.2 之前，签名表尚不存在，schema 降级为空参数表）。
  */
-export const REV = 9 as const;
+export const REV = 10 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -170,6 +175,8 @@ export const zCatalogStatic = z.object({
     z.object({
       stable_id: z.string(),
       display_name_zh: z.string(),
+      /** ≤2 字短名（B13）：地图 footprint 标签与聚类 chip 字形 */
+      short_name_zh: z.string(),
       role: zRole,
       capabilities: z.array(z.string()),
       cost: z.object({
@@ -544,6 +551,8 @@ export const zEconomyFrame = z.object({
       /** 矿 2 / 气 3 —— 后端的真机常数，前端不硬编码 */
       capacity: z.number().int(),
       saturated: z.boolean(),
+      /** 归属基地的 unit tag（最近的己方 dropoff 建筑）；无基地 → null（B12） */
+      base_tag: z.number().int().nullable(),
     }),
   ),
   /** 建造征用（owner 如 "production/build#3"）：有它，"抢走正在建造的 SCV"才是结构性不可能 */

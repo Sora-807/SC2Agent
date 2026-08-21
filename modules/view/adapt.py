@@ -528,6 +528,7 @@ def economy_frame(snap: dict) -> EconomyFrame:
             workers=per_node.get(n["tag"], 0),
             capacity=int(n["cap"]),
             saturated=per_node.get(n["tag"], 0) >= int(n["cap"]),
+            base_tag=n.get("base"),
         )
         for n in nodes_raw
     ]

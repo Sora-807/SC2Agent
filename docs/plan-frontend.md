@@ -45,6 +45,7 @@
 
 | rev | 变更 | 原因 |
 |---|---|---|
+| 10 | B12+B13 一轮两字段(F11 地图视觉语言需要):`frame/economy.nodes[]` 增 `base_tag`(节点归属基地 = 最近的己方 dropoff 建筑 tag,null = 无基地);`static/catalog.entries[]` 增 `short_name_zh`(≤2 字短名) | ① 主基地 footprint 内标签要写「矿 12/16 气 3/6」——前端拿 base_tag 与 frame/world.units 按 tag 直接 join,不需要在 TS 里做空间匹配(派生量后端算);② footprint 标签与聚类 chip 的字形需要短名——后端加字段而不是前端截断 display_name_zh(zh 文案一律来自后端,U6/C4;前端截断会在别的词上出洋相) |
 | 1 | 初版 | DSL v0.2 之前,签名表尚不存在,`static/schema` 降级为空参数表 |
 | 7 | 新增 topic `static/strategy`(steps/branches/edges/声明节) | F4 的图**不在任何帧里**:`frame/flow` 只有"现在在哪个 step",图本身从来没下发过。只靠转移历史推图会看不见"一次都没走过的 step"。归静态面(每个 flow 版本只变一次);hot-edit(S8)落地后改事件驱动。`branches` 原样带值树 —— F4 只要 step/edge,但 F9 的 AST 编辑器要完整结构,摊平一次就得再补通道 |
 | 6 | 新增 topic `frame/economy`;`tasks` 给 **quota / target / actual 三个数** | ADR-0030 的经济维持器落地。维持器的 `snapshot()` 给"可达目标"(受节点容量与人数夹紧),持久配额在 policy 里。只给 target 的话,"精炼厂没建好时气目标 0"会让用户以为 `assign_workers` 的意图又蒸发了 —— 恰好与 issues P9 的修复相反,所以两个数都要给 |
@@ -119,6 +120,7 @@ interface MapStatic {
 interface CatalogStatic {
   entries: {
     stable_id: string; display_name_zh: string
+    short_name_zh: string                      // ≤2 字短名(rev 10):地图 footprint 标签与聚类 chip 字形
     role: "worker" | "combat" | "building" | "upgrade"
     capabilities: string[]
     cost: { minerals: number; vespene: number; supply: number }

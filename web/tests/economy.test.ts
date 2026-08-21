@@ -23,6 +23,17 @@ function economyFrames(file: string): EconomyFrame[] {
   return out;
 }
 
+function worldUnitTags(file: string): Set<number> {
+  const tags = new Set<number>();
+  for (const line of readFileSync(resolve(FIX_DIR, file), "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    const env = parseEnvelopeLine(line);
+    if (env.topic !== "frame/world") continue;
+    for (const u of env.payload.units) tags.add(u.tag);
+  }
+  return tags;
+}
+
 describe("frame/economy", () => {
   it("每份夹具都带经济帧（维持器已接入）", () => {
     for (const f of fixtures) {
@@ -62,5 +73,26 @@ describe("frame/economy", () => {
     const frames = economyFrames("leapfrog.jsonl");
     const zero = frames.filter((f) => f.emitted_count === 0).length;
     expect(zero / frames.length).toBeGreaterThan(0.7);
+  });
+
+  it("B12：base_tag 非空时必须是本夹具里真实存在的单位 tag（可直接与 frame/world join）", () => {
+    for (const file of fixtures) {
+      const unitTags = worldUnitTags(file);
+      for (const f of economyFrames(file)) {
+        for (const n of f.nodes) {
+          if (n.base_tag !== null) {
+            expect(unitTags.has(n.base_tag), `${file}: base_tag ${n.base_tag} 不在 frame/world 里`).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it("B12：有主基的夹具里矿节点都能归到基地（有 CC 的帧必有非空 base_tag）", () => {
+    // opening 夹具全程有指挥中心（开周就有）——节点归属不应该是 null
+    for (const f of economyFrames("opening.jsonl")) {
+      if (f.nodes.length === 0) continue;
+      expect(f.nodes.some((n) => n.base_tag !== null), "有 CC 却全部节点无归属").toBe(true);
+    }
   });
 });

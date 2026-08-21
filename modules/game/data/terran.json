@@ -2,6 +2,7 @@
   "terran/scv": {
     "burnysc2_name": "SCV",
     "display_name_zh": "工程兵",
+    "short_name_zh": "工兵",
     "role": "worker",
     "capabilities": [
       "gather",
@@ -20,6 +21,7 @@
   "terran/marine": {
     "burnysc2_name": "MARINE",
     "display_name_zh": "机枪兵",
+    "short_name_zh": "枪兵",
     "role": "combat",
     "capabilities": [
       "attack",
@@ -39,6 +41,7 @@
   "terran/medivac": {
     "burnysc2_name": "MEDIVAC",
     "display_name_zh": "医疗运输机",
+    "short_name_zh": "医疗",
     "role": "combat",
     "capabilities": [
       "heal",
@@ -59,6 +62,7 @@
   "terran/commandcenter": {
     "burnysc2_name": "COMMANDCENTER",
     "display_name_zh": "指挥中心",
+    "short_name_zh": "基地",
     "role": "building",
     "capabilities": [
       "train",
@@ -77,6 +81,7 @@
   "terran/supplydepot": {
     "burnysc2_name": "SUPPLYDEPOT",
     "display_name_zh": "补给站",
+    "short_name_zh": "补给",
     "role": "building",
     "capabilities": [
       "supply"
@@ -96,6 +101,7 @@
   "terran/barracks": {
     "burnysc2_name": "BARRACKS",
     "display_name_zh": "兵营",
+    "short_name_zh": "兵营",
     "role": "building",
     "capabilities": [
       "train"
@@ -115,6 +121,7 @@
   "terran/reactor": {
     "burnysc2_name": "BARRACKSREACTOR",
     "display_name_zh": "反应堆（双倍挂件）",
+    "short_name_zh": "反应",
     "role": "building",
     "capabilities": [
       "addon"
@@ -136,6 +143,7 @@
   "terran/techlab": {
     "burnysc2_name": "BARRACKSTECHLAB",
     "display_name_zh": "科技实验室",
+    "short_name_zh": "科技",
     "role": "building",
     "capabilities": [
       "addon"
@@ -157,6 +165,7 @@
   "terran/refinery": {
     "burnysc2_name": "REFINERY",
     "display_name_zh": "精炼厂",
+    "short_name_zh": "精炼",
     "role": "building",
     "capabilities": [
       "gas"
@@ -176,6 +185,7 @@
   "terran/factory": {
     "burnysc2_name": "FACTORY",
     "display_name_zh": "工厂",
+    "short_name_zh": "工厂",
     "role": "building",
     "capabilities": [
       "train"
@@ -195,6 +205,7 @@
   "terran/factorytechlab": {
     "burnysc2_name": "FACTORYTECHLAB",
     "display_name_zh": "工厂科技实验室",
+    "short_name_zh": "工技",
     "role": "building",
     "capabilities": [
       "addon"
@@ -216,6 +227,7 @@
   "terran/siegetank": {
     "burnysc2_name": "SIEGETANK",
     "display_name_zh": "攻城坦克",
+    "short_name_zh": "坦克",
     "role": "combat",
     "capabilities": [
       "attack",
@@ -240,6 +252,7 @@
   "terran/engineeringbay": {
     "burnysc2_name": "ENGINEERINGBAY",
     "display_name_zh": "工程站",
+    "short_name_zh": "工站",
     "role": "building",
     "capabilities": [
       "research"
@@ -259,6 +272,7 @@
   "terran/armory": {
     "burnysc2_name": "ARMORY",
     "display_name_zh": "军械库",
+    "short_name_zh": "军械",
     "role": "building",
     "capabilities": [
       "research"
@@ -278,6 +292,7 @@
   "terran/factoryreactor": {
     "burnysc2_name": "FACTORYREACTOR",
     "display_name_zh": "工厂反应堆",
+    "short_name_zh": "工反",
     "role": "building",
     "capabilities": [
       "addon"
@@ -299,6 +314,7 @@
   "terran/infantryweapons1": {
     "burnysc2_name": "INFANTRYWEAPONSLEVEL1",
     "display_name_zh": "步兵武器 1 级",
+    "short_name_zh": "步武",
     "role": "upgrade",
     "capabilities": [],
     "cost": {
@@ -315,6 +331,7 @@
   "terran/infantryarmor1": {
     "burnysc2_name": "INFANTRYARMORLEVEL1",
     "display_name_zh": "步兵装甲 1 级",
+    "short_name_zh": "步甲",
     "role": "upgrade",
     "capabilities": [],
     "cost": {

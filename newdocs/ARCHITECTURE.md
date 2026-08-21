@@ -1,6 +1,8 @@
 # sc2Agent 完整架构文档（交接用）
 
-> 版本：对应提交 d42aa1e（真机验证与修复）。基线：后端 **614 passed** / 前端 **96 passed / 9 files**，契约两侧 REV = 9。
+> 版本：对应提交 d42aa1e（真机验证与修复）；契约已随 B12+B13 推到 **REV = 10**。
+> 基线：后端 **614 passed** / 前端 **96 passed / 9 files**（后续任务以此为准不许下降；
+> B12+B13 落地后后端 619 / 前端 131）。
 > 本文档是**当前仓库的完整快照描述**：模块、职责、依赖、契约、数据流、运行方式、真机状态。
 > 配套文档：newdocs/PLAN.md（后续计划，F10-F14 / B12-B14 及后端剩余事项）。
 
@@ -222,7 +224,7 @@ check_build/check_train/check_gas/...：矿/气/供给/前置/放置/重叠 → 
 ### 4.1 信封
 
 ~~~json
-{ "topic": "frame/world", "rev": 9, "seq": 512, "game_time": 87.0, "wall_ms": 412, "payload": { ... } }
+{ "topic": "frame/world", "rev": 10, "seq": 512, "game_time": 87.0, "wall_ms": 412, "payload": { ... } }
 ~~~
 
 - topic / rev / seq / game_time / wall_ms 五个键每个帧都有；payload 随 topic 变。
@@ -282,6 +284,7 @@ check_build/check_train/check_gas/...：矿/气/供给/前置/放置/重叠 → 
 
 | REV | 变更 | 原因摘要 |
 |---|---|---|
+| 10 | B12+B13 一轮两字段：`frame/economy.nodes[]` 增 `base_tag`（节点归属基地 = 最近的己方 dropoff 建筑 tag）；`static/catalog.entries[]` 增 `short_name_zh`（≤2 字短名） | F11 地图视觉语言：主基地标签「矿 12/16 气 3/6」需要按 tag join 的基地归属；footprint 标签与聚类 chip 字形需要短名（后端加字段不做前端截断，U6/C4） |
 | 1 | 初版 | DSL v0.2 之前，签名表尚不存在，`static/schema` 降级为空参数表 |
 | 2 | `static/schema` 改为**逐字镜像** `flow.vocab.dump_vocabulary()`；`frame/production` 队列增 `blocked` | rev 1 手抄已出错（`follow`/`research` 参数、`point_toward` 的 origin 全抄错）；vocab 是校验器/提示词/编辑器共用的权威表 |
 | 3 | 区域几何改为**一张标签网格 + 索引**（`big_grid`/`leaf_grid`/`*_index`），删 `leaf[].cells` | per-region mask 不可扩展：20 个区域按 mask 发 750KB，按标签网格始终 37KB |

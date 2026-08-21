@@ -67,13 +67,15 @@ def test_unknown_returns_none():
 def test_register_custom():
     cat = Catalog()
     cat.register("terran/test", {
-        "burnysc2_name": "TEST", "display_name_zh": "测试", "role": "worker",
+        "burnysc2_name": "TEST", "display_name_zh": "测试", "short_name_zh": "测试",
+        "role": "worker",
         "capabilities": ["gather"], "cost": {"minerals": 1, "vespene": 0, "supply": 0},
         "build_time": 1, "produced_by": None, "prerequisites": [],
     })
     e = cat.by_stable_id("terran/test")
     assert e is not None
     assert e.burnysc2_name == "TEST"
+    assert e.short_name_zh == "测试"
     assert e.role is Role.WORKER
     assert e.cost == Cost(minerals=1, vespene=0, supply=0)
     assert cat.stable_id_for("TEST") == "terran/test"
@@ -168,7 +170,8 @@ def test_register_rejects_addon_without_build_ability():
 
 def _bad(data_patch: dict) -> dict:
     data = {
-        "burnysc2_name": "TEST", "role": "worker", "capabilities": ["gather"],
+        "burnysc2_name": "TEST", "short_name_zh": "测试", "role": "worker",
+        "capabilities": ["gather"],
         "cost": {"minerals": 1, "vespene": 0, "supply": 0}, "build_time": 1,
     }
     data.update(data_patch)
@@ -213,4 +216,23 @@ def test_register_rejects_duplicate_stable_id_and_name():
         cat.register("terran/test", _bad({"burnysc2_name": "TEST2"}))
     with pytest.raises(ValueError, match="占用"):
         cat.register("terran/other", _bad({}))  # burnysc2_name "TEST" 已被占
+
+
+# ---- short_name_zh（B13：≤2 字短名，static/catalog 契约字段）----
+
+
+def test_register_rejects_missing_short_name():
+    """短名是契约字段（static/catalog），缺了前端 footprint 标签没有替代品 → 加载当场报错。"""
+    data = _bad({})
+    del data["short_name_zh"]
+    with pytest.raises(ValueError, match="short_name_zh"):
+        Catalog().register("terran/test", data)
+
+
+def test_terran_entries_all_have_short_name():
+    """全量条目都带短名且 ≤2 字（F11 地图标签与聚类 chip 的字形来源，U6/C4）。"""
+    cat = load_terran()
+    for e in cat.where():
+        assert e.short_name_zh, f"{e.stable_id} 缺 short_name_zh"
+        assert len(e.short_name_zh) <= 2, f"{e.stable_id} 短名超过 2 字：{e.short_name_zh}"
 

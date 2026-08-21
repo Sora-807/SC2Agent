@@ -363,7 +363,7 @@ live = 顶部绿色细线 + 呼吸点 +「跟随实时」；复盘 = 琥珀 +「
 
 | 轮次 | REV | 改动 | 触发任务 |
 |---|---|---|---|
-| 第一次 | 9 → 10 | frame/economy.nodes[] 增 base_tag；static/catalog.entries[] 增 short_name_zh | B12·B13（F11 需要） |
+| 第一次 | 9 → 10（✅ 已落地） | frame/economy.nodes[] 增 base_tag；static/catalog.entries[] 增 short_name_zh | B12·B13（F11 需要） |
 | 第二次 | 10 → 11 | map_plan 的 hunk payload 模型 + map_overlay preview 字段 | B14（F14 需要） |
 | 可选 | 11 → 12 | static/terrain 增 levels + ramp 掩码 | 仅当斜坡需要被命名/被谓词引用时（结论 3 已决定：现在不建） |
 

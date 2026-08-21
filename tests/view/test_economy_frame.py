@@ -137,3 +137,45 @@ def test_frame_is_json_serializable():
     d = to_json(economy_frame(keeper.snapshot(_gs([], []))))
     assert set(d) == {"tasks", "nodes", "reserved", "emitted_count", "domain_workers", "quotas"}
     assert d["quotas"]["mineral_per_patch"] >= 1
+
+
+def _cc(tag: int, x: float) -> Unit:
+    return Unit(tag=tag, type_name="COMMANDCENTER", position=Point2(x, 10.0),
+                owner=Owner.SELF, hp=1500.0, hp_max=1500.0, shield=0.0, energy=0.0,
+                build_progress=1.0, orders=[])
+
+
+def test_node_base_tag_is_nearest_dropoff_building():
+    """B12：节点带 base_tag（最近的己方 dropoff 建筑 tag）——前端拿它与
+    frame/world.units 按 tag join，主基地标签写「矿 12/16 气 3/6」不需要空间匹配。"""
+    keeper, _ = _keeper()
+    cc = _cc(900, 8.0)
+    nodes = [_node(500, "MINERALFIELD", 8.5), _node(501, "MINERALFIELD", 9.0)]
+    gs = _gs([cc], nodes)
+    keeper.on_game_state(gs)
+    f = economy_frame(keeper.snapshot(gs))
+    assert {n.base_tag for n in f.nodes} == {900}
+    assert to_json(f)["nodes"][0]["base_tag"] == 900
+
+
+def test_node_base_tag_none_without_base():
+    """没有己方基地时 base_tag 为 None（如实，不端出编造的归属）。"""
+    keeper, _ = _keeper()
+    nodes = [_node(500, "MINERALFIELD", 8.0)]
+    gs = _gs([], nodes)
+    keeper.on_game_state(gs)
+    f = economy_frame(keeper.snapshot(gs))
+    assert len(f.nodes) == 1 and f.nodes[0].base_tag is None
+
+
+def test_node_base_tag_prefers_nearest_of_multiple_bases():
+    """多基地时各节点归最近的那个（多基地语义天然成立，V1 单基地只是它的特例）。"""
+    keeper, _ = _keeper()
+    cc_a = _cc(900, 5.0)
+    cc_b = _cc(901, 40.0)
+    nodes = [_node(500, "MINERALFIELD", 6.0), _node(501, "MINERALFIELD", 41.0)]
+    gs = _gs([cc_a, cc_b], nodes)
+    keeper.on_game_state(gs)
+    f = economy_frame(keeper.snapshot(gs))
+    by_tag = {n.tag: n.base_tag for n in f.nodes}
+    assert by_tag[500] == 900 and by_tag[501] == 901

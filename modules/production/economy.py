@@ -83,6 +83,7 @@ class _Node:
     tag: int
     is_gas: bool
     cap: int
+    base: int | None = None  # 归属基地（最近的己方 dropoff 建筑 tag；无基地 → None，B12）
 
 
 class EconomyKeeper:
@@ -163,17 +164,40 @@ class EconomyKeeper:
         """气矿建筑实体名（走 catalog capability，不写死 REFINERY —— issues P11 的一半）。"""
         return frozenset(e.burnysc2_name for e in self._catalog.where(capability="gas"))
 
+    def _bases(self, gs: GameState) -> list:
+        """己方基地（dropoff 建筑，如指挥中心；已建成）。节点的 base_tag 从这里取最近者（B12）。"""
+        dropoff_names = frozenset(
+            e.burnysc2_name for e in self._catalog.where(capability="dropoff")
+        )
+        return [
+            u for u in gs.units
+            if u.owner is Owner.SELF and u.type_name in dropoff_names and u.build_progress >= 1.0
+        ]
+
+    @staticmethod
+    def _nearest_base(node_pos, bases) -> int | None:
+        if not bases:
+            return None
+        best = min(
+            bases,
+            key=lambda b: (b.position.x - node_pos.x) ** 2 + (b.position.y - node_pos.y) ** 2,
+        )
+        return best.tag
+
     def _nodes(self, gs: GameState) -> list[_Node]:
         anchor = self._base_anchor()
         gas_names = self._gas_names()
+        bases = self._bases(gs)
         out: list[_Node] = []
         for u in gs.units:
             if (u.owner is Owner.SELF and u.type_name in gas_names
                     and u.build_progress >= 1.0 and self._near(u, anchor)):
-                out.append(_Node(u.tag, True, self.policy.gas_per_refinery))
+                out.append(_Node(u.tag, True, self.policy.gas_per_refinery,
+                                 base=self._nearest_base(u.position, bases)))
         for r in gs.resources:
             if r.type_name.startswith(MINERAL_FIELD_PREFIX) and self._near(r, anchor):
-                out.append(_Node(r.tag, False, self.policy.mineral_per_patch))
+                out.append(_Node(r.tag, False, self.policy.mineral_per_patch,
+                                 base=self._nearest_base(r.position, bases)))
         return out
 
     def _near(self, unit, anchor) -> bool:
@@ -303,7 +327,7 @@ class EconomyKeeper:
                 "reserve_idle": self.policy.reserve_idle,
             },
             "targets": {"mineral": m_target, "gas": g_target},
-            "nodes": [{"tag": n.tag, "gas": n.is_gas, "cap": n.cap} for n in nodes],
+            "nodes": [{"tag": n.tag, "gas": n.is_gas, "cap": n.cap, "base": n.base} for n in nodes],
             "reserved": self.reservations.snapshot(),
             "last_ops": self._last_emitted_count,
             "assigned": {str(k): v for k, v in self._last_plan.items()},

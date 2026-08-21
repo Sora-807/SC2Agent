@@ -70,6 +70,7 @@ class CatalogEntry:
     stable_id: str          # 稳定类型 ID：两段式 race/name（如 "terran/marine"；注册表键）
     burnysc2_name: str      # burnysc2 UnitTypeId 的 .name（如 "MARINE"；driver 负责名→枚举）
     display_name_zh: str    # 中文显示名（如 "机枪兵"；只用于展示/输入解析，不进运行时语义）
+    short_name_zh: str      # 中文短名（≤2 字，如 "枪兵"；地图 footprint 内标签与聚类 chip 用，B13）
     role: Role              # 结构性角色：worker/combat/building（代码按它分支的闭集枚举）
     capabilities: tuple[str, ...]  # 能力标签词表（如 ("gather","build")；where(capability=...) 查询）
     cost: Cost              # 资源成本（晶体矿/瓦斯/补给；见 Cost）
@@ -128,6 +129,10 @@ class Catalog:
         burnysc2_name = data.get("burnysc2_name")
         if not burnysc2_name:
             raise ValueError(f"{stable_id}: 缺字段 burnysc2_name")
+        short_name_zh = data.get("short_name_zh")
+        if not short_name_zh:
+            # B13：短名是契约字段（static/catalog），缺了前端 footprint 标签就没有等价替代品
+            raise ValueError(f"{stable_id}: 缺字段 short_name_zh（≤2 字中文短名，地图标签用）")
         build_ability = data.get("build_ability")
         build_order_name = data.get("build_order_name")
         # 挂件必须给通用建造能力（真机锁定：实体类型是 BARRACKSREACTOR 等父建筑专属名，
@@ -149,6 +154,7 @@ class Catalog:
             stable_id=stable_id,
             burnysc2_name=burnysc2_name,
             display_name_zh=data.get("display_name_zh", stable_id),
+            short_name_zh=short_name_zh,
             role=role,
             capabilities=capabilities,
             cost=cost,

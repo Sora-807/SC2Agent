@@ -52,6 +52,7 @@ def catalog_static(catalog: Catalog) -> CatalogStatic:
         CatalogEntryView(
             stable_id=e.stable_id,
             display_name_zh=e.display_name_zh,
+            short_name_zh=e.short_name_zh,
             role=e.role.value,
             capabilities=list(e.capabilities),
             cost=CostView(minerals=e.cost.minerals, vespene=e.cost.vespene, supply=e.cost.supply),

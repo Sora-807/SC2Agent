@@ -29,6 +29,7 @@ def test_catalog_static_covers_everything_with_zh_names():
     assert [e.stable_id for e in out.entries] == sorted(e.stable_id for e in cat.where())
     for e in out.entries:
         assert e.display_name_zh, f"{e.stable_id} 缺中文名（前端不做 i18n 字典，红线 C4）"
+        assert e.short_name_zh, f"{e.stable_id} 缺短名（B13：地图标签与 chip 字形，U6/C4）"
         assert e.stable_id.count("/") == 1
 
 

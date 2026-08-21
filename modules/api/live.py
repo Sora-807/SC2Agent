@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from view.schema import STATIC_TOPICS
+from view.schema import REV, STATIC_TOPICS
 
 from api.session import MAX_STALE_SEQ, StaleObservation
 from api.sources import SourceInfo
@@ -147,7 +147,7 @@ class LiveSession:
                 terrain_time = self.game_time
                 terrain_frame = {
                     "topic": "static/terrain",
-                    "rev": 9,
+                    "rev": REV,
                     "seq": terrain_seq,
                     "game_time": terrain_time,
                     "wall_ms": 0,

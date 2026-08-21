@@ -14,13 +14,13 @@ import type { CatalogStatic, MapStatic } from "../src/contract";
 const CATALOG: CatalogStatic = {
   entries: [
     {
-      stable_id: "terran/supplydepot", display_name_zh: "补给站", role: "building",
+      stable_id: "terran/supplydepot", display_name_zh: "补给站", short_name_zh: "补给", role: "building",
       capabilities: ["supply"], cost: { minerals: 100, vespene: 0, supply: 0 },
       build_time: 21, produced_by: null, prerequisites: [], size: 2,
       attack_range: null, siege_range: null, burnysc2_name: "SUPPLYDEPOT",
     },
     {
-      stable_id: "terran/marine", display_name_zh: "机枪兵", role: "combat",
+      stable_id: "terran/marine", display_name_zh: "机枪兵", short_name_zh: "枪兵", role: "combat",
       capabilities: ["attack"], cost: { minerals: 50, vespene: 0, supply: 1 },
       build_time: 18, produced_by: "terran/barracks", prerequisites: [], size: null,
       attack_range: 5, siege_range: null, burnysc2_name: "MARINE",

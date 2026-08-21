@@ -12,6 +12,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 #: 契约版本。改任何字段 = REV+1 + §2 修订 + 前端同步（红线 C8）。
+#: rev 10：B12+B13 一轮两字段（F11 地图视觉语言需要）：
+#:   ① `frame/economy.nodes[]` 增 `base_tag`（节点归属基地 = 最近的己方 dropoff 建筑 tag）——
+#:     前端把它与 frame/world.units 按 tag 直接 join，主基地标签才能写「矿 12/16 气 3/6」，
+#:     不需要在 TS 里做任何空间匹配（A3：派生量后端算）。
+#:   ② `static/catalog.entries[]` 增 `short_name_zh`（≤2 字中文短名）—— footprint 内标签与
+#:     单位聚类 chip 的字形。后端加字段而不是前端截断 display_name_zh（PLAN §12 结论 2：
+#:     U6/C4 规定 zh 文案一律来自后端，前端截断会在别的词上出洋相）。
 #: rev 9：新增 topic `static/terrain`（B4：driver 从 game_info 导出地形）。
 #:   它是**事件式静态面**：`static/map` 先到（地形为 null），game_info 就绪后地形帧补到。
 #:   不进 `static/map` 的原因是驱动顺序 —— 真机上 game_info 在 bot 第一个 on_step 才可用，
@@ -42,7 +49,7 @@ from typing import Any
 #:      改增 queue + attempted_slots（摆放调试叠加要画"试过哪几个槽位"）。
 #: rev 3：区域几何改为"一张标签网格 + 索引"（原 leaf[].cells 的 per-region mask 不可扩展）。
 #: rev 2：static/schema 逐字镜像 flow.vocab.dump_vocabulary()；production 队列增 blocked。
-REV = 9
+REV = 10
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -188,6 +195,7 @@ class CostView:
 class CatalogEntryView:
     stable_id: str
     display_name_zh: str
+    short_name_zh: str             # ≤2 字短名（B13）：地图 footprint 标签与聚类 chip 字形
     role: str
     capabilities: list[str]
     cost: CostView
@@ -567,13 +575,17 @@ class EconomyTaskView:
 
 @dataclass(slots=True)
 class EconomyNodeView:
-    """一个资源节点的饱和度。`capacity` 由后端给（矿 2 / 气 3），前端不硬编码。"""
+    """一个资源节点的饱和度。`capacity` 由后端给（矿 2 / 气 3），前端不硬编码。
+
+    `base_tag`（B12）= 归属基地的 unit tag（最近的己方 dropoff 建筑），与 frame/world.units
+    按 tag 直接 join；无基地时为 None。"""
 
     tag: int
     kind: str            # mineral / gas
     workers: int
     capacity: int
     saturated: bool
+    base_tag: int | None
 
 
 @dataclass(slots=True)
