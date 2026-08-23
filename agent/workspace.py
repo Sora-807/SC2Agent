@@ -2,13 +2,16 @@
 
 agent 对规划的操作从 12 个 CRUD 工具收敛为框架的文件契约
 （ls/read/glob/grep/write/edit/insert/delete/stat，见 vendor/agentic），
-本类是这些工具背后的存储：三条虚拟路径区，按路径区分语义与校验 ——
+本类是这些工具背后的存储：三类虚拟路径区，按路径区分语义与校验 ——
 
 - ``plans/<id>.yaml``     生产规划 → REST 规划 API（GET 读 / PUT 全量保存，校验在服务端）
 - ``map-plans/<id>.yaml`` 地图规划 → 地图规划 API（doc 读 / 全量 PUT，几何校验在服务端）
 - ``strategies/<id>.yaml`` 策略 → 策略 API（strategy+assembly 两段；二十七轮用户拍板
                           「开放写策略，免审」，保存时 parse/validate 全套编译期校验）
-- 其余路径               scratch 自留地（analysis.md、memory.md…）：磁盘直写，不校验
+- ``recordings/`` ``traces/`` ``proposals/log.jsonl``
+                          只读区（I20）：运行时产物挂进文件树，write 一律拒绝 ——
+                          历史不可变；适配器在 ``agent/readonly.py``
+- 其余路径               scratch 自留地（memory/、analysis.md…）：磁盘直写，不校验
 
 所有规划写都走与 UI 相同的 REST 入口（决策 U7，无后门），校验失败以
 ``WorkspaceError`` 回喂模型（文件工具层转成 error: 前缀）。读到的 YAML 由本类
@@ -29,6 +32,7 @@ from agentic.workspace.disk import DiskWorkspace
 from agentic.workspace.workspace import Workspace, WorkspaceConfig, WorkspaceError
 
 from agent.client import ApiClient, ApiError
+from agent.readonly import ReadOnlyArea
 
 PLAN_PREFIX = "plans/"
 MAP_PREFIX = "map-plans/"
@@ -101,18 +105,23 @@ def _err_text(exc: ApiError) -> str:
 
 
 class ApiWorkspace(Workspace):
-    """规划 API + scratch 磁盘的虚拟文件视图（文件契约工具的存储后端）。
+    """规划 API + 只读产物 + scratch 磁盘的虚拟文件视图（文件契约工具的存储后端）。
 
     只实现 5 个存储原语；edit/insert/delete/grep/观察策略（read-before-write）
     由基类基于这些原语组合出来。
     """
 
     def __init__(self, client: ApiClient, scratch_root: Path,
-                 changes: ChangeLog, config: WorkspaceConfig | None = None) -> None:
+                 changes: ChangeLog, config: WorkspaceConfig | None = None,
+                 readonly: list[ReadOnlyArea] | None = None) -> None:
         super().__init__(config)
         self._client = client
         self._disk = DiskWorkspace(scratch_root)
         self._changes = changes
+        self._readonly: list[ReadOnlyArea] = readonly or []
+
+    def _readonly_of(self, path: str) -> ReadOnlyArea | None:
+        return next((a for a in self._readonly if a.handles(path)), None)
 
     # ---- 生产规划：JSON ⇄ YAML ----
 
@@ -207,16 +216,22 @@ class ApiWorkspace(Workspace):
     # ---- 存储原语（基类组合出全部文件工具语义） ----
 
     def _file_exists(self, path: str) -> bool:
-        area, pid = _split(path)
-        if area == "plan":
+        area = self._readonly_of(path)
+        if area is not None:
+            return area.exists(path)
+        area_id, pid = _split(path)
+        if area_id == "plan":
             return self._plan_exists(pid)
-        if area == "map":
+        if area_id == "map":
             return self._map_plan_exists(pid)
-        if area == "strategy":
+        if area_id == "strategy":
             return self._strategy_exists(pid)
         return self._disk._file_exists(path)
 
     def _read_file(self, path: str) -> str:
+        ro = self._readonly_of(path)
+        if ro is not None:
+            return ro.read(path)    # 只读区适配器自带错误文案（指路而非干巴巴 404）
         area, pid = _split(path)
         try:
             if area == "plan":
@@ -234,6 +249,11 @@ class ApiWorkspace(Workspace):
             raise WorkspaceError(f"读取失败（HTTP {exc.status}）：{_err_text(exc)}") from None
 
     def _write_file(self, path: str, content: str) -> None:
+        ro = self._readonly_of(path)
+        if ro is not None:
+            raise WorkspaceError(
+                f"{path} 是只读区（历史产物不可改：recordings/ 对局录像、traces/ 会话轨迹、"
+                "proposals/ 提案审计史）。要延续结论就写你的 memory/，要改规划就写对应文件。")
         area, pid = _split(path)
         if area == "plan":
             existed = self._plan_exists(pid)
@@ -275,11 +295,16 @@ class ApiWorkspace(Workspace):
                 out += [f"{STRATEGY_PREFIX}{r['id']}.yaml" for r in self._client.strategies_list()]
             except ApiError:
                 pass
+        for area in self._readonly:
+            out += area.list_paths(prefix)
         if not (prefix.startswith("plans") or prefix.startswith("map-plans")
                 or prefix.startswith("strategies")):
+            # scratch 同名路径刻意排除（filter 末句）：只读区是这些前缀的唯一语义，
+            # 不给"磁盘上恰好有个 recordings/ 目录"的路径钻空子的机会
             out += [p for p in self._disk._list_file_paths(prefix)
                     if not (p.startswith(PLAN_PREFIX) or p.startswith(MAP_PREFIX)
-                            or p.startswith(STRATEGY_PREFIX))]
+                            or p.startswith(STRATEGY_PREFIX))
+                    and not any(a.handles(p) for a in self._readonly)]
         return sorted(out)
 
     def _current_version(self, path: str) -> str | None:

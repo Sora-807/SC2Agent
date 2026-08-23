@@ -18,6 +18,44 @@
 | `2e51f46` | docs：工作记录 WORKLOG.md + ISSUES I3 留档 |
 | `7c5fe0e` | 执行轮 §0.1–§0.12 一并提交：P0/P1/P2 规划域重构（生产规划文件+干跑 / 导航按模式 / 真地形+全图资源+预留区命名+双下拉）+ 实时驾驶整改（假世界拔除 / 400 显式化 / 两段式确认 / 关闭真机）+ 真机地形修复（driver 顺序 + store 乱序合并）|
 | `ba8ceb5` | 执行轮 §0.13–§0.31 一并提交：P3 agent 接入 + 聊天/外壳改版 + 策略文件免审 + 三族目录 + 录像（未提交批次一次落库）|
+| `6e7370f` | REFACTOR P0 bug 批 B1-B5+B8（网格 diff / progress 真值 / wall_ms 真时钟 / observe 常量 / CC 供给单源=13）|
+| `e13ca82` | R1 god file 拆分：app.py 998→薄装配+state.py+routes/×11；manifest.py validate_strategy 分段（REFACTOR G1/G3）|
+
+## 0.33 二十九轮：R1 god file 拆分 + F1 文件契约闭环（I20/I19，2026-08-23，未提交）
+
+用户拍板「直接开工」——三批次方案（R1 拆分 → F1 文件闭环 → R2 runtime.py 拆分待做）：
+
+1. **R1 god file 拆分（`e13ca82`，见提交信息）**：app.py 930 行闭包 → 124 行装配壳 +
+   `api/state.py`（泵/帧源解析/命令门）+ `api/routes/`×11 按资源分组；manifest.py
+   `validate_strategy` ~200 行 → 编排 + 5 个 `_validate_*`，params/variables 复制粘贴
+   收敛成 `_validate_declaration_block` 一份实现。**app.state 扁平键一个没动**
+   （测试/serve_api 直接摸的契约面）；错误文案逐字保留（有测试锁）。
+2. **F1-2 录像衍生摘要（`view/recap.py`）**：时间线（建筑落成 / 人口上限变化 /
+   警报 30s 窗口去重 / 策略转移）+ 终局盘点（资源/建筑/部队/敌方）+ 消失建筑痕迹。
+   `LiveSession._close_recording` 收尾自动落 `rec-<id>.md`；**落盘原则补一条：原始
+   数据 + 给人/agent 读的可读视图一起保存**（几 MB 帧流存了等于没存）。
+   顺带修 `.stem` 剥后缀坑：`<rid>.meta.json` 的 stem 是 `<rid>.meta`（文件名
+   代码里自己警告过的陷阱，recorded.id 一直带脏后缀）；真机录像已回填摘要。
+3. **F1-1 只读区挂载（`agent/readonly.py`）**：Agent 文件树挂运行时产物——
+   - `recordings/`：`index.md` 清单 + 每局摘要 .md（缺失时从 jsonl **懒生成**并落盘）；
+     原始 .jsonl 刻意不挂（read/grep 整份吃进上下文会爆，错误信息指路摘要）
+   - `traces/`：白名单 .md/.json（trace.html 与快照目录不进上下文）+ 越区路径拒绝
+   - `proposals/log.jsonl`：提案审计史单文件
+   - ApiWorkspace 集成：ls/read/grep 天然可见、**write 一律拒绝**（历史不可变，错误
+     信息指路 memory/规划文件）、scratch 同名路径不可遮蔽只读区前缀。
+     **磁盘直读而非 REST**：不可变文件没有"绕过校验"的写面风险（那条红线约束的是写）。
+4. **F1-3 读面清单**：`agent_tools()`（write_surface）增 `readable` 段——Agent 不必
+   试探就知道能翻哪些历史；提示词工作区段同步只读区说明。
+5. **F1-4 记忆结构化（I19）**：`memory/` 分文件约定（user-preferences 短且开局必读 /
+   strategy-notes 带 ID ≤2 行 / system-capabilities 从 write_surface 派生重建 /
+   replays/ 只增）+ `session/current.md` 短期层（轮末覆盖写恢复连续性）+
+   `improvement-notes.md`（Agent→开发 backlog 反馈通道）。**notes.jsonl 退役归档**
+   （`runtime/archive/`；无结构 append 的实证：同一偏好重复写 3 次）；其中真实的
+   用户偏好（「补给站别提前太多」）迁移进 memory 种子；空 `agent-workspace/` 清理。
+   端点保留兼容但标注退役，write_surface/提示词不再宣传。
+6. AGENT-LOOP.md（并行会话的 I17-I20 母题专档）随 R1 落库。
+- 回归：后端 **772/1s**（+11：recap 渲染 5 + 只读区 6）；前端未动。serve_api 需重启
+  （提示词/工具面/只读区装配都变了）。
 
 ## 0.32 二十八轮：REFACTOR P0 bug 批（B1-B5+B8）+ §0.13-0.31 落库（2026-08-23，未提交）
 

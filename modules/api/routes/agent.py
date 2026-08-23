@@ -105,7 +105,10 @@ async def agent_chat_say_stream(body: dict, request: Request):
     )
 
 
-# ---- agent 记忆（P3 切片 A 收尾）：跨会话笔记，人与 agent 同一入口 ----
+# ---- agent 记忆笔记：已退役（2026-08-23，I19/I20）----
+# 记忆统一走 agent scratch 的 memory/ 结构化文件（跨会话、可 grep、按生命周期分文件）；
+# 旧 jsonl 是无结构 append（同一偏好重复写 3 次的实例就在 archive 里）。端点保留
+# 兼容已存在的调用方，write_surface / 提示词不再宣传它 —— 别给 Agent 接工具。
 
 @router.get("/api/agent/notes")
 def agent_notes_list(request: Request) -> list[dict]:
@@ -170,6 +173,15 @@ def agent_tools() -> dict:
             "flow 提交必须 validate + compile（R6）；生产队列 op 不需要",
             "不支持的东西会返 400 并带原因，别重试同一个动作",
         ],
+        "readable": {
+            # 读面清单（I20 文件契约闭环）：与文件工作区的只读区一一对应。
+            # agent 靠它知道"我能翻哪些历史"，不必试探。
+            "recordings/index.md": "对局记录清单（每局一条：族 vs 族 · 地图 · 时长）",
+            "recordings/<id>.md": "单局摘要：时间线（建筑落成/警报/策略转移）+ 终局盘点。"
+                                  "原始帧流 .jsonl 刻意不挂（几 MB），要细节看摘要",
+            "traces/": "你此前会话的执行轨迹（trace.md / summary.json，白名单内）—— 跨会话翻旧账",
+            "proposals/log.jsonl": "提案审计史（append-only，含被拒理由）",
+        },
         "unsupported": {
             "queue_ops": schema["queue"]["unsupported_ops"],
             "flow": schema["forbidden"],

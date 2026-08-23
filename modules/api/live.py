@@ -245,7 +245,8 @@ class LiveSession:
         meta_path, self._rec_meta_path = self._rec_meta_path, None
         if meta_path is None:
             return
-        rid = meta_path.stem
+        # 命名是 <rid>.meta.json —— 不能用 .stem（只剥最后一个后缀，得到 "<rid>.meta"）
+        rid = meta_path.name.replace(".meta.json", "")
         my_zh, enemy_zh = _races_from_frames(self.frames)
         try:
             old: dict = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -263,6 +264,15 @@ class LiveSession:
         try:
             meta_path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
         except OSError:
+            pass
+        # 衍生摘要（I20 文件契约闭环）：原始帧流几 MB，人/agent 都翻不动 ——
+        # 落盘原则 = 原始数据 + 可读视图一起保存。渲染失败不拦收尾（jsonl 仍在）。
+        try:
+            from view.recap import render_recording_summary
+
+            summary = render_recording_summary(self._statics + self.frames)
+            meta_path.with_name(f"{rid}.md").write_text(summary, encoding="utf-8")
+        except Exception:              # noqa: BLE001
             pass
         self._meta.pop("recording", None)
         self._meta["recorded"] = {"id": rid, "envelopes": self._rec_count}

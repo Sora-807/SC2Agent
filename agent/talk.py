@@ -34,6 +34,7 @@ from agentic.types import StreamEvent
 
 from agent.client import ApiClient
 from agent.spec import AdvisorSpec
+from agent.readonly import default_areas
 from agent.workspace import ApiWorkspace, ChangeLog
 
 #: LLM 工厂默认实现（惰性；测试注入 FakeLLM 脚本）
@@ -93,11 +94,17 @@ class AgentTalk:
     def __init__(self, client: ApiClient, *, llm_factory: DefaultLLMFactory,
                  trace_root: Path, workspace_root: Path,
                  target: str = "advisor#1", max_turns: int = 8,
-                 history_path: Path | None = None) -> None:
+                 history_path: Path | None = None,
+                 recordings_dir: Path | None = None,
+                 proposals_log: Path | None = None) -> None:
         self._client = client
         self._llm_factory = llm_factory
         self._trace_root = Path(trace_root)
         self._workspace_root = Path(workspace_root)
+        # 只读区挂载点（I20）：录像/提案审计史由 create_app 传入（它知道持久化路径）；
+        # traces 直接用 trace_root。None = 不挂该区（测试默认不持久化）。
+        self._readonly_recordings = Path(recordings_dir) if recordings_dir else None
+        self._readonly_proposals = Path(proposals_log) if proposals_log else None
         self._target = target
         self._max_turns = max_turns
         self._changes = ChangeLog()
@@ -372,8 +379,12 @@ class AgentTalk:
         self._engine = Engine(
             llm, self._tracer,
             # 与 agent.run 同一纪律：虚拟文件工作区（plans//map-plans/ 走规划 API，
-            # scratch 是磁盘自留地）—— R5 的机制保证不变
-            workspace=ApiWorkspace(self._client, self._workspace_root, self._changes),
+            # 只读区挂运行时产物，scratch 是磁盘自留地）—— R5 的机制保证不变
+            workspace=ApiWorkspace(
+                self._client, self._workspace_root, self._changes,
+                readonly=default_areas(trace_root=self._trace_root,
+                                       recordings_dir=self._readonly_recordings,
+                                       proposals_log=self._readonly_proposals)),
             max_turns=self._max_turns,
         )
         self._engine.register("advisor",

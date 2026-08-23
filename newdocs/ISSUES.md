@@ -497,10 +497,9 @@
 10. **[P3] live 投影窗口语义**——live 仍是 120s 窗口投影；要不要像试算一样
     until_complete？（涉及 live 帧大小，需拍板）
 11. **[P1] modules/ 代码债（I15 / [`REFACTOR.md`](REFACTOR.md)）**——**P0 bug 批
-    （B1 网格 diff/B2 progress/B3 wall_ms/B4 observe 常量/B5 CC 供给单源/B8）已修完
-    （2026-08-23，WORKLOG §0.32）**；剩：god files 拆分（`app.py`/`runtime.py`/
-    `manifest.py`）+ B6（planner 仍 Terran-only）+ B7（命令返回 shape 不一致）+
-    死代码清理 + 去重。god file 拆分建议作为独立重构批次，一次一个 file 跑回归。
+    （B1-B5+B8）已修完（§0.32）；god files G1(`app.py`)/G3(`manifest.py`) 已拆完
+    （§0.33，`e13ca82`）**；剩：G2（`runtime.py` 948 行抽 build_flights/placement）+
+    B6（planner 仍 Terran-only）+ B7（命令返回 shape 不一致）+ 死代码清理 + 去重。
 12. **[P1] 对局可观测性深度（I17）**——警报加 `remediation_zh` 字段（"怎么修"）+
     采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）
     + 装配缺口时序化/live 化 + observe 队列在建项映射。1/2/5 低难可插队先做。
@@ -512,16 +511,17 @@
     直接"看图"而非心算拼布局。数据齐备（terrain 栅格 + reserved_boxes + BuildSlot
     + PosMark），净新增：thin 工具 + thin 端点 + 渲染器（下沉 tactical_map，不进 app.py
     god file）。与 I8 互补、I17 同源。
-15. **[P1] Agent 跨会话记忆（I19）**——结构化分文件（user-preferences /
-    strategy-notes[带ID] / system-capabilities[从 `write_surface` 派生] / replays/）
-    + 新增 `improvement-notes`（Agent 自反思 → 开发 backlog 反馈回路）+ 决定孤儿
-    `notes.jsonl` 去留。scratch 持久化已确认（`runtime/agent-talk/workspace/`），不改
-    后端，靠提示词约定 + 工具面落地。与 #1 常驻监听强相关——常驻前记忆要到位。
-16. **[P1] 文件契约闭环（I20）**——运行时产物（对局录像 `runtime/recordings/`、
-    `notes.jsonl`、traces）后端已存但 Agent 够不着（无 client 方法/无工具/不在虚拟文件树）。
-    推荐：挂成 `ApiWorkspace` 只读虚拟区（`recordings/`/`notes/`/`traces/`），Agent 用
-    现有 ls/read/grep 翻，不新增 bespoke 工具。与 I19（notes 孤儿）、I18（触达数据）
-    同模式——一批"文件契约闭环"一起做。注：录像数据 I13 已建，本条只是"接到 Agent"。
+15. **[P1] Agent 跨会话记忆（I19）**——**结构化约定已落地（2026-08-23 §0.33）**：
+    `memory/` 分文件 + `session/current.md` 短期层 + `improvement-notes.md` 反馈通道
+    全部进提示词；`notes.jsonl` 已退役归档（真实偏好迁移进 memory 种子）。
+    **剩余**：约定靠 agent 自觉执行，实际效果待观察（几局后校验它是否真读真写、
+    system-capabilities 是否真的从 write_surface 派生重建）——不行再上机制（如
+    开局自动 seed 检查）。与 #1 常驻监听强相关——常驻前记忆要到位。
+16. **[P1] 文件契约闭环（I20）——已关闭（2026-08-23 §0.33）**：只读区落地
+    （`agent/readonly.py`：recordings 索引+每局衍生摘要、traces 白名单、
+    proposals/log.jsonl）+ 录像摘要渲染器（`view/recap.py`，收尾自动落盘 + 懒生成）
+    + write_surface `readable` 清单 + write 拒绝与 scratch 遮蔽防护。后续新产物
+    过 AGENT-LOOP §6 的四项闭环检查清单即可。
 17. **[P2] 开局工人口径：真机 8 工 vs 种子 12 工（B5 附带发现）**——2026-08-23
     真机录像首帧是 **8 工/13 cap**（1 CC），而种子口径（planner.opening /
     worldsim.bootstrap / session 默认）全是 12 工。供给值已单源修正为 13（WORKLOG

@@ -40,13 +40,17 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 
 ## §2 God files（最大结构性债）
 
-### G1 `api/app.py`（998 行）——单 930 行 `create_app` 闭包
+> **2026-08-23 进展（WORKLOG §0.33 / `e13ca82`）：G1、G3 已拆完**；G2（runtime.py）待做。
+> G1 拆后：`app.py` 124 行装配壳 + `api/state.py`（87 行共享辅助）+ `api/routes/`×11
+> （23~178 行/文件）；`app.state` 扁平键原样保留（测试/serve_api 的契约面没动）。
+
+### G1 `api/app.py`（998 行）——单 930 行 `create_app` 闭包 ——**已拆（§0.33）**
 塞了 ~30 个路由 handler + WS pump + store 装配全在一个闭包里。
-- **WS pump** `app.py:872-992`（~120 行）含 30 行嵌套 `pump()` + 内联 seek/play/pause 消息循环 + 一段 static-frame 投递 workaround（916-953）。
-- **业务策略混进传输层** `app.py:529-546`：提案"校验通过即自动应用"的策略写在 HTTP handler 里，应进 `ProposalStore.create` 或独立 policy 模块。
-- **模块级副作用** `app.py:999` `app = create_app()`——import 即建全 app + 扫 `DEFAULT_FRAME_DIR`。
-- **漏的再导出** `app.py:40` 穿透 `api.session` 拿 `parse_assembly`（session 自己 import 自 flow.manifest 但没声明导出）。
-- **拆分蓝图**：按路由组拆 `api/routes/{sources,session,commands,proposals,plans,strategies,map_plans,recordings,agent,frames_ws}.py` + 一个 `api/state.py` 管装配。`create_app` 瘦成只 wire `app.state` + include routers。`pump`/seek 抽 `WSSession` helper。
+- **WS pump** `app.py:872-992`（~120 行）含 30 行嵌套 `pump()` + 内联 seek/play/pause 消息循环 + 一段 static-frame 投递 workaround（916-953）。→ 已随整个 WS handler 落 `routes/frames_ws.py`（每连接 nonlocal 状态与 receive 循环共享，抽类反而搬两遍）。
+- **业务策略混进传输层** `app.py:529-546`：提案"校验通过即自动应用"的策略写在 HTTP handler 里，应进 `ProposalStore.create` 或独立 policy 模块。→ 落 `routes/proposals.py`（独立文件 + 恢复审批的删除点注释；进 Store 的建议保留待议）。
+- **模块级副作用** `app.py:999` `app = create_app()`——import 即建全 app + 扫 `DEFAULT_FRAME_DIR`。→ 保留（uvicorn `api.app:app` 部署面，改动收益低）。
+- **漏的再导出** `app.py:40` 穿透 `api.session` 拿 `parse_assembly`（session 自己 import 自 flow.manifest 但没声明导出）。→ 已随拆分消除（plans 路由直接 import）。
+- **拆分蓝图（已执行）**：`api/routes/{meta,sources,session,commands,agent,proposals,plans,recordings,strategies,map_plans,frames_ws}.py` + `api/state.py`。
 
 ### G2 `production/runtime.py`（948 行）——单 ~890 行 `ProductionRuntime` 类
 混了队列 CRUD + 资源账本 + 阻塞/停滞可观测 + 读模型快照 + 排空调度 + **~340 行建造飞行
@@ -55,10 +59,10 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 - 放置解析 `_resolve_placement`（`655-723`，~68 行）；排空 `_drain`（`307-398`，~91 行，BUILD/TRAIN/ASSIGN_WORKERS 分支交错）。
 - **拆分蓝图**：`queue.py`（CRUD）/ `drain.py`（调度 + 账本）/ `build_flights.py`（confirm/retry 状态机，可独立测）/ `placement.py`（解析器）；`runtime.py` 留薄编排。
 
-### G3 `flow/manifest.py`（735 行）——`validate_strategy` ~200 行
-- `validate_strategy` `manifest.py:452-650` 单函数 ~200 行。
-- params/variables 校验**复制粘贴** `manifest.py:482-508`，docstring 自承"此前只查 params，不一致"。
-- **拆分蓝图**：抽 `_validate_declaration_block(name, decls, allowed_keys)` 调两次；拆 `_validate_params_variables`/`_validate_steps_branches`/`_validate_edges`/`_validate_do_ops`。
+### G3 `flow/manifest.py`（735 行）——`validate_strategy` ~200 行 ——**已拆（§0.33）**
+- `validate_strategy` `manifest.py:452-650` 单函数 ~200 行。→ 编排 + `_validate_readability`/`_validate_declaration_block`/`_validate_edges`/`_validate_do_op`/`_validate_steps`，错误文案逐字保留（有测试锁）。
+- params/variables 校验**复制粘贴** `manifest.py:482-508`，docstring 自承"此前只查 params，不一致"。→ `_validate_declaration_block` 一份实现两个名字。
+- ~~**拆分蓝图**：抽 `_validate_declaration_block(name, decls, allowed_keys)` 调两次；拆 `_validate_params_variables`/`_validate_steps_branches`/`_validate_edges`/`_validate_do_ops`。~~ 已按此执行。
 
 ---
 
@@ -119,7 +123,8 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 1. ~~**P0 修 bug**（§1 B1/B2/B4/B5）~~ —— **已完成（2026-08-23，WORKLOG §0.32，
    含 B3/B8）**：producer 网格 diff、progress=None、wall_ms 真时钟、observe 常量化、
    CC 供给单源=13。
-2. **P1 god file 拆分**（§2 G1/G2/G3）——`app.py` 按路由组拆、`runtime.py` 抽 build-flights + placement、`manifest.py` 拆 validate。到不改以后没人敢碰。
+2. ~~**P1 god file 拆分**（§2 G1/G3）~~ —— **G1/G3 已完成（2026-08-23，WORKLOG §0.33）**；
+   G2（`runtime.py` 抽 build-flights + placement）待做。
 3. **P1 三族只到 catalog 没到 planner**（§1 B6）——race-agnostic 或老实标 Terran-only。
 4. **P2 死代码清理**（§3）——一串死导出/死函数，删一遍纯减负；顺带把 `constraint/__init__` 倒挂的公开面正过来。
 5. **P2 去重**（§4）——帧源三份复制抽 `FrameSource` 性价比最高；其余小重复随手收。

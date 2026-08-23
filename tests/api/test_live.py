@@ -302,6 +302,9 @@ def test_live_session_records_to_disk(tmp_path):
     # 停止收尾：meta 标终态，带 envelopes/to_time
     rows = c.get("/api/recordings").json()
     assert rows[0]["state"] == "已结束" and rows[0]["envelopes"] > 0
+    # I20 衍生摘要：收尾时同步落 <rid>.md（原始帧流几 MB，人/agent 翻的都是摘要）
+    summary = (tmp_path / "recordings" / f"{rid}.md").read_text(encoding="utf-8")
+    assert "# 对局摘要" in summary and "时间线" in summary
     # 路径安全：id 只认 [\w.-]+，穿越（经路由归一化）与不存在都是 4xx 不是 500
     assert c.get("/api/recordings/../../etc/passwd/jsonl").status_code in (400, 404)
     assert c.get("/api/recordings/nope/jsonl").status_code == 404

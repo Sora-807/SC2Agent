@@ -108,7 +108,10 @@ def create_app(frame_dir: Path | str | None = None,
             ApiClient(base=agent_base), llm_factory=openai_from_env,
             trace_root=Path("runtime/agent-talk/traces"),
             workspace_root=Path("runtime/agent-talk/workspace"),
-            history_path=Path("runtime/agent-talk/history.json"))
+            history_path=Path("runtime/agent-talk/history.json"),
+            # 只读区（I20）：Agent 的文件树挂运行时产物 —— 录像/提案史与持久化同路径
+            recordings_dir=app.state.recordings_dir,
+            proposals_log=Path(proposal_log) if proposal_log else None)
     #: agent 记忆笔记（append-only jsonl）。默认挂在与对话同一棵 runtime 下。
     app.state.agent_notes_path = Path(
         "runtime/agent-talk/notes.jsonl"
