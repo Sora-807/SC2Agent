@@ -111,7 +111,8 @@ def create_app(frame_dir: Path | str | None = None,
             history_path=Path("runtime/agent-talk/history.json"),
             # 只读区（I20）：Agent 的文件树挂运行时产物 —— 录像/提案史与持久化同路径
             recordings_dir=app.state.recordings_dir,
-            proposals_log=Path(proposal_log) if proposal_log else None)
+            proposals_log=Path(proposal_log) if proposal_log else None,
+            map_plans_dir=Path(map_plans_dir) if map_plans_dir else DEFAULT_MAP_PLANS_DIR)
     #: agent 记忆笔记（append-only jsonl）。默认挂在与对话同一棵 runtime 下。
     app.state.agent_notes_path = Path(
         "runtime/agent-talk/notes.jsonl"

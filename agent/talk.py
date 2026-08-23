@@ -96,7 +96,8 @@ class AgentTalk:
                  target: str = "advisor#1", max_turns: int = 8,
                  history_path: Path | None = None,
                  recordings_dir: Path | None = None,
-                 proposals_log: Path | None = None) -> None:
+                 proposals_log: Path | None = None,
+                 map_plans_dir: Path | None = None) -> None:
         self._client = client
         self._llm_factory = llm_factory
         self._trace_root = Path(trace_root)
@@ -105,6 +106,7 @@ class AgentTalk:
         # traces 直接用 trace_root。None = 不挂该区（测试默认不持久化）。
         self._readonly_recordings = Path(recordings_dir) if recordings_dir else None
         self._readonly_proposals = Path(proposals_log) if proposals_log else None
+        self._readonly_map_plans = Path(map_plans_dir) if map_plans_dir else None
         self._target = target
         self._max_turns = max_turns
         self._changes = ChangeLog()
@@ -382,9 +384,11 @@ class AgentTalk:
             # 只读区挂运行时产物，scratch 是磁盘自留地）—— R5 的机制保证不变
             workspace=ApiWorkspace(
                 self._client, self._workspace_root, self._changes,
-                readonly=default_areas(trace_root=self._trace_root,
-                                       recordings_dir=self._readonly_recordings,
-                                       proposals_log=self._readonly_proposals)),
+                readonly=default_areas(
+                    client=self._client, trace_root=self._trace_root,
+                    recordings_dir=self._readonly_recordings,
+                    proposals_log=self._readonly_proposals,
+                    map_plans_dir=self._readonly_map_plans)),
             max_turns=self._max_turns,
         )
         self._engine.register("advisor",

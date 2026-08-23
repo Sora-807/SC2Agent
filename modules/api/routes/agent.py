@@ -179,6 +179,9 @@ def agent_tools() -> dict:
             "recordings/index.md": "对局记录清单（每局一条：族 vs 族 · 地图 · 时长）",
             "recordings/<id>.md": "单局摘要：时间线（建筑落成/警报/策略转移）+ 终局盘点。"
                                   "原始帧流 .jsonl 刻意不挂（几 MB），要细节看摘要",
+            "maps/<源>/<bbox>.md": "地图格点网格（I18）：源 = live 或地图规划 id；bbox = "
+                                  "x1_y1_x2_y2（左下+右上）。`·`空可建 `✗`障碍 D/R/F+序=槽位 "
+                                  "gas/CC/M=预设点。maps/index.md 看源清单与示例",
             "traces/": "你此前会话的执行轨迹（trace.md / summary.json，白名单内）—— 跨会话翻旧账",
             "proposals/log.jsonl": "提案审计史（append-only，含被拒理由）",
         },

@@ -508,17 +508,14 @@
 13. **[P1→设计决策] 策略热改断层（I16）**——生产可动态调、战术局中不可调。需拍板
     走哪条：维持现状 / 参数级热改（改 `min_units` 等 param 不改结构）/ ADR-0013/0014
     完整多实例。短期维持；热改落地前先靠 I17 让 Agent 能"看见死锁"。
-14. **[P1] Agent 坐标理解工具 inspect_region（I18）**——框选 bbox 返回二维网格
-    （X/Y 坐标头 + 短标签 `·`/`✗`/`gas(名)`/`depot`/`rax`/`mark:名`…），让 Agent
-    直接"看图"而非心算拼布局。数据齐备（terrain 栅格 + reserved_boxes + BuildSlot
-    + PosMark），净新增：thin 工具 + thin 端点 + 渲染器（下沉 tactical_map，不进 app.py
-    god file）。与 I8 互补、I17 同源。
-15. **[P1] Agent 跨会话记忆（I19）**——**结构化约定已落地（2026-08-23 §0.33）**：
-    `memory/` 分文件 + `session/current.md` 短期层 + `improvement-notes.md` 反馈通道
-    全部进提示词；`notes.jsonl` 已退役归档（真实偏好迁移进 memory 种子）。
-    **剩余**：约定靠 agent 自觉执行，实际效果待观察（几局后校验它是否真读真写、
-    system-capabilities 是否真的从 write_surface 派生重建）——不行再上机制（如
-    开局自动 seed 检查）。与 #1 常驻监听强相关——常驻前记忆要到位。
+14. **[P1] Agent 坐标理解工具 inspect_region（I18）——已关闭（2026-08-23 §0.36）**：
+    用户拍板**文件形态**（不做独立工具/端点）——`maps/<源>/<bbox>.md` 只读虚拟路径
+    （渲染器 tactical_map/region_view.py，一格一词 ≤3 字符），live 源 = 会话当前
+    地图规划。词表与路径约定在 maps/index.md + 提示词 + write_surface readable。
+15. **[P1] Agent 跨会话记忆（I19）**——**结构与种子全齐（§0.33 约定 + §0.36 补全：
+    strategy-notes 4 条 / system-capabilities 派生快照 / replays/ / improvement-notes）**。
+    **剩余**：约定靠 agent 自觉执行，实际效果待观察（几局后校验是否真读真写、
+    派生是否对账）——不行再上机制（开局自动 seed 检查）。与 #1 常驻监听强相关。
 16. **[P1] 文件契约闭环（I20）——已关闭（2026-08-23 §0.33）**：只读区落地
     （`agent/readonly.py`：recordings 索引+每局衍生摘要、traces 白名单、
     proposals/log.jsonl）+ 录像摘要渲染器（`view/recap.py`，收尾自动落盘 + 懒生成）

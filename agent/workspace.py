@@ -123,6 +123,25 @@ class ApiWorkspace(Workspace):
     def _readonly_of(self, path: str) -> ReadOnlyArea | None:
         return next((a for a in self._readonly if a.handles(path)), None)
 
+    # 只读区拒绝优先于基类的"先读后写"守卫：对已 read 过的只读路径，基类会先报
+    # "请先 read 再修改"——那是在暗示"读了就能改"，误导（历史产物读了也不能改）。
+    def write_text(self, path: str, content: str) -> None:
+        if self._readonly_of(path) is not None:
+            self._reject_readonly(path)
+        super().write_text(path, content)
+
+    def append_text(self, path: str, content: str) -> None:
+        if self._readonly_of(path) is not None:
+            self._reject_readonly(path)
+        super().append_text(path, content)
+
+    @staticmethod
+    def _reject_readonly(path: str) -> None:
+        raise WorkspaceError(
+            f"{path} 是只读区（历史产物/派生视图不可改：recordings/ 对局录像、maps/ 格点"
+            "网格、traces/ 会话轨迹、proposals/ 提案审计史）。要延续结论就写你的 memory/，"
+            "要改规划就写对应文件。")
+
     # ---- 生产规划：JSON ⇄ YAML ----
 
     def _render_plan(self, p: dict) -> str:
@@ -249,11 +268,8 @@ class ApiWorkspace(Workspace):
             raise WorkspaceError(f"读取失败（HTTP {exc.status}）：{_err_text(exc)}") from None
 
     def _write_file(self, path: str, content: str) -> None:
-        ro = self._readonly_of(path)
-        if ro is not None:
-            raise WorkspaceError(
-                f"{path} 是只读区（历史产物不可改：recordings/ 对局录像、traces/ 会话轨迹、"
-                "proposals/ 提案审计史）。要延续结论就写你的 memory/，要改规划就写对应文件。")
+        if self._readonly_of(path) is not None:
+            self._reject_readonly(path)   # 双保险：绕过 write_text 的路径（如 add_document）
         area, pid = _split(path)
         if area == "plan":
             existed = self._plan_exists(pid)
