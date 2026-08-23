@@ -492,14 +492,16 @@
 7. **[P2] 模块模板参数化 UI（B3 增量）**——from-module 端点已支持 params，
    前端「从模板落地」不带参数（marine_target/tank_count 调不了）。
 8. **[P2] 组/槽位形状颜色标记（I4 候选 3）**——地图 chip 与策略图同词的视觉语言。
-9. **[P2] docs/ 目录清理**——4 步计划已定（见记忆 sc2-docs-audit-cleanup-plan），
-   待用户确认执行（会删 ~55 份 superseded 文档）。
+9. **[P2] docs/ 目录清理——已关闭（2026-08-23 §0.34）**：36 份 tracked superseded
+   + 41 个扫描日志删；保留按活性引用驱动（契约真相源/真机证据日志/Flow v0.2 spec/
+   精华 ADR）；文档地图见 [`DOCS.md`](DOCS.md)。代价：state_trace.jsonl 夹具被清
+   （3 条驱动翻译测试 skip，下次真机 run_recorder.py 重新生成）。
 10. **[P3] live 投影窗口语义**——live 仍是 120s 窗口投影；要不要像试算一样
     until_complete？（涉及 live 帧大小，需拍板）
 11. **[P1] modules/ 代码债（I15 / [`REFACTOR.md`](REFACTOR.md)）**——**P0 bug 批
-    （B1-B5+B8）已修完（§0.32）；god files G1(`app.py`)/G3(`manifest.py`) 已拆完
-    （§0.33，`e13ca82`）**；剩：G2（`runtime.py` 948 行抽 build_flights/placement）+
-    B6（planner 仍 Terran-only）+ B7（命令返回 shape 不一致）+ 死代码清理 + 去重。
+    （B1-B5+B8）已修完（§0.32）；god files 全部拆完：G1(`app.py`)/G3(`manifest.py`)
+    §0.33，G2(`runtime.py`→编排+flights+placement）§0.34**；剩：B6（planner 仍
+    Terran-only）+ B7（命令返回 shape 不一致）+ 死代码清理 + 去重（§3/§4）。
 12. **[P1] 对局可观测性深度（I17）**——警报加 `remediation_zh` 字段（"怎么修"）+
     采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）
     + 装配缺口时序化/live 化 + observe 队列在建项映射。1/2/5 低难可插队先做。

@@ -14,6 +14,9 @@
 标"待建"。但 god files 已到"动一下碰 900 行闭包、下一个人不敢重构"的程度，且**真实 bug
 藏在体量里**——优先级是 **先修 bug（§1）→ 拆 god file（§2）→ 清死代码（§3）→ 去重（§4）**。
 
+> **进度（2026-08-23）**：§1 全修 + §2 三个 god file 全拆（WORKLOG §0.32-0.34）。
+> 剩 §3 死代码清理、§4 去重、B6/B7。
+
 ---
 
 ## §1 真实 bug（P0/P1，会出错误数据——优先修）
@@ -52,12 +55,16 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 - **漏的再导出** `app.py:40` 穿透 `api.session` 拿 `parse_assembly`（session 自己 import 自 flow.manifest 但没声明导出）。→ 已随拆分消除（plans 路由直接 import）。
 - **拆分蓝图（已执行）**：`api/routes/{meta,sources,session,commands,agent,proposals,plans,recordings,strategies,map_plans,frames_ws}.py` + `api/state.py`。
 
-### G2 `production/runtime.py`（948 行）——单 ~890 行 `ProductionRuntime` 类
+### G2 `production/runtime.py`（948 行）——单 ~890 行 `ProductionRuntime` 类 ——**已拆（§0.34，`1316232`）**
 混了队列 CRUD + 资源账本 + 阻塞/停滞可观测 + 读模型快照 + 排空调度 + **~340 行建造飞行
 状态机** + 放置解析。
-- 建造飞行子状态机 `_confirm_build`/`_retry_build`/`_retry_build_addon`/`_retry_build_gas`（`runtime.py:502-841`）。
-- 放置解析 `_resolve_placement`（`655-723`，~68 行）；排空 `_drain`（`307-398`，~91 行，BUILD/TRAIN/ASSIGN_WORKERS 分支交错）。
-- **拆分蓝图**：`queue.py`（CRUD）/ `drain.py`（调度 + 账本）/ `build_flights.py`（confirm/retry 状态机，可独立测）/ `placement.py`（解析器）；`runtime.py` 留薄编排。
+- **拆分结果（已执行）**：`runtime.py` 564（编排：队列 CRUD/账本/阻塞/snapshot/drain/
+  单项执行/选择器/输出征用）+ `flights.py` 336（在途确认/重试/挂件/气矿 —— **Mixin 原样
+  搬**：与账本/征用深度共享，抽协作对象要把共享状态设计成回调接口，行为最关键文件上
+  的手术风险大于收益；纯化留给未来）+ `placement.py` 98（解析**纯函数化**：
+  region_layer/catalog/in_flight 显式入参）。行为与错误文案逐字保留。
+- ~~**拆分蓝图**：`queue.py`（CRUD）/ `drain.py`（调度 + 账本）/ `build_flights.py`（confirm/retry 状态机，可独立测）/ `placement.py`（解析器）；`runtime.py` 留薄编排。~~（queue/drain
+  进一步拆分会把内聚的 drain 逻辑打碎，未采纳；其余按蓝图执行。）
 
 ### G3 `flow/manifest.py`（735 行）——`validate_strategy` ~200 行 ——**已拆（§0.33）**
 - `validate_strategy` `manifest.py:452-650` 单函数 ~200 行。→ 编排 + `_validate_readability`/`_validate_declaration_block`/`_validate_edges`/`_validate_do_op`/`_validate_steps`，错误文案逐字保留（有测试锁）。
@@ -123,8 +130,7 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 1. ~~**P0 修 bug**（§1 B1/B2/B4/B5）~~ —— **已完成（2026-08-23，WORKLOG §0.32，
    含 B3/B8）**：producer 网格 diff、progress=None、wall_ms 真时钟、observe 常量化、
    CC 供给单源=13。
-2. ~~**P1 god file 拆分**（§2 G1/G3）~~ —— **G1/G3 已完成（2026-08-23，WORKLOG §0.33）**；
-   G2（`runtime.py` 抽 build-flights + placement）待做。
+2. ~~**P1 god file 拆分**（§2 G1/G2/G3）~~ —— **全部完成（G1/G3 §0.33；G2 §0.34）**。
 3. **P1 三族只到 catalog 没到 planner**（§1 B6）——race-agnostic 或老实标 Terran-only。
 4. **P2 死代码清理**（§3）——一串死导出/死函数，删一遍纯减负；顺带把 `constraint/__init__` 倒挂的公开面正过来。
 5. **P2 去重**（§4）——帧源三份复制抽 `FrameSource` 性价比最高；其余小重复随手收。
@@ -143,7 +149,7 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 | `constraint/` | 2 | ~165 | 小，但 `__init__` 公开面倒挂 |
 | `view/` | 17 | ~3500 | 最大模块；`producer.py` 三连 bug（B1/B3 + 死 `_seq`）；`schema.py` 766 非债（40 个 DTO + REV）|
 | `api/` | 6 | ~2000 | `app.py` 998 god file（G1）|
-| `production/` | 4 | ~1400 | `runtime.py` 948 god file（G2）|
+| `production/` | 6 | ~1500 | G2 已拆：runtime.py 564 编排 + flights.py 336 + placement.py 98 |
 | `driver/` | 4 | ~650 | 唯一假实现 `stop()`；其余干净 |
 | `world/` | 2 | ~92 | adapter 真 V1 实现，非 stub |
 | `mechanics/` | 1 | 3 | **空模块**占位 |

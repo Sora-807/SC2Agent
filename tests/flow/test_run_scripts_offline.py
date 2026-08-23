@@ -27,6 +27,10 @@ class _NullPort:
 
 
 def _import(name: str):
+    # 真机脚本住在 tools/probes/（2026-08-23 根目录清理迁入）；离线守卫语义不变
+    probes = str(ROOT / "tools" / "probes")
+    if probes not in sys.path:
+        sys.path.insert(0, probes)
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     return importlib.import_module(name)

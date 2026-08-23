@@ -1,5 +1,5 @@
 """trace fixture：用用户手动跑的 docs/state_trace.jsonl 验建筑放置 state 机制。
-trace 缺失则 skip（需先 uv run python run_recorder.py 生成）。"""
+trace 缺失则 skip（需先 uv run python tools/probes/run_recorder.py 生成）。"""
 import json
 from pathlib import Path
 
@@ -10,7 +10,7 @@ TRACE = Path(__file__).resolve().parents[2] / "docs" / "state_trace.jsonl"
 
 def _load():
     if not TRACE.exists():
-        pytest.skip(f"trace 不存在：先 uv run python run_recorder.py 生成 {TRACE}")
+        pytest.skip(f"trace 不存在：先 uv run python tools/probes/run_recorder.py 生成 {TRACE}")
     return [json.loads(l) for l in TRACE.read_text(encoding="utf-8").splitlines() if l.strip()]
 
 

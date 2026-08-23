@@ -20,6 +20,35 @@
 | `ba8ceb5` | 执行轮 §0.13–§0.31 一并提交：P3 agent 接入 + 聊天/外壳改版 + 策略文件免审 + 三族目录 + 录像（未提交批次一次落库）|
 | `6e7370f` | REFACTOR P0 bug 批 B1-B5+B8（网格 diff / progress 真值 / wall_ms 真时钟 / observe 常量 / CC 供给单源=13）|
 | `e13ca82` | R1 god file 拆分：app.py 998→薄装配+state.py+routes/×11；manifest.py validate_strategy 分段（REFACTOR G1/G3）|
+| `1316232` | R2 god file 拆分收尾：runtime.py 948→564 编排+flights.py 336（Mixin）+placement.py 98（纯函数）（REFACTOR G2）|
+
+## 0.34 三十轮：R2 收尾 + 文档收归 + 根目录清理（2026-08-23，未提交）
+
+用户拍板「继续推进 + 文档收归 + 根目录清理」：
+
+1. **R2（`1316232`）**：runtime.py 948 → 564（编排）+ `flights.py` 336（在途确认/
+   挂件/气矿，Mixin 原样搬——与账本/征用深度共享，抽回调接口风险大于收益）+
+   `placement.py` 98（解析纯函数化）。三个 god file 全部拆完。
+2. **文档收归（开放清单 #9 关闭，按 2026-08-23 审计的 4 步计划执行）**：
+   - 删 superseded 36 份 tracked：docs/ 的 4 份旧计划（plan-agent/planner/step-tank/
+     strategy-dsl-v02）+ 4 张探针截图；docs（旧）/ 的 22 份旧 ADR（0001-0012/0015-0023/
+     0025-0026）+ plan/ 全部 + 重构共识总览 + adr/README。
+   - 删 docs/ 未跟踪扫描日志 41 个：一次性 slot/scan/probe 输出；**保留 3 个被代码
+     注释引用为真机证据的**（full_flow.log / bare_addon.log / slot_scan.log）。
+   - 保留原则 = 活性引用驱动：docs/ 留 10 份（契约真相源 plan-frontend/需求文档/
+     game_data_dump/tank_marine_push.yaml/现行 ADR 0029+0030 等，逐份理由见
+     [`DOCS.md`](DOCS.md) 新文档地图）；docs（旧）/ 留 spec 6 份（Flow v0.2 schema
+     契约）+ ADR 6 份（0006§7-9/0013/0014/0024/0027/0028）。
+   - 修正 2 处过期指针（`docs/测试计划.md` → `docs/test-plan.md`）。
+3. **根目录清理**：`traces/`（8-21 的 6 份旧运行轨迹，215K，gitignored 临时）删；
+   根目录 `__pycache__` 删；**16 个 run_*.py 真机探针 + dump_game_data.py 迁入
+   `tools/probes/`**（不是垃圾——有离线守卫测试 + 是真机烟测套件；迁移 =
+   git mv + `__file__` 引导两级修正 + 守卫测试 import 路径跟进）。根目录只剩
+   11 目录 + pyproject/start.bat/uv.lock。
+   - ⚠️ **代价（如实记）**：删掉的 `docs/state_trace.jsonl` 是真机驱动翻译测试的
+     活性夹具（gitignored 但在用）→ 3 条测试转 skip（设计如此，缺则跳过）。
+     下次跑一局真机 `uv run python tools/probes/run_recorder.py` 即重新生成激活。
+- 回归：后端 **769 passed / 4 skipped**（1 原有真机 skip + 3 条等 state_trace 夹具）。
 
 ## 0.33 二十九轮：R1 god file 拆分 + F1 文件契约闭环（I20/I19，2026-08-23，未提交）
 

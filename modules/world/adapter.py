@@ -68,7 +68,7 @@ def adapt(raw: RawGameState) -> GameState:
     """RawGameState → GameState（V1：过滤 neutral + 字段对齐 + 透传）。
 
     中性资源（矿脉/气井）不进 units（flow 谓词不数它们），拆到 resources：
-    WorkerAllocator / 生产约束需要节点位置（docs/测试计划.md world 节 resource_nodes）。
+    WorkerAllocator / 生产约束需要节点位置（docs/test-plan.md world 节 resource_nodes）。
     """
     units = [adapt_unit(u) for u in raw.units if not is_neutral_resource(u.type_name)]
     resources = [adapt_unit(u) for u in raw.units if is_neutral_resource(u.type_name)]
