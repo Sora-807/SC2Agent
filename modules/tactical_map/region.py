@@ -329,6 +329,7 @@ def load_region_layer(yaml_str: str, base_dir: str | Path | None = None) -> Regi
             size=int(data["size"]),
             kind=data.get("kind", "production"),
             pos=_point2(data["pos"]) if "pos" in data else None,
+            alias_zh=str(data.get("alias_zh", "")),
         )
 
     layer = RegionLayer(

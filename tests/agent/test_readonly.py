@@ -122,7 +122,7 @@ def _map_plans_dir(tmp_path: Path) -> Path:
     (d / "layout-bl.yaml").write_text(
         "id: layout-bl\ntitle_zh: 出厂布局（bl）\nmap_name: LadderMap\nspawn: bl\n"
         "origin: [30, 30]\nanchor: [30, 30]\nbuild_slots:\n"
-        "  depot1: {pos: [40.5, 32.5], size: 2, kind: supply}\n"
+        "  D1: {pos: [40.5, 32.5], size: 2, kind: supply, alias_zh: 补给站1}\n"
         "pos_marks: {}\n", encoding="utf-8")
     return d
 

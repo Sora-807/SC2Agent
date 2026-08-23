@@ -517,7 +517,8 @@ function paint(
           ctx.font = fontCss("note");
           ctx.fillStyle = selected ? "#38bdf8" : color;
           ctx.textBaseline = "alphabetic";
-          ctx.fillText(s.name, sx + 1, sy - 2);
+          const alias = "alias_zh" in s ? s.alias_zh : ("aliasZh" in s ? s.aliasZh : "");
+          ctx.fillText(alias || s.name, sx + 1, sy - 2);
         }
         continue;
       }

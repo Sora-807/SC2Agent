@@ -22,7 +22,7 @@ import { QueueSidebar } from "../panels/QueueSidebar";
 import { renderBranches, renderValue, vocabOf } from "../graph/ast";
 import { layout } from "../graph/layout";
 import {
-  nextMarkName, previewPlacement, snapToCellCenter,
+  nextMarkName, nextSlotName, previewPlacement, snapToCellCenter,
 } from "../planning/map-draft";
 import { useBaseMap, useMapPlanStore, useMapProj } from "../planning/map-plan-store";
 import { useQueueStore } from "../planning/queue-store";
@@ -168,8 +168,9 @@ function MapPlanning(props: { apiOk: boolean; initialId?: string | null }) {
             : "地形不可建（placeable=0）—— 挪到淡绿可建区");
         return;
       }
-      const name = nextMarkName(proj.slots.map((s) => s.name)).replace("mark_", "slot_");
-      st.pushHunks({ kind: "add_slot", name, pos: pv.pos, size: st.slotSize, slotKind: st.slotKind });
+      const { name, aliasZh } = nextSlotName(st.slotKind, proj.slots.map((s) => s.name));
+      st.pushHunks({ kind: "add_slot", name, pos: pv.pos, size: st.slotSize,
+                     slotKind: st.slotKind, aliasZh });
       st.patch({ selectedName: name });
     }
   };
@@ -196,7 +197,8 @@ function MapPlanning(props: { apiOk: boolean; initialId?: string | null }) {
     }
     st.pushHunks(
       { kind: "del_slot", name },
-      { kind: "add_slot", name, pos: pv.pos, size: cur.size, slotKind: cur.kind },
+      { kind: "add_slot", name, pos: pv.pos, size: cur.size, slotKind: cur.kind,
+        aliasZh: cur.aliasZh },
     );
   };
 

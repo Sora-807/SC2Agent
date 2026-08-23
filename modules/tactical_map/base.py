@@ -53,6 +53,7 @@ def _slot_from_entry(name: str, entry: dict) -> BuildSlot:
         tl=BuildSlot.tl_from_pos(pos, size),
         size=size,
         kind=str(entry.get("kind", "production")),
+        alias_zh=str(entry.get("alias_zh", "")),
     )
 
 
@@ -185,6 +186,7 @@ def instantiate_spawn(
                 size=s.size,
                 kind=s.kind,
                 pos=Point2(s.pos.x + dx, s.pos.y + dy) if s.pos is not None else None,
+                alias_zh=s.alias_zh,
             )
         )
         for s in layout.build_slots

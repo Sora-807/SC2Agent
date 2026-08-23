@@ -28,6 +28,7 @@ from pathlib import Path
 import yaml
 
 from tactical_map.base import BaseTemplate, instantiate_spawn, load_base_template
+from tactical_map.placement import is_valid_slot_name
 from view.encode import to_json
 from view.map_plan import apply_map_overrides, merge_map_state
 from view.map_plan import MapHunkLike
@@ -299,6 +300,12 @@ class MapPlanStore:
             reserved = _reserved_boxes(self._catalog or _default_catalog(), None)
             for a in sorted(changed):
                 ea = new_slots[a]
+                if not is_valid_slot_name(a):
+                    errors.append({"hunk_id": a,
+                                   "text_zh": f"槽位名 {a!r} 不符合简写约定"
+                                              "（D/R/F/S+序号[+挂件]，如 D17、R5、R5+；"
+                                              "中文别名写 alias_zh）"})
+                    continue
                 pos_a = ea.get("pos")
                 if not pos_a:
                     continue

@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 
 from game.geometry import Point2
-from tactical_map.placement import BuildSlot
+from tactical_map.placement import BuildSlot, is_valid_slot_name
 from tactical_map.reserved import reserved_boxes
 
 _TERRAIN_JSON = Path(__file__).resolve().parent / "data" / "ladder_map" / "terrain.json"
@@ -34,30 +34,23 @@ MAX_COLS = 14
 MAX_ROWS = 14
 
 #: 槽位名前缀 → 标签字母（挂件 = 母建筑前缀 + "+"）
-_SLOT_PREFIX = (("starport", "S"), ("factory", "F"), ("rax", "R"), ("depot", "D"))
-
 _RESERVED_LABEL = {"base": "CC", "geyser": "gas", "mineral": "M"}
 
 #: 词表脚注（每次渲染附在网格末尾 —— 读文件的人不一定先读过 maps/index.md）
-LEGEND = "词表：`·` 空可建 · `✗` 地形障碍 · `D/R/F/S`+序=建筑槽 · `+`=挂件预留 · `gas/CC/M`=预设固定点（序号=规划槽位名，详情读规划文件）"
+LEGEND = ("词表：`·` 空可建 · `✗` 地形障碍 · `gas/CC/M` 预设固定点；"
+           "**其余标签就是槽位正式名**（D=补给站 R=兵营 F=工厂 S=星港，序号=序，`+`=挂件位；"
+           "引用/编辑用它，中文别名看规划文件 alias_zh）")
 
 _placeable_cache: tuple[tuple[int, int], bytes] | None = None
 
 
-def slot_label(name: str, kind: str) -> str:
-    """槽位名 → ≤3 字符标签（depot16→D16、rax1→R1、factory1_addon→F+）。
+def slot_label(name: str, kind: str = "") -> str:
+    """槽位名 → 格子标签。**名字就是标签**（2026-08-23 起简写即正式标记：D1/R4+/F1）。
 
-    认不出的名字不猜：给 `?` 前缀（读规划文件核对）—— 比silent错标强。
+    规范外的名字不猜：给 `?`（读规划文件核对）—— 命名约定由保存/编辑校验强制，
+    这里只是防线。
     """
-    n = (name or "").strip().lower()
-    for prefix, letter in _SLOT_PREFIX:
-        if n.startswith(prefix):
-            if n.endswith("_addon") or kind == "addon":
-                return letter + "+"
-            digits = re.search(r"(\d+)$", n)
-            label = letter + (digits.group(1) if digits else "")
-            return label[:3]
-    return "?"
+    return name if is_valid_slot_name(name) else "?"
 
 
 def load_placeable() -> tuple[tuple[int, int], bytes]:

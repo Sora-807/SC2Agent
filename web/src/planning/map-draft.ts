@@ -22,11 +22,14 @@ export type MapPlanHunk =
   | { kind: "move_mark"; name: string; pos: [number, number] }
   | { kind: "rename_mark"; from: string; to: string }
   | { kind: "del_mark"; name: string }
-  | { kind: "add_slot"; name: string; pos: [number, number]; size: number; slotKind: string }
+  | { kind: "add_slot"; name: string; pos: [number, number]; size: number; slotKind: string;
+      aliasZh?: string }
   | { kind: "del_slot"; name: string };
 
 export type SlotView = {
   name: string;
+  /** 中文别名（展示用；标记归 name —— 与后端约定一致，rev 14） */
+  aliasZh?: string;
   /** 锚点 = 世界建造点（格心/格角，ADR-0027：偶数尺寸落在格角） */
   pos: [number, number];
   size: number;
@@ -146,9 +149,10 @@ export interface DraftProjection {
   slots: SlotView[];
 }
 
-function mkSlot(name: string, pos: [number, number], size: number, kind: string): SlotView {
+function mkSlot(name: string, pos: [number, number], size: number, kind: string,
+                aliasZh?: string): SlotView {
   const tl = slotTl(pos, size);
-  return { name, pos: [...pos], size, kind, tl, br: [tl[0] + size - 1, tl[1] + size - 1] };
+  return { name, aliasZh, pos: [...pos], size, kind, tl, br: [tl[0] + size - 1, tl[1] + size - 1] };
 }
 
 export function applyDraft(
@@ -188,7 +192,7 @@ export function applyDraft(
     }
     if (h.kind === "add_slot") {
       // 同名覆盖位置（与 add_mark 同语义：重复放置的意图就是"放这里"）
-      slots.set(h.name, mkSlot(h.name, h.pos, h.size, h.slotKind));
+      slots.set(h.name, mkSlot(h.name, h.pos, h.size, h.slotKind, h.aliasZh));
       continue;
     }
     if (h.kind === "del_slot") {
@@ -205,6 +209,27 @@ export function nextMarkName(taken: Iterable<string>): string {
     const n = "mark_" + i;
     if (!set.has(n)) return n;
   }
+}
+
+/** 槽位类别 → 简写字母与中文（自动命名用；约定见后端 SLOT_NAME_RE，rev 14） */
+const SLOT_LETTER: Record<string, { letter: string; zh: string }> = {
+  supply: { letter: "D", zh: "补给站" },
+  production: { letter: "R", zh: "兵营" },
+  addon: { letter: "R", zh: "兵营" },   // 挂件位：字母跟母建筑，UI 未知母建筑 → R 系兜底
+};
+
+/** 按约定生成下一个槽位名 + 自动中文别名（supply→D17/补给站17；addon→R5+/兵营5挂件位）。 */
+export function nextSlotName(slotKind: string, taken: Iterable<string>): { name: string; aliasZh: string } {
+  const meta = SLOT_LETTER[slotKind] ?? { letter: "R", zh: "建筑" };
+  const set = new Set(taken);
+  const addon = slotKind === "addon";
+  for (let i = 1; i <= 99; i += 1) {
+    const name = `${meta.letter}${i}${addon ? "+" : ""}`;
+    if (!set.has(name)) {
+      return { name, aliasZh: addon ? `${meta.zh}${i}挂件位` : `${meta.zh}${i}` };
+    }
+  }
+  throw new Error("槽位序号用尽（1-99）");
 }
 
 /** 草稿的本地持久化键（带地图名；地图静态面换了就是另一份草稿） */
@@ -229,7 +254,8 @@ export function mapDraftToHunks(
       case "add_slot":
         return { id, kind: "add_slot",
                  text_zh: `新增槽位 ${h.name}（${h.size}×${h.size} ${h.slotKind}）@ ${h.pos.join(", ")}`,
-                 payload: { name: h.name, pos: h.pos, size: h.size, kind: h.slotKind } };
+                 payload: { name: h.name, pos: h.pos, size: h.size, kind: h.slotKind,
+                            alias_zh: h.aliasZh ?? "" } };
       case "del_slot":
         return { id, kind: "del_slot", text_zh: `删除槽位 ${h.name}`, payload: { name: h.name } };
     }

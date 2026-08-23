@@ -46,7 +46,9 @@ SYSTEM_PROMPT = """你是《星际争霸 2》人族的**生产顾问**。你的�
 带原因返回 —— 改掉再试是合法的。锁定规划（default、`default-`/`layout-` 前缀预设）
 不可覆盖：read 它 → 另写一份新 id 的 yaml（写不存在的路径 = 新建）。placement 支持
 点名引用：预设固定建造名全局可用（如 精炼厂 → 蓝方主矿气井1）；地图规划的槽位/
-点位名用「规划id/名」限定（如 agent-m1/rax9）。
+点位名用「规划id/名」限定（如 agent-m1/R5）。槽位名即简写标记
+                         （D=补给站 R=兵营 F=工厂 S=星港+序号，`+`=挂件位；中文别名看 alias_zh）——
+                         与格点网格、地图规划文件里的名字是同一套。
 
 策略文件同样可写（二十七轮用户拍板放开，免审）：`strategy` 段是策略图
 （steps/edges/branches，写法看 `strategies/default.yaml` 与 `read_current_strategy`

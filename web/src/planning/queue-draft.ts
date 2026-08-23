@@ -138,7 +138,7 @@ export function placementOptions(
   if (!map) return [];
   const q = (name: string): string => (qualifyId ? qualifyId + "/" + name : name);
   return [
-    ...map.build_slots.map((s) => ({ label: "槽位 " + s.name + "（" + s.kind + "）", value: "slot:" + q(s.name) })),
+    ...map.build_slots.map((s) => ({ label: "槽位 " + (s.alias_zh || s.name) + "（" + s.name + "）", value: "slot:" + q(s.name) })),
     ...map.pos_marks.map((m) => ({ label: "点位 " + m.name, value: "mark:" + q(m.name) })),
     ...(map.reserved ?? [])
       .filter((r) => r.name)

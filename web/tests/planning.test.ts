@@ -38,8 +38,8 @@ const MAP: MapStatic = {
     ],
     big_grid: null, leaf_grid: null, big_index: {}, leaf_index: {},
   },
-  build_slots: [{ name: "rax_1", tl: [0, 0], br: [2, 2], size: 3, kind: "production",
-    build_point: [1.5, 1.5], reported_position: [1.5, 1.5] }],
+  build_slots: [{ name: "R1", alias_zh: "兵营1", tl: [0, 0], br: [2, 2], size: 3,
+    kind: "production", build_point: [1.5, 1.5], reported_position: [1.5, 1.5] }],
   pos_marks: [{ name: "ramp", pos: [10, 10], description_zh: "楼梯" }],
   resource_nodes: [],
 };
@@ -126,7 +126,7 @@ describe("placementOptions", () => {
   it("槽位 / 点位 / 区域三类都列出来", () => {
     const opts = placementOptions(MAP);
     expect(opts.map((o) => o.value)).toEqual([
-      "slot:rax_1", "mark:ramp", "region:main_build",
+      "slot:R1", "mark:ramp", "region:main_build",
     ]);
   });
 
@@ -141,7 +141,7 @@ describe("placementOptions", () => {
     ] };
     const opts = placementOptions(withReserved, "agent-m1");
     expect(opts.map((o) => o.value)).toEqual([
-      "slot:agent-m1/rax_1", "mark:agent-m1/ramp",
+      "slot:agent-m1/R1", "mark:agent-m1/ramp",
       "mark:蓝方主矿气井1",                      // 预设固定建造点 = 全局命名空间
       "region:main_build",
     ]);

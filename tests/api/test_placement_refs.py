@@ -34,9 +34,9 @@ def _item(mark: str):
 
 
 def test_matching_plan_prefix_is_stripped():
-    out, err = resolve_placement_refs([_item("agent-r1/rax9")], "agent-r1")
+    out, err = resolve_placement_refs([_item("agent-r1/R9")], "agent-r1")
     assert err is None
-    assert out[0].placement.mark == "rax9"
+    assert out[0].placement.mark == "R9"
 
 
 def test_bare_mark_and_region_pass_through():
@@ -50,12 +50,12 @@ def test_bare_mark_and_region_pass_through():
 
 
 def test_foreign_plan_ref_is_rejected_with_reason():
-    _, err = resolve_placement_refs([_item("other-plan/rax9")], "agent-r1")
+    _, err = resolve_placement_refs([_item("other-plan/R9")], "agent-r1")
     assert err is not None and "other-plan" in err and "agent-r1" in err
 
 
 def test_ref_without_session_plan_is_rejected():
-    _, err = resolve_placement_refs([_item("agent-r1/rax9")], None)
+    _, err = resolve_placement_refs([_item("agent-r1/R9")], None)
     assert err is not None and "出厂模板" in err
 
 
@@ -107,14 +107,14 @@ def test_queue_command_acceptes_qualified_ref_for_loaded_plan(api: TestClient):
 def test_queue_command_rejectes_cross_plan_ref(api: TestClient):
     api.post("/api/session/start", params={"autotick": "false",
                                            "map_plan": "agent-r1"})
-    r = _submit(api, "other-plan/rax9")
+    r = _submit(api, "other-plan/R9")
     assert r.status_code == 400
     assert "other-plan" in r.json()["detail"] and "agent-r1" in r.json()["detail"]
 
 
 def test_queue_command_rejectes_qualified_ref_on_default_template(api: TestClient):
     api.post("/api/session/start", params={"autotick": "false"})
-    r = _submit(api, "agent-r1/rax9")
+    r = _submit(api, "agent-r1/R9")
     assert r.status_code == 400
     assert "出厂模板" in r.json()["detail"]
 

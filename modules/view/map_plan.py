@@ -18,7 +18,7 @@ import yaml
 
 from game import Point2
 from tactical_map.base import DATA_DIR, BaseTemplate, load_base_overrides
-from tactical_map.placement import BuildSlot
+from tactical_map.placement import BuildSlot, is_valid_slot_name
 
 MAP_OVERRIDES_PATH = DATA_DIR / "ladder_map" / "base_layout.overrides.yaml"
 
@@ -144,6 +144,9 @@ def apply_map_overrides(
             kind = str(p.get("kind") or "")
             if not name:
                 err(h, "add_slot 缺 name")
+            elif not is_valid_slot_name(name):
+                err(h, f"槽位名 {name!r} 不符合简写约定（D/R/F/S+序号[+挂件]，"
+                        "如 D17、R5、F2、R5+；中文别名写 alias_zh）")
             elif name in slots:
                 err(h, f"槽位 {name!r} 已存在")
             elif size not in SLOT_SIZES:
@@ -164,7 +167,8 @@ def apply_map_overrides(
                         break
                 else:
                     slots[name] = {"pos": [float(pos[0]), float(pos[1])],
-                                   "size": size, "kind": kind}
+                                   "size": size, "kind": kind,
+                                   "alias_zh": str(p.get("alias_zh") or "")}
         elif h.kind == "del_slot":
             name = str(p.get("name") or "")
             if name not in slots:

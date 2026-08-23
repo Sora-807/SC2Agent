@@ -359,7 +359,7 @@ def test_map_plan_invalid_hunk_rejected_with_reason(client):
     """校验失败必须带结构化理由（P2：不可接受但必须可见）。"""
     p = _propose(client, kind="map_plan", target={}, hunks=[
         {"id": "h1", "kind": "add_slot", "text_zh": "非法尺寸",
-         "payload": {"name": "bad", "pos": [55.5, 42.5], "size": 4, "kind": "production"}},
+         "payload": {"name": "R9", "pos": [55.5, 42.5], "size": 4, "kind": "production"}},
     ])
     assert p["validation"]["ok"] is False
     assert "size" in p["validation"]["errors"][0]["text_zh"]

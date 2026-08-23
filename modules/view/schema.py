@@ -59,9 +59,11 @@ from typing import Any
 #:     `steps[].display_name_zh`/`description_zh`（step 级）、`reasons`（reason 标识符→中文，
 #:     edges 切换原因与 exit 终局原因共用）、`group_names`（group_id→中文，来自 assembly）。
 #:     目的：`formup/advance/G_INF` 这类裸标识符读不出意图（用户原话），zh 单一真相源在后端（C4）。
+#: rev 14：槽位命名统一简写（`build_slots[].name` 即 D1/R4+/F1 形态，约定由后端校验强制），
+#:   `static/map.build_slots[]` 增 `alias_zh`（中文别名，展示用；标记归 name、展示归别名）。
 #: rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度（协议没有该
 #:   字段），原先恒发 `0.0` 是把"未知"伪装成"刚开始"；改为 None（前端 zod 同步 nullable）。
-REV = 13
+REV = 14
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -157,13 +159,14 @@ class BuildSlotView:
     在真机上反复踩坑，TS 里绝不允许出现第二份。
     """
 
-    name: str
+    name: str           # 简写即正式标记（D1/R4/F1/R4+，约定 tactical_map.placement.SLOT_NAME_RE）
     tl: Cell
     br: Cell
     size: int
     kind: str          # supply / production / addon
     build_point: Pt
     reported_position: Pt
+    alias_zh: str = ""  # 中文别名（展示用；标记归 name、展示归别名，rev 14）
 
 
 @dataclass(slots=True)

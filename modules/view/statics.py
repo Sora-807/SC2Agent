@@ -236,6 +236,7 @@ def _slot_view(bs) -> BuildSlotView:
     """ADR-0027 的换算一律在这里做完（前端零几何换算）。"""
     return BuildSlotView(
         name=bs.name,
+        alias_zh=getattr(bs, "alias_zh", ""),
         tl=(bs.tl.x, bs.tl.y),
         br=(bs.br.x, bs.br.y),
         size=bs.size,

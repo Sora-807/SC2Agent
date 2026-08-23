@@ -25,8 +25,8 @@ def _h(hid: str, hkind: str, **payload) -> MapHunkLike:
 
 def _tmpl() -> BaseTemplate:
     """最小模板：一个 spawn、两个槽位（2×2 与 3×3）、一个点位。"""
-    s2 = BuildSlot(name="depot1", pos=Point2(40.5, 32.5), tl=BuildSlot.tl_from_pos(Point2(40.5, 32.5), 2), size=2, kind="supply")
-    s3 = BuildSlot(name="rax1", pos=Point2(55.5, 33.5), tl=BuildSlot.tl_from_pos(Point2(55.5, 33.5), 3), size=3, kind="production")
+    s2 = BuildSlot(name="D1", pos=Point2(40.5, 32.5), tl=BuildSlot.tl_from_pos(Point2(40.5, 32.5), 2), size=2, kind="supply")
+    s3 = BuildSlot(name="R1", pos=Point2(55.5, 33.5), tl=BuildSlot.tl_from_pos(Point2(55.5, 33.5), 3), size=3, kind="production")
     mark = PosMark(name="rally", pos=Point2(48.5, 30.5))
     return BaseTemplate(
         map_name="T", region_name="main_base",
@@ -39,19 +39,19 @@ def _tmpl() -> BaseTemplate:
 
 def test_merge_base_only():
     st = merge_map_state(_tmpl(), {})
-    assert set(st["slots"]) == {"depot1", "rax1"}
+    assert set(st["slots"]) == {"D1", "R1"}
     assert set(st["marks"]) == {"rally"}
-    assert st["slots"]["rax1"]["size"] == 3
+    assert st["slots"]["R1"]["size"] == 3
 
 
 def test_merge_removed_then_added():
     st = merge_map_state(_tmpl(), {
-        "build_slots_removed": ["depot1"],
-        "build_slots": {"new1": {"pos": [10.5, 20.5], "size": 2, "kind": "supply"}},
+        "build_slots_removed": ["D1"],
+        "build_slots": {"D9": {"pos": [10.5, 20.5], "size": 2, "kind": "supply"}},
         "pos_marks_removed": ["rally"],
         "pos_marks": {"m1": {"pos": [1.5, 2.5], "description_zh": "x"}},
     })
-    assert "depot1" not in st["slots"] and "new1" in st["slots"]
+    assert "D1" not in st["slots"] and "D9" in st["slots"]
     assert "rally" not in st["marks"] and st["marks"]["m1"]["description_zh"] == "x"
 
 
@@ -79,11 +79,11 @@ def test_rename_collision_rejected_and_valid_rename_ok():
     out, errs = apply_map_overrides({}, _tmpl(), [_h("h1", "rename_mark", **{"from": "rally", "to": "rally"})])
     assert errs == []  # 改成自己 = 无害
     # 撞已有其它名 → 拒
-    out, errs = apply_map_overrides({}, _tmpl(), [_h("h1", "rename_mark", **{"from": "rally", "to": "depot1"})])
+    out, errs = apply_map_overrides({}, _tmpl(), [_h("h1", "rename_mark", **{"from": "rally", "to": "D1"})])
     assert errs == []  # 点位与槽位名字空间不同，允许同名
     out, errs = apply_map_overrides({}, _tmpl(), [
-        _h("h1", "add_mark", name="x", pos=[0.5, 0.5]),
-        _h("h2", "rename_mark", **{"from": "x", "to": "rally"}),
+        _h("h1", "add_mark", name="m2", pos=[0.5, 0.5]),
+        _h("h2", "rename_mark", **{"from": "m2", "to": "rally"}),
     ])
     assert errs and "已存在" in errs[0]["text_zh"]
 
@@ -91,29 +91,29 @@ def test_rename_collision_rejected_and_valid_rename_ok():
 def test_add_slot_overlap_rejected():
     # depot1 是 2×2 @ (40.5,32.5)，footprint 40..41 × 32..33；放一个相邻但不重叠的
     _, errs = apply_map_overrides({}, _tmpl(), [
-        _h("h1", "add_slot", name="s1", pos=[43.5, 32.5], size=2, kind="supply"),
+        _h("h1", "add_slot", name="D17", pos=[43.5, 32.5], size=2, kind="supply"),
     ])
     assert errs == []
     # 压到 depot1 上 → 拒
     _, errs = apply_map_overrides({}, _tmpl(), [
-        _h("h1", "add_slot", name="s2", pos=[41.5, 33.5], size=2, kind="supply"),
+        _h("h1", "add_slot", name="D18", pos=[41.5, 33.5], size=2, kind="supply"),
     ])
     assert errs and "重叠" in errs[0]["text_zh"]
     # 偶数尺寸半格：同一格心连放两个 2×2 必然重叠
     _, errs = apply_map_overrides({}, _tmpl(), [
-        _h("h1", "add_slot", name="a", pos=[20.5, 20.5], size=2, kind="supply"),
-        _h("h2", "add_slot", name="b", pos=[20.5, 20.5], size=2, kind="supply"),
+        _h("h1", "add_slot", name="D3", pos=[20.5, 20.5], size=2, kind="supply"),
+        _h("h2", "add_slot", name="D3", pos=[20.5, 20.5], size=2, kind="supply"),
     ])
     assert errs and errs[0]["hunk_id"] == "h2"
 
 
 def test_add_slot_bad_size_kind_rejected():
     _, errs = apply_map_overrides({}, _tmpl(), [
-        _h("h1", "add_slot", name="s1", pos=[20.5, 20.5], size=4, kind="supply"),
+        _h("h1", "add_slot", name="D17", pos=[20.5, 20.5], size=4, kind="supply"),
     ])
     assert errs and "size" in errs[0]["text_zh"]
     _, errs = apply_map_overrides({}, _tmpl(), [
-        _h("h1", "add_slot", name="s1", pos=[20.5, 20.5], size=2, kind="turret"),
+        _h("h1", "add_slot", name="D17", pos=[20.5, 20.5], size=2, kind="turret"),
     ])
     assert errs and "kind" in errs[0]["text_zh"]
 
@@ -124,9 +124,9 @@ def test_del_missing_rejected():
 
 
 def test_del_projects_to_removed_list():
-    out, errs = apply_map_overrides({}, _tmpl(), [_h("h1", "del_slot", name="depot1")])
+    out, errs = apply_map_overrides({}, _tmpl(), [_h("h1", "del_slot", name="D1")])
     assert errs == []
-    assert out["build_slots_removed"] == ["depot1"]
+    assert out["build_slots_removed"] == ["D1"]
 
 
 def test_move_mark_projects_override():
@@ -153,14 +153,14 @@ spawns:
     origin: [10.0, 10.0]
     anchor: [10.0, 10.0]
     build_slots:
-      depot1: {pos: [40.5, 32.5], size: 2, kind: supply}
+      D1: {pos: [40.5, 32.5], size: 2, kind: supply}
     pos_marks:
       rally: {pos: [48.5, 30.5]}
 """
     (tmp_path / "base_layout.yaml").write_text(base_yaml, encoding="utf-8")
     ov_path = tmp_path / "base_layout.overrides.yaml"
     save_map_overrides(
-        {"build_slots": {"new1": {"pos": [7.5, 8.5], "size": 2, "kind": "supply"}},
+        {"build_slots": {"D9": {"pos": [7.5, 8.5], "size": 2, "kind": "supply"}},
          "pos_marks": {"m1": {"pos": [11.5, 12.5], "description_zh": "z"}}},
         ov_path,
     )
@@ -168,12 +168,12 @@ spawns:
 
     tpl = load_base_template(tmp_path / "base_layout.yaml")
     layout = tpl.spawns["bl"]
-    assert layout.world_fixed == {"new1", "m1"}
+    assert layout.world_fixed == {"D9", "m1"}
 
     # cc 偏移 (3, -2)：base 条目跟着平移，override 条目**不动**（它们已是最终世界坐标）
     layer = instantiate_spawn(tpl, layout, Point2(13.0, 8.0), map_size=(176, 160))
-    assert layer.build_slots["depot1"].pos == Point2(43.5, 30.5)      # 40.5+3, 32.5-2
-    assert layer.build_slots["new1"].pos == Point2(7.5, 8.5)          # 不平移
+    assert layer.build_slots["D1"].pos == Point2(43.5, 30.5)      # 40.5+3, 32.5-2
+    assert layer.build_slots["D9"].pos == Point2(7.5, 8.5)          # 不平移
     assert layer.pos_marks["rally"].pos == Point2(51.5, 28.5)         # 平移
     assert layer.pos_marks["m1"].pos == Point2(11.5, 12.5)            # 不平移
 

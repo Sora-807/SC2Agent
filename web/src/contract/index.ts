@@ -58,7 +58,7 @@ import { z } from "zod";
  *   strategy 增 display_name_zh/description_zh（策略级与 step 级）、reasons、group_names。
  *   新字段全部 `.default()` 容错：旧夹具/旧缓存帧缺字段时退回 identifier，不炸整页。
  */
-export const REV = 13 as const;
+export const REV = 14 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -155,7 +155,9 @@ export const zMapStatic = z.object({
   /** br/build_point/reported_position 由后端按 ADR-0027 算好；前端零几何换算（红线 C2） */
   build_slots: z.array(
     z.object({
+      /** 简写即正式标记（D1/R4/F1/R4+，rev 14）；展示用 alias_zh */
       name: z.string(),
+      alias_zh: z.string().default(""),
       tl: zCell,
       br: zCell,
       size: z.number().int(),

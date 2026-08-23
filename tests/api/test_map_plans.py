@@ -53,13 +53,13 @@ def test_payload_shape_and_side_coords(client: TestClient):
     p = client.get("/api/map-plans/layout-bl").json()
     assert p["map_name"] == "LadderMap" and p["spawn"] == "bl"
     names = {s["name"] for s in p["build_slots"]}
-    assert {"depot1", "rax1", "factory1"} <= names
+    assert {"D1", "R1", "F1"} <= names
 
     def pos_of(pid, name):
         pl = client.get(f"/api/map-plans/{pid}").json()
         return next(s["build_point"] for s in pl["build_slots"] if s["name"] == name)
 
-    assert pos_of("layout-bl", "depot1") != pos_of("layout-tr", "depot1"), \
+    assert pos_of("layout-bl", "D1") != pos_of("layout-tr", "D1"), \
         "蓝/红是各自的世界坐标"
 
     empty = client.get("/api/map-plans/default-bl").json()
@@ -96,20 +96,20 @@ def test_save_adds_slot_and_mark(client: TestClient):
     pid = _copy(client)
     r = client.put(f"/api/map-plans/{pid}", json={"hunks": [
         {"id": "h1", "kind": "add_slot",
-         "payload": {"name": "rax9", "pos": [70.5, 50.5], "size": 3, "kind": "production"}},
+         "payload": {"name": "R9", "pos": [70.5, 50.5], "size": 3, "kind": "production"}},
         {"id": "h2", "kind": "add_mark", "payload": {"name": "rally", "pos": [60.0, 55.0]}},
     ]})
     assert r.status_code == 200 and r.json()["ok"] is True, r.text
     p = client.get(f"/api/map-plans/{pid}").json()
-    assert any(s["name"] == "rax9" for s in p["build_slots"])
+    assert any(s["name"] == "R9" for s in p["build_slots"])
     assert any(m["name"] == "rally" for m in p["pos_marks"])
 
 
 def test_save_rejects_overlap_with_structured_reason(client: TestClient):
-    pid = _copy(client)   # layout-bl 有 depot1 @ (40.5,32.5)
+    pid = _copy(client)   # layout-bl 有 D1 @ (40.5,32.5)
     r = client.put(f"/api/map-plans/{pid}", json={"hunks": [
         {"id": "h1", "kind": "add_slot",
-         "payload": {"name": "clash", "pos": [40.5, 32.5], "size": 2, "kind": "supply"}},
+         "payload": {"name": "D17", "pos": [40.5, 32.5], "size": 2, "kind": "supply"}},
     ]})
     assert r.status_code == 400
     detail = r.json()["detail"]
@@ -127,7 +127,7 @@ def test_save_rejects_slot_on_base_or_geyser(client: TestClient):
     cy = (base["tl"][1] + base["br"][1]) / 2
     r = client.put(f"/api/map-plans/{pid}", json={"hunks": [
         {"id": "h1", "kind": "add_slot",
-         "payload": {"name": "onbase", "pos": [cx, cy], "size": 3, "kind": "production"}},
+         "payload": {"name": "R9", "pos": [cx, cy], "size": 3, "kind": "production"}},
     ]})
     assert r.status_code == 400
     assert any("固定建造点" in e["text_zh"] for e in r.json()["detail"]["errors"])
@@ -137,14 +137,14 @@ def test_del_touches_only_this_plan(client: TestClient):
     """单出生点模型：del 只影响本规划（没有跨分支同步）。"""
     pid = _copy(client)
     r = client.put(f"/api/map-plans/{pid}", json={"hunks": [
-        {"id": "h1", "kind": "del_slot", "payload": {"name": "depot16"}},
+        {"id": "h1", "kind": "del_slot", "payload": {"name": "D16"}},
     ]})
     assert r.status_code == 200
     p = client.get(f"/api/map-plans/{pid}").json()
-    assert not any(s["name"] == "depot16" for s in p["build_slots"])
+    assert not any(s["name"] == "D16" for s in p["build_slots"])
     # 预设不受影响
     preset = client.get("/api/map-plans/layout-bl").json()
-    assert any(s["name"] == "depot16" for s in preset["build_slots"])
+    assert any(s["name"] == "D16" for s in preset["build_slots"])
 
 
 # ---------------- 文件与生命周期 ----------------
@@ -190,7 +190,7 @@ def test_sim_session_assembles_from_map_plan_and_emits_terrain(client: TestClien
     assert terr["height"] is not None and terr["height"]["data_b64"], "真机采集的地形"
     m = next(f for f in statics if f["topic"] == "static/map")["payload"]
     names = {s["name"] for s in m["build_slots"]}
-    assert {"depot1", "rax1", "factory1"} <= names, "装配来自出厂校准布局"
+    assert {"D1", "R1", "F1"} <= names, "装配来自出厂校准布局"
     client.post("/api/session/stop")
 
 
@@ -198,3 +198,30 @@ def test_session_rejects_unknown_map_plan(client: TestClient):
     r = client.post("/api/session/start",
                     params={"driver": "sim", "map_plan": "nope"})
     assert r.status_code == 400 and "nope" in r.json()["detail"]
+
+
+def test_slot_short_name_convention_enforced(tmp_path):
+    """rev 14：槽位名必须简写（D/R/F/S+序[+]）—— 编辑与全量保存两道门都拒旧式全称。"""
+    c = TestClient(create_app(tmp_path / "frames", tmp_path / "p.jsonl",
+                              map_plans_dir=tmp_path / "map-plans"))
+    c.post("/api/map-plans", json={"id": "conv-probe", "copy_from": "layout-bl"})
+    # add_slot 旧式全称 → 结构化拒绝
+    r = c.put("/api/map-plans/conv-probe", json={"hunks": [
+        {"id": "h0", "kind": "add_slot",
+         "payload": {"name": "depot17", "pos": [30.5, 26.5],
+                     "size": 2, "kind": "supply"}}]})
+    assert r.status_code == 400 and "简写约定" in str(r.json()["detail"])
+    # 全量保存（agent 文件工作区路径）同拒；约定名 + 中文别名则过
+    doc = c.get("/api/map-plans/conv-probe/doc").json()
+    doc["build_slots"]["barracks9"] = {"pos": [60.5, 44.5], "size": 3, "kind": "production"}
+    r = c.put("/api/map-plans/conv-probe/doc", json=doc)
+    assert r.status_code == 400 and "简写约定" in str(r.json()["detail"])
+    doc["build_slots"].pop("barracks9")
+    doc["build_slots"]["R5"] = {"pos": [60.5, 44.5], "size": 3, "kind": "production",
+                                "alias_zh": "兵营5"}
+    r = c.put("/api/map-plans/conv-probe/doc", json=doc)
+    assert r.status_code == 200, r.text
+    slots = c.get("/api/map-plans/conv-probe").json()["build_slots"]
+    assert slots and all(n and n[0] in "DRFS" for n in
+                         (s["name"] for s in slots))
+    assert any(s["name"] == "R5" and s.get("alias_zh") == "兵营5" for s in slots)

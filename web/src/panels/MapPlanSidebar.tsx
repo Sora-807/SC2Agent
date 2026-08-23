@@ -194,8 +194,8 @@ export function MapPlanSidebar() {
                     + (st.selectedName === s.name
                       ? "border border-l2 bg-active"
                       : "border border-transparent hover:bg-raised")}>
-                <span className="font-medium text-dim">{s.name}</span>
-                <span className="text-faint">{SLOT_KIND_ZH[s.kind] ?? s.kind} {s.size}×{s.size}</span>
+                <span className="font-medium text-dim">{s.aliasZh || s.name}</span>
+                <span className="text-faint" title={`标记名 ${s.name}`}>{s.name} · {SLOT_KIND_ZH[s.kind] ?? s.kind} {s.size}×{s.size}</span>
                 <span className={"ml-auto text-note text-ghost " + T.mono}>
                   {s.pos[0].toFixed(1)},{s.pos[1].toFixed(1)}
                 </span>

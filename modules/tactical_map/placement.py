@@ -14,10 +14,20 @@ SC2 建筑放置在半格网格上，命令点 P = footprint 矩形中心（按�
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from math import ceil, floor
 
 from game import GridPos, Point2
+
+#: 槽位正式命名的约定（2026-08-23 用户拍板：**简写即正式标记**，中文别名管展示）：
+#: 类别字母 D（补给 Depot）/ R（兵营 Rax）/ F（工厂 Factory）/ S（星港 Starport）
+#: + 序号 + 可选 `+`（挂件预留位，挂母建筑序号）。≤3 字符，格点网格可直接当标签。
+SLOT_NAME_RE = re.compile(r"^[DRFS]\d{1,2}\+?$")
+
+
+def is_valid_slot_name(name: str) -> bool:
+    return bool(SLOT_NAME_RE.fullmatch(name or ""))
 
 
 def _corner_offset(size: int) -> float:
@@ -32,11 +42,12 @@ class BuildSlot:
     pos 可选：真机校准过的世界建造点（can_place/实测）；None 时用 build_point 公式。
     """
 
-    name: str  # "depot1"（声明顺序 = 建造顺序）
+    name: str  # "D1"（简写即正式标记；约定 SLOT_NAME_RE，格子网格直接用它当标签）
     tl: GridPos  # footprint 左下角格点（min corner；与 pos 的关系见模块 docstring）
     size: int  # 2（补给站）/ 3（兵营/工厂/星港）/ 5（基地）
     kind: str = "production"  # 槽位类别：supply（补给）/ production（生产建筑）/ addon（挂件预留，不参与放置）
     pos: Point2 | None = None  # 校准过的世界建造点（权威；driver build 用它）
+    alias_zh: str = ""         # 中文别名（展示用：补给站1/兵营3挂件位）——标记归 name，展示归它
 
     @property
     def br(self) -> GridPos:

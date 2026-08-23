@@ -1,80 +1,383 @@
-# LadderMap（破晓黎明）主基建造模板 —— 固定有序建造位（authoring 数据）
-# 来源：run_slot_scan.py 真机 can_place 扫描（docs/slot_scan*.log，不花矿）+ 手动 trace 实测
-# 语义：
-#   - spawns 按出生点分变体（出生点随机）；运行时 spawn_layout_nearest 自动选
-#   - pos = 校准过的世界建造点（权威；2×2 锚点在格角、3×3 在格心，ADR-0027 锁定公式）
-#   - kind：supply=补给位 / production=生产位（3×3）/ addon=挂件预留（2×2，不参与放置）
-#   - build_slots 声明顺序 = 建造顺序（生产运行时按 kind+size 过滤取未占位）
-# 布局（错位楼梯，每栋生产建筑右下 2×2 为挂件预留）：
-#   bl：补给站 4×4 网格（主矿左上 x40–47/y32–39）+ 生产区在其上方（rax1-4 楼梯 + 4 挂件）
-#   tr：镜像含义（生产区在补给站网格左侧，独立扫描校准）
 map_name: LadderMap
 region_name: main_base
 spawns:
   bl:
-    origin: [48.5, 28.5]
-    anchor: [48.5, 28.5]
+    origin:
+    - 48.5
+    - 28.5
+    anchor:
+    - 48.5
+    - 28.5
     build_slots:
-      depot1:  {pos: [40.5, 32.5], size: 2, kind: supply}
-      depot2:  {pos: [42.5, 32.5], size: 2, kind: supply}
-      depot3:  {pos: [44.5, 32.5], size: 2, kind: supply}
-      depot4:  {pos: [46.5, 32.5], size: 2, kind: supply}
-      depot5:  {pos: [40.5, 34.5], size: 2, kind: supply}
-      depot6:  {pos: [42.5, 34.5], size: 2, kind: supply}
-      depot7:  {pos: [44.5, 34.5], size: 2, kind: supply}
-      depot8:  {pos: [46.5, 34.5], size: 2, kind: supply}
-      depot9:  {pos: [40.5, 36.5], size: 2, kind: supply}
-      depot10: {pos: [42.5, 36.5], size: 2, kind: supply}
-      depot11: {pos: [44.5, 36.5], size: 2, kind: supply}
-      depot12: {pos: [46.5, 36.5], size: 2, kind: supply}
-      depot13: {pos: [40.5, 38.5], size: 2, kind: supply}
-      depot14: {pos: [42.5, 38.5], size: 2, kind: supply}
-      depot15: {pos: [44.5, 38.5], size: 2, kind: supply}
-      depot16: {pos: [46.5, 38.5], size: 2, kind: supply}
-      # rax1-2 真机 can_place+挂件2×2+空地评分扫描（CC 东侧/补给网格上方，STAIR_OPEN=96 最高分）
-      # 旧位 [42.5,42.5]+[45.5,44.5] 在 NW 形成对角楼梯墙 → 集合点卡缝（与 TR 同一 bug）
-      rax1: {pos: [55.5, 33.5], size: 3, kind: production}
-      rax2: {pos: [58.5, 35.5], size: 3, kind: production}
-      rax3: {pos: [53.5, 39.5], size: 3, kind: production}
-      rax4: {pos: [56.5, 41.5], size: 3, kind: production}
-      rax1_addon: {pos: [57.5, 32.5], size: 2, kind: addon}
-      rax2_addon: {pos: [60.5, 34.5], size: 2, kind: addon}
-      rax3_addon: {pos: [55.5, 38.5], size: 2, kind: addon}
-      rax4_addon: {pos: [58.5, 40.5], size: 2, kind: addon}
-      # factory1 真机 can_place+挂件2×2 双锁定（CC 西侧/补给网格南侧，避开 NE ramp 路径不堵门）
-      factory1: {pos: [40.5, 29.5], size: 3, kind: production}
-      factory1_addon: {pos: [42.5, 28.5], size: 2, kind: addon}
+      D1:
+        pos:
+        - 40.5
+        - 32.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站1
+      D2:
+        pos:
+        - 42.5
+        - 32.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站2
+      D3:
+        pos:
+        - 44.5
+        - 32.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站3
+      D4:
+        pos:
+        - 46.5
+        - 32.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站4
+      D5:
+        pos:
+        - 40.5
+        - 34.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站5
+      D6:
+        pos:
+        - 42.5
+        - 34.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站6
+      D7:
+        pos:
+        - 44.5
+        - 34.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站7
+      D8:
+        pos:
+        - 46.5
+        - 34.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站8
+      D9:
+        pos:
+        - 40.5
+        - 36.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站9
+      D10:
+        pos:
+        - 42.5
+        - 36.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站10
+      D11:
+        pos:
+        - 44.5
+        - 36.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站11
+      D12:
+        pos:
+        - 46.5
+        - 36.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站12
+      D13:
+        pos:
+        - 40.5
+        - 38.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站13
+      D14:
+        pos:
+        - 42.5
+        - 38.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站14
+      D15:
+        pos:
+        - 44.5
+        - 38.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站15
+      D16:
+        pos:
+        - 46.5
+        - 38.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站16
+      R1:
+        pos:
+        - 55.5
+        - 33.5
+        size: 3
+        kind: production
+        alias_zh: 兵营1
+      R2:
+        pos:
+        - 58.5
+        - 35.5
+        size: 3
+        kind: production
+        alias_zh: 兵营2
+      R3:
+        pos:
+        - 53.5
+        - 39.5
+        size: 3
+        kind: production
+        alias_zh: 兵营3
+      R4:
+        pos:
+        - 56.5
+        - 41.5
+        size: 3
+        kind: production
+        alias_zh: 兵营4
+      R1+:
+        pos:
+        - 57.5
+        - 32.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营1挂件位
+      R2+:
+        pos:
+        - 60.5
+        - 34.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营2挂件位
+      R3+:
+        pos:
+        - 55.5
+        - 38.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营3挂件位
+      R4+:
+        pos:
+        - 58.5
+        - 40.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营4挂件位
+      F1:
+        pos:
+        - 40.5
+        - 29.5
+        size: 3
+        kind: production
+        alias_zh: 工厂1
+      F1+:
+        pos:
+        - 42.5
+        - 28.5
+        size: 2
+        kind: addon
+        alias_zh: 工厂1挂件位
   tr:
-    origin: [127.5, 119.5]
-    anchor: [127.5, 119.5]
+    origin:
+    - 127.5
+    - 119.5
+    anchor:
+    - 127.5
+    - 119.5
     build_slots:
-      depot1:  {pos: [131.5, 107.5], size: 2, kind: supply}
-      depot2:  {pos: [133.5, 107.5], size: 2, kind: supply}
-      depot3:  {pos: [135.5, 107.5], size: 2, kind: supply}
-      depot4:  {pos: [137.5, 107.5], size: 2, kind: supply}
-      depot5:  {pos: [131.5, 109.5], size: 2, kind: supply}
-      depot6:  {pos: [133.5, 109.5], size: 2, kind: supply}
-      depot7:  {pos: [135.5, 109.5], size: 2, kind: supply}
-      depot8:  {pos: [137.5, 109.5], size: 2, kind: supply}
-      depot9:  {pos: [131.5, 111.5], size: 2, kind: supply}
-      depot10: {pos: [133.5, 111.5], size: 2, kind: supply}
-      depot11: {pos: [135.5, 111.5], size: 2, kind: supply}
-      depot12: {pos: [137.5, 111.5], size: 2, kind: supply}
-      depot13: {pos: [131.5, 113.5], size: 2, kind: supply}
-      depot14: {pos: [133.5, 113.5], size: 2, kind: supply}
-      depot15: {pos: [135.5, 113.5], size: 2, kind: supply}
-      depot16: {pos: [137.5, 113.5], size: 2, kind: supply}
-      # rax1-2 真机 can_place+挂件2×2+空地评分扫描（CC 东侧/工厂北侧，STAIR_OPEN=80 高分，不与 factory 重叠）
-      # 旧位 [117.5,110.5]+[120.5,112.5] 在 SW 象限形成对角楼梯墙 → 集合点卡缝 250+tick
-      rax1: {pos: [138.5, 120.5], size: 3, kind: production}
-      rax2: {pos: [141.5, 122.5], size: 3, kind: production}
-      # rax3-4 NW 象限（CC 西北侧，开阔区域，用于工程站/军械库）
-      rax3: {pos: [113.5, 121.5], size: 3, kind: production}
-      rax4: {pos: [116.5, 123.5], size: 3, kind: production}
-      rax1_addon: {pos: [140.5, 119.5], size: 2, kind: addon}
-      rax2_addon: {pos: [143.5, 121.5], size: 2, kind: addon}
-      rax3_addon: {pos: [115.5, 120.5], size: 2, kind: addon}
-      rax4_addon: {pos: [118.5, 122.5], size: 2, kind: addon}
-      # factory1 真机 can_place+挂件2×2 双锁定（CC 东侧/补给网格上方，避开 SW ramp 路径不堵门）
-      factory1: {pos: [135.5, 118.5], size: 3, kind: production}
-      factory1_addon: {pos: [137.5, 117.5], size: 2, kind: addon}
+      D1:
+        pos:
+        - 131.5
+        - 107.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站1
+      D2:
+        pos:
+        - 133.5
+        - 107.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站2
+      D3:
+        pos:
+        - 135.5
+        - 107.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站3
+      D4:
+        pos:
+        - 137.5
+        - 107.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站4
+      D5:
+        pos:
+        - 131.5
+        - 109.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站5
+      D6:
+        pos:
+        - 133.5
+        - 109.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站6
+      D7:
+        pos:
+        - 135.5
+        - 109.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站7
+      D8:
+        pos:
+        - 137.5
+        - 109.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站8
+      D9:
+        pos:
+        - 131.5
+        - 111.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站9
+      D10:
+        pos:
+        - 133.5
+        - 111.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站10
+      D11:
+        pos:
+        - 135.5
+        - 111.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站11
+      D12:
+        pos:
+        - 137.5
+        - 111.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站12
+      D13:
+        pos:
+        - 131.5
+        - 113.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站13
+      D14:
+        pos:
+        - 133.5
+        - 113.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站14
+      D15:
+        pos:
+        - 135.5
+        - 113.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站15
+      D16:
+        pos:
+        - 137.5
+        - 113.5
+        size: 2
+        kind: supply
+        alias_zh: 补给站16
+      R1:
+        pos:
+        - 138.5
+        - 120.5
+        size: 3
+        kind: production
+        alias_zh: 兵营1
+      R2:
+        pos:
+        - 141.5
+        - 122.5
+        size: 3
+        kind: production
+        alias_zh: 兵营2
+      R3:
+        pos:
+        - 113.5
+        - 121.5
+        size: 3
+        kind: production
+        alias_zh: 兵营3
+      R4:
+        pos:
+        - 116.5
+        - 123.5
+        size: 3
+        kind: production
+        alias_zh: 兵营4
+      R1+:
+        pos:
+        - 140.5
+        - 119.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营1挂件位
+      R2+:
+        pos:
+        - 143.5
+        - 121.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营2挂件位
+      R3+:
+        pos:
+        - 115.5
+        - 120.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营3挂件位
+      R4+:
+        pos:
+        - 118.5
+        - 122.5
+        size: 2
+        kind: addon
+        alias_zh: 兵营4挂件位
+      F1:
+        pos:
+        - 135.5
+        - 118.5
+        size: 3
+        kind: production
+        alias_zh: 工厂1
+      F1+:
+        pos:
+        - 137.5
+        - 117.5
+        size: 2
+        kind: addon
+        alias_zh: 工厂1挂件位

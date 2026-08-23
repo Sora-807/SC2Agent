@@ -147,7 +147,7 @@ def _dump(doc: dict) -> str:
 
 def test_map_plan_locked_preset_refused_but_readable(ws: ApiWorkspace, api: TestClient):
     text = ws.read_text("map-plans/layout-bl.yaml")
-    assert "build_slots" in text and "depot16" in text
+    assert "build_slots" in text and "D16" in text
     with pytest.raises(WorkspaceError) as ei:
         ws.edit_text("map-plans/layout-bl.yaml", "spawn: bl", "spawn: tr")
     assert "锁定" in str(ei.value)
@@ -162,11 +162,11 @@ def test_map_plan_full_write_roundtrip_and_change(ws: ApiWorkspace, api: TestCli
     ws.read_text("map-plans/agent-mw1.yaml")
     # 加一个新槽位（开放空间坐标，来自 barracks 定位修复扫描的安全区）
     doc = {**doc, "build_slots": {**(doc.get("build_slots") or {}),
-                                  "rax-file": {"pos": [96.5, 80.5], "size": 3,
+                                  "R7": {"pos": [96.5, 80.5], "size": 3,
                                                "kind": "production"}}}
     ws.write_text("map-plans/agent-mw1.yaml", _dump(doc))
     slots = api.get("/api/map-plans/agent-mw1/doc").json()["build_slots"]
-    assert "rax-file" in slots
+    assert "R7" in slots
     assert any(r.area == "map_plan" for r in ws._changes.drain())
 
 
@@ -184,7 +184,7 @@ def test_map_plan_overlap_refused_on_full_write(ws: ApiWorkspace, api: TestClien
     doc = yaml.safe_load(ws.read_text("map-plans/agent-mw3.yaml"))
     anchor = sorted((doc.get("build_slots") or {}).items())[0]
     doc = {**doc, "build_slots": {**(doc.get("build_slots") or {}),
-                                  "clashbox": {"pos": anchor[1]["pos"],
+                                  "D30": {"pos": anchor[1]["pos"],
                                                "size": anchor[1].get("size") or 2,
                                                "kind": "supply"}}}
     ws.read_text("map-plans/agent-mw3.yaml")
