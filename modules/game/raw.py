@@ -1,4 +1,4 @@
-"""game.raw：SC2 原生形态的状态类型（D1 状态两面的"raw 面"，docs/P0-影响边界.md）。
+"""game.raw：SC2 原生形态的状态类型（D1 状态两面的"raw 面"，docs/contract/P0-影响边界.md）。
 
 driver 抽取 burnysc2 对象产出 RawGameState；world 消费并适配成 game.state.GameState。
 字段名对齐 burnysc2 原生：alliance（int，非 Owner 枚举）、health（非 hp）、

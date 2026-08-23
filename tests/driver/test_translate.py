@@ -120,7 +120,7 @@ def test_patrol_noop_when_empty_positions():
 
 def test_siege_uses_morph_ability():
     """siege/unsiege 走 __call__(AbilityId)（无具名 Unit 方法，同挂件 BUILD_REACTOR 路径）。
-    架起后实体 type_id 变 SIEGETANKSIEGED——T3 形态变体归一化的依据（见 docs/siege_probe.log）。"""
+    架起后实体 type_id 变 SIEGETANKSIEGED——T3 形态变体归一化的依据（见 docs/evidence/siege_probe.log）。"""
     from sc2.ids.ability_id import AbilityId
     cmds = translate_op(_op("siege", unit_tags=[1]), _find([FakeUnit(1)]))
     assert cmds == [("call", 1, AbilityId.SIEGEMODE_SIEGEMODE)]

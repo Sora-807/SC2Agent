@@ -1,6 +1,6 @@
 """constraint.checks：生产可行性校验 (GameState, 意图) → ConstraintResult。
 
-V1 门控项（docs/test-plan.md constraint 节；S4 只判当前可做性，不模拟未来）：
+V1 门控项（docs/contract/test-plan.md constraint 节；S4 只判当前可做性，不模拟未来）：
 - build：资源（catalog cost）/ 前置（catalog prerequisites）/ 放置格点未被己方建筑占据
 - train：资源 / 供给 / 存在就绪产出建筑
 - assign_workers：无门控（P0：立即发）
@@ -138,6 +138,6 @@ def check_assign_workers() -> ConstraintResult:
     """assign_workers 无资源门控（P0：立即发，饱和/溢出由 WorkerAllocator 处理）。
 
     注：生产运行时不调它（自己直接处理 ASSIGN_WORKERS），目前只有单测在用 —— 属"被测试养着的死 API"，
-    等经济维持器落地时一起处置（见 docs/issues-flow-production.md P16）。
+    清理挂在 docs/REFACTOR.md §3 死代码清单（经济维持器已落地 ADR-0030）。
     """
     return ConstraintResult(True)

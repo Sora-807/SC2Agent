@@ -1,7 +1,7 @@
-"""从 docs/game_data_dump.json + 手工编排的结构/中文名 → 生成三族 catalog JSON。
+"""从 docs/data/game_data_dump.json + 手工编排的结构/中文名 → 生成三族 catalog JSON。
 
 用法：python tools/generate_catalog.py
-前置：先跑 dump_game_data.py 生成 docs/game_data_dump.json
+前置：先跑 dump_game_data.py 生成 docs/data/game_data_dump.json
 输出：modules/game/data/{terran,protoss,zerg}.json
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DUMP = ROOT / "docs" / "game_data_dump.json"
+DUMP = ROOT / "docs" / "data" / "game_data_dump.json"
 OUT_DIR = ROOT / "modules" / "game" / "data"
 
 # ─── helpers ────────────────────────────────────────────────────────────────

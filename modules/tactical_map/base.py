@@ -2,7 +2,7 @@
 
 数据文件 modules/tactical_map/data/<map>/base_layout.yaml：按出生点分变体
 （出生点随机，几何随旋转不同），每个变体是相对该出生点的固定有序建造位
-（真机 can_place 扫描校准，见 run_slot_scan.py + docs/slot_scan.log）。
+（真机 can_place 扫描校准，见 run_slot_scan.py + docs/evidence/slot_scan.log）。
 运行时把模板平移到我方实际 CC → 确定性 RegionLayer：建筑永远按声明顺序
 落在固定位置（"固定位置顺序摆放"），不做随机摆放、不依赖换位重试
 （生产运行时的换位重试降级为安全网）。

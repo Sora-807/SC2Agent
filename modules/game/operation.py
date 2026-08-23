@@ -1,6 +1,6 @@
 """game.operation：driver 边界动作（Operation + 操作目录 OP_CATALOG）。
 
-"操作在哪定义"的单一权威源（docs/P0-影响边界.md D2 的代码版）。
+"操作在哪定义"的单一权威源（docs/contract/P0-影响边界.md D2 的代码版）。
 - engine/生产运行时 产 Operation → driver 翻译成 burnysc2 命令（下一 step 生效）。
 - flow 用它校验 action_atom（编译期拒未知 action / 缺参数）。
 - 加新 action = 在 OP_CATALOG 加一条 + driver 加对应翻译函数（TRANSLATORS）。
@@ -56,7 +56,7 @@ COMPOSITE_ACTIONS: dict[str, str] = {
     "assign_workers": (
         "复合意图：需要按单位扇出成 gather/stop（矿 2 气 3 饱和），driver 不直接执行。"
         "生产队列走 QueueOp.ASSIGN_WORKERS + WorkerAllocator；"
-        "flow 侧要用它，得等经济维持器接上（见 docs/issues-flow-production.md §3）"
+        "flow 侧要用它得经经济维持器（ADR-0030），当前未接"
     ),
 }
 

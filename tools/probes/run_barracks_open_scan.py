@@ -21,7 +21,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2 as SC2Point2
 
 OUT_SUFFIX = sys.argv[1] if len(sys.argv) > 1 else ""
-LOG = Path(__file__).resolve().parents[2] / "docs" / f"barracks_open_scan{OUT_SUFFIX}.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / f"barracks_open_scan{OUT_SUFFIX}.log"
 
 
 def log(msg: object) -> None:

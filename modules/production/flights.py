@@ -177,7 +177,7 @@ class BuildFlightsMixin:
         return {(tl.x + size + dx, tl.y + dy) for dx in range(2) for dy in range(2)}
 
     def _expected_addon_reported(self, building) -> Point2:
-        """母建筑 → 挂件实体报告位置（真机锁定裸实验 docs/bare_addon.log）：
+        """母建筑 → 挂件实体报告位置（真机锁定裸实验 docs/evidence/bare_addon.log）：
         贴附右下 2×2 → 报告 R = 母建筑 TL + (size, 0) + (1, 1)。
         例：兵营 (117.5,110.5) → TL(116,109) → 反应堆报告 (120.0,110.0) ✓
         """

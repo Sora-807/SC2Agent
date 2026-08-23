@@ -5,7 +5,7 @@
 然后发通用 AbilityId.SIEGEMODE_SIEGEMODE（同 driver._t_siege 的 __call__ 路径），读 type_id
 变化（预期 SIEGETANK → SIEGETANKSIEGED）；检测到架起态后发 UNSIEGE_UNSIEGE 观测回变。
 证据喂给 T3 形态变体归一化（catalog variants 反查）。
-输出：docs/siege_probe.log
+输出：docs/evidence/siege_probe.log
 
 注：工厂/挂件坐标为探针级近似（T6 才真机 can_place 扫描锁定正式 slot）；blocked 时 log 会显示无实体。
 """
@@ -24,7 +24,7 @@ from sc2.main import run_game
 from sc2.player import Bot, Computer
 from sc2.position import Point2
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "siege_probe.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "siege_probe.log"
 
 
 def log(msg: object) -> None:

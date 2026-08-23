@@ -1,4 +1,4 @@
-"""view：只读视图层 —— 把运行时状态编成 ViewFrame（契约见 docs/plan-frontend.md §2）。
+"""view：只读视图层 —— 把运行时状态编成 ViewFrame（契约见 docs/contract/plan-frontend.md §2）。
 
 位置：flow / production / planner / tactical_map **之上**；没有任何下层模块 import view
 （tests/architecture/test_imports.py 锁死）。因此 view 可以随 UI 需要演进，不会反向污染引擎。

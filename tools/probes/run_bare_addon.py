@@ -3,7 +3,7 @@
 前置（全部校准位）：补给站 → 精炼厂（最近气井）+ 3 气工 → 兵营（孤立）。
 然后发通用 AbilityId.BUILD_REACTOR（真机锁定：build() 静默失败、BUILD_REACTOR_BARRACKS 无实体产出），
 读 BARRACKSREACTOR 实体报告位置 → 反推真实贴附格点（验证右下 2×2 预留模型）。
-输出：docs/bare_addon.log
+输出：docs/evidence/bare_addon.log
 """
 import sys
 from pathlib import Path
@@ -20,7 +20,7 @@ from sc2.main import run_game
 from sc2.player import Bot, Computer
 from sc2.position import Point2
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "bare_addon.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "bare_addon.log"
 
 
 def log(msg: object) -> None:

@@ -1,4 +1,4 @@
-"""game.ports：driver ↔ engine 边界契约（原顶层 ports 模块并入 game，见 docs/模块审查.md）。
+"""game.ports：driver ↔ engine 边界契约（原顶层 ports 模块并入 game.ports，残留由 tests/architecture 锁死）。
 
 - GamePort：driver 实现的端口（start/stop/submit_operations/events/read）。
 - RuntimeSink：engine/runtime 实现的回调（driver 每 step 推 RawGameState）。

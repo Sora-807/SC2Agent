@@ -19,7 +19,7 @@ from game import Owner
 from sc2.data import Difficulty, Race
 from world.adapter import adapt
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "flow_arrived.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "flow_arrived.log"
 
 
 def log(msg: object) -> None:

@@ -1,7 +1,7 @@
 /**
  * ViewFrame v0.1 —— 帧契约（zod-first）
  *
- * 唯一真相源：`docs/plan-frontend.md` §2。本文件是它的可执行镜像。
+ * 唯一真相源：`docs/contract/plan-frontend.md` §2。本文件是它的可执行镜像。
  * 类型一律由 schema 推导（`z.infer`），**不手写第二份 interface**，否则类型与校验会漂移。
  * 改动流程：改字段 = REV+1 + §2 修订 + 后端 contract test 同步 + 两份计划都改（红线 C8）。
  */
@@ -860,7 +860,7 @@ export function parseEnvelope(raw: unknown): AnyEnvelope {
   const rev = (raw as { rev?: unknown }).rev;
   if (rev !== REV) {
     throw new ContractError(
-      `契约版本不匹配：帧 rev=${String(rev)}，前端 REV=${REV}。请同步 docs/plan-frontend.md §2`,
+      `契约版本不匹配：帧 rev=${String(rev)}，前端 REV=${REV}。请同步 docs/contract/plan-frontend.md §2`,
     );
   }
   const r = zAnyEnvelope.safeParse(raw);

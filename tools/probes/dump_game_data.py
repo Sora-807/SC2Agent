@@ -1,4 +1,4 @@
-"""从真机 SC2 提取全部单位/升级数据，输出 docs/game_data_dump.json。
+"""从真机 SC2 提取全部单位/升级数据，输出 docs/data/game_data_dump.json。
 
 用法：python dump_game_data.py
 用于生成 terran/protoss/zerg 三族 catalog JSON 的准确经济数据（cost/build_time/supply）。
@@ -20,7 +20,7 @@ try:
 except ImportError:
     UNIT_TRAINED_FROM = {}
 
-DUMP = Path(__file__).resolve().parents[2] / "docs" / "game_data_dump.json"
+DUMP = Path(__file__).resolve().parents[2] / "docs" / "data" / "game_data_dump.json"
 FPS = 22.4  # frames per game second
 
 

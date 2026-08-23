@@ -18,7 +18,7 @@ from sc2.data import Difficulty, Race
 from tactical_map import instantiate_spawn, load_ladder_map, spawn_layout_nearest
 from world.adapter import adapt
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "addon_probe.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "addon_probe.log"
 
 
 def log(msg: object) -> None:

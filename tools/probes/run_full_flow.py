@@ -8,7 +8,7 @@
 steward（演示粘合，真实"维持规则"post-V1）：每 ~2s 把空闲 SCV 派去矿/气。
 证据：兵营/反应堆落位固定 slot、枪兵数达 50、flow 发出 attack_move_to（敌方主矿）、arrived→exit。
 跑：uv run python run_full_flow.py
-输出：docs/full_flow.log + 控制台。
+输出：docs/evidence/full_flow.log + 控制台。
 """
 import sys
 from pathlib import Path
@@ -28,7 +28,7 @@ from sc2.data import Difficulty, Race
 from tactical_map import instantiate_spawn, load_ladder_map, spawn_layout_nearest
 from world.adapter import adapt
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "full_flow.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "full_flow.log"
 
 
 def log(msg: object) -> None:

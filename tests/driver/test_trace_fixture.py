@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-TRACE = Path(__file__).resolve().parents[2] / "docs" / "state_trace.jsonl"
+TRACE = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "state_trace.jsonl"
 
 
 def _load():

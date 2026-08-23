@@ -20,7 +20,7 @@ class EconomyParams:
     def __post_init__(self):
         if self.supply_provided is None:
             # **单一真相源**（opening 种子与 worldsim 的 _supply_cap 都从这里取）。
-            # 数值以本机游戏数据为准：docs/game_data_dump.json 的 food_provided
+            # 数值以本机游戏数据为准：docs/data/game_data_dump.json 的 food_provided
             # （CommandCenter=13、SupplyDepot=8），并经真机录像对照（开局 1 CC +
             # 0 补给站 → supply_cap=13，2026-08-23 那局首帧）。三族值（Nexus=13/
             # Pylon=8/Hatchery 族=4/Overlord=8，同 dump）等 planner race-agnostic

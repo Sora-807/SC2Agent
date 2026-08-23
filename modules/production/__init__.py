@@ -1,4 +1,4 @@
-"""production 模块：生产运行时（生产半边，docs/模块审查.md 最大缺口的落地）。
+"""production 模块：生产运行时（生产半边 —— 模块审查时代的最大缺口，现状与演进见 docs/REFACTOR.md）。
 
 - runtime：命名队列 drain（队首 constraint 门控）+ agent 工具操作（submit/append/prepend/clear/remove/reorder）
 - worker：WorkerAllocator —— assign_workers 展开（矿2气3饱和 + idle 解放）

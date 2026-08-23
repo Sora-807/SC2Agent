@@ -226,7 +226,7 @@ class ProductionRuntime(BuildFlightsMixin):
         所以不需要在 drain 里埋状态位，也就不会和 drain 的任何重构打架。
 
         返回**普通 dict**（production 不认识 view，架构测试锁死方向）；
-        键名与 `docs/plan-frontend.md` §2 的 ProductionFrame 对齐，由 view.adapt 显式映射。
+        键名与 `docs/contract/plan-frontend.md` §2 的 ProductionFrame 对齐，由 view.adapt 显式映射。
         """
         queues: list[dict] = []
         for q in self._queues.values():
@@ -489,7 +489,7 @@ class ProductionRuntime(BuildFlightsMixin):
     def _pick_producer(self, gs: GameState, stable_id: str):
         """就绪产出建筑（跳过在建挂件/训练槽已满的）。
 
-        真机教训（docs/full_flow.log）：SC2 训练队列满时静默拒绝新订单——无反馈、不报错；
+        真机教训（docs/evidence/full_flow.log）：SC2 训练队列满时静默拒绝新订单——无反馈、不报错；
         挂件双槽 ≈ 2 条订单为满，在建挂件（Reactor 订单）时不可训练。
         """
         entry = self._catalog.by_stable_id(stable_id)

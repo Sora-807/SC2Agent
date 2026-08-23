@@ -1,6 +1,6 @@
 """架构依赖方向检查 + 环境冒烟。
 
-红线（docs/需求文档-v0.1.md §0；ADR-0001）：
+红线（docs/contract/需求文档-v0.1.md §0；ADR-0001）：
 - game：唯一地基——几何原语 + Raw/GameState 两面 + Operation/OP_CATALOG + 生产队列
   schema + 边界契约（原顶层 ports 已并入 game.ports）+ catalog；零 sc2
 - driver：只依赖 game（+ sc2，唯一 SC2 适配器）
@@ -62,7 +62,7 @@ def test_modules_exist():
 
 
 def test_ports_module_removed():
-    """顶层 ports 已并入 game.ports（docs/模块审查.md 建议）；残留即回归。"""
+    """顶层 ports 已并入 game.ports（已并入 game.ports）；残留即回归。"""
     assert not (MODULES_DIR / "ports").exists(), "modules/ports 应已并入 game.ports"
 
 

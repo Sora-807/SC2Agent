@@ -1,4 +1,4 @@
-"""game.state：处理后形态（D1 状态两面的"处理后"面，docs/P0-影响边界.md）。
+"""game.state：处理后形态（D1 状态两面的"处理后"面，docs/contract/P0-影响边界.md）。
 
 world 把 game.raw.RawGameState 适配成 GameState：
 - alliance + type → Owner 枚举（矿脉/气井/装饰物按 TYPE 判 neutral 并过滤）

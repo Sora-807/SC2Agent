@@ -15,7 +15,7 @@ from game import Operation
 from driver.sc2_adapter import SC2GamePort
 from sc2.data import Difficulty, Race
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "driver_check.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "driver_check.log"
 
 
 def log(msg: object) -> None:

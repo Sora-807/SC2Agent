@@ -336,7 +336,7 @@ def test_cycle_without_exit_rejected():
 def test_cycle_with_exit_strategy_accepted():
     """环的出口可以是 exit_strategy，不必是出环 edge。
 
-    docs/tank_marine_push.yaml 的蛙跳环没有任何出边，只靠 exit_strategy ARRIVED 出环；
+    docs/data/tank_marine_push.yaml 的蛙跳环没有任何出边，只靠 exit_strategy ARRIVED 出环；
     若把"必须有出环 edge"当规则，会误杀真机验过的样例（见 test_tank_marine_push）。
     """
     m = parse_strategy(VALID)  # s1→s1 自环 + exit_strategy TIMEOUT

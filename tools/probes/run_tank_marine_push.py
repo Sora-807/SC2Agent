@@ -37,8 +37,8 @@ from sc2.data import Difficulty, Race
 from tactical_map import instantiate_spawn, load_ladder_map, spawn_layout_nearest
 from world.adapter import adapt
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "full_flow_tank.log"
-_DOC = Path(__file__).resolve().parents[2] / "docs" / "tank_marine_push.yaml"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "full_flow_tank.log"
+_DOC = Path(__file__).resolve().parents[2] / "docs" / "data" / "tank_marine_push.yaml"
 _DATA = yaml.safe_load(_DOC.read_text(encoding="utf-8"))
 
 

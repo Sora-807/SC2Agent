@@ -5,7 +5,7 @@ BARRACKS(3×3) 的可建造性，输出出生点 + 可建造点（世界坐标 +
 供 authoring modules/tactical_map/data/ladder_map 的固定有序建造位。
 
 跑：uv run python run_slot_scan.py
-输出：docs/slot_scan.log + 控制台。
+输出：docs/evidence/slot_scan.log + 控制台。
 """
 import sys
 from pathlib import Path
@@ -20,7 +20,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2 as SC2Point2
 
 OUT_SUFFIX = sys.argv[1] if len(sys.argv) > 1 else ""  # 输出文件名后缀（多次跑不互相覆盖）
-LOG = Path(__file__).resolve().parents[2] / "docs" / f"slot_scan{OUT_SUFFIX}.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / f"slot_scan{OUT_SUFFIX}.log"
 
 
 def log(msg: object) -> None:

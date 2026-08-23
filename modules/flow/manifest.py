@@ -316,7 +316,7 @@ def _validate_graph(m: StrategyManifest, err) -> None:
        声明了却永不执行的 step 是死配置（需求文档红线"不静默"），LLM 生成时高频产孤岛。
     2. **环必须有出口**：每个环（SCC，含自环）至少要有一个出口 ——
        指向环外的 edge，**或**环内任一 step 的 exit_strategy。
-       注意 docs/tank_marine_push.yaml 的蛙跳环没有任何出边，靠 tank_hop/inf_hop 的
+       注意 docs/data/tank_marine_push.yaml 的蛙跳环没有任何出边，靠 tank_hop/inf_hop 的
        exit_strategy ARRIVED 出环；只查出边会误杀真机验过的样例。
        loop_limits.max_step_transitions 是**意外死循环的兜底，不算合法出口**（ADR-0021 反例）。
     """

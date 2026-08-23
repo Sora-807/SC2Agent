@@ -252,7 +252,7 @@
 - **影响**：god files 到了"动一下碰 900 行闭包、下一个人不敢重构"的程度；真实 bug 让
   UI/agent 拿假数据（网格陈旧、进度条永远 0%、诊断 wall_ms 是假的）；死代码与"不静默"
   红线精神相悖——抓得严的是语义死路，没清的是词法死代码。
-- **候选方案**：全部 file:line + 拆分蓝图见 [`newdocs/REFACTOR.md`](REFACTOR.md)。按优先级——
+- **候选方案**：全部 file:line + 拆分蓝图见 [`docs/REFACTOR.md`](REFACTOR.md)。按优先级——
   ① **P0 修 bug**：producer 网格 diff + progress 真值 + observe 改用 `STATUS_*` 常量 +
     CC 供给中央化（四条，不是清理是修 bug）。
   ② **P1 god file 拆分**：`app.py` 按路由组拆 routes/ + `state.py`；`runtime.py` 抽
@@ -271,7 +271,7 @@
   会话启动时按 `?strategy=<id>` 装配（`modules/api/session.py:156-157` `parse_strategy`），
   跑起来后 step/branch/装配固定，换策略只能写新 `strategies/<id>.yaml` → 起新会话装配。
   I14 已把"策略文件可读写"落地但明示"热改不存在 = 免审下的安全边界"。ADR-0013/0014
-  （docs（旧））有 hot-swap/多实例状态保留设计但属未来 B15，未建。
+  （docs/adr/ 与 docs/spec/）有 hot-swap/多实例状态保留设计但属未来 B15，未建。
 - **影响**：局中"机枪不够该多出坦克"→ 提案改生产队列 ✅；局中"该从防守切进攻"→
   改不了 ❌。生产动态 vs 战术静态是个断层——Agent（及人）局中只能调"造什么"，
   调不了"部队怎么动"。侦查到对面出飞要转防空，能改生产多造对空，但"部队行为切换"

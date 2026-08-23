@@ -1,7 +1,7 @@
 """view.strategies：策略文件存储（二十七轮用户拍板「开放写策略，免审」）。
 
 策略从此是**文件**：`runtime/strategies/<id>.yaml`，一份文件两段（与
-docs/tank_marine_push.yaml 同形）：
+docs/data/tank_marine_push.yaml 同形）：
 
 ```yaml
 strategy:

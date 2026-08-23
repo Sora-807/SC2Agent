@@ -53,7 +53,7 @@ def test_inline_strategies_compile_and_engine_constructs():
 
 
 def test_tank_push_script_uses_repo_sample():
-    """run_tank_marine_push 直接吃 docs/tank_marine_push.yaml（含 definitions），必须能编译。"""
+    """run_tank_marine_push 直接吃 docs/data/tank_marine_push.yaml（含 definitions），必须能编译。"""
     mod = _import("run_tank_marine_push")
     st = parse_strategy(mod._strategy_yaml())
     assert st.id == "tank_marine_push"

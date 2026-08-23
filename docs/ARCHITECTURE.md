@@ -4,7 +4,7 @@
 > 基线：后端 **614 passed** / 前端 **96 passed / 9 files**（后续任务以此为准不许下降；
 > B12+B13 落地后后端 619 / 前端 131）。
 > 本文档是**当前仓库的完整快照描述**：模块、职责、依赖、契约、数据流、运行方式、真机状态。
-> 配套文档：newdocs/PLAN.md（后续计划，F10-F14 / B12-B14 及后端剩余事项）。
+> 配套文档：docs/PLAN.md（后续计划，F10-F14 / B12-B14 及后端剩余事项）。
 
 ---
 
@@ -57,8 +57,8 @@ sc2Agent/
 │   └── src/api/            #   命令/提案/会话 HTTP 客户端
 ├── tests/                  # 后端 pytest（architecture/driver/flow/game/view/api/agent/...）
 ├── docs/                   # 需求文档 + 计划 + ADR（当前）
-├── docs（旧）/             # 旧 ADR（被 v0.1 部分取代）
-├── newdocs/                # 交接文档（本文件 + PLAN.md）
+├── docs/             # 旧 ADR（被 v0.1 部分取代）
+├── docs/                # 交接文档（本文件 + PLAN.md）
 ├── runtime/                # 运行时数据（提案日志、agent 工作区；gitignore）
 ├── traces/                 # agentic 的 trace 输出（gitignore）
 └── .env                    # LLM 密钥（gitignore；本地测试用）

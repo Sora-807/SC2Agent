@@ -1,9 +1,9 @@
 """world 适配层：RawGameState → GameState。
 
-职责（docs/需求文档-v0.1.md §1；docs/P0-影响边界.md D1）：
+职责（docs/contract/需求文档-v0.1.md §1；docs/contract/P0-影响边界.md D1）：
 - 字段对齐：health→hp、health_max→hp_max、alliance+type→Owner 枚举、orders adapt。
 - 按 TYPE 判 neutral：矿脉/气井/装饰物（alliance=3 但非 enemy）过滤出 GameState.units
-  （flow 的 enemy_count_near 不会误数矿脉；见 docs/driver_spike.md alliance 二义）。
+  （flow 的 enemy_count_near 不会误数矿脉；见 docs/reference/driver_spike.md alliance 二义）。
 - V1 no-op：position/creep/visibility/map_size 透传（spike 已证左下原点 + dims 对齐）。
 - 稳定 type_name / ability 映射留 catalog（V1 透传 burnysc2 名）。
 - 规则层（power/addon via mechanics.LayerComputer）D11 后加（届时 adapt 需注入 mechanics）。
@@ -68,7 +68,7 @@ def adapt(raw: RawGameState) -> GameState:
     """RawGameState → GameState（V1：过滤 neutral + 字段对齐 + 透传）。
 
     中性资源（矿脉/气井）不进 units（flow 谓词不数它们），拆到 resources：
-    WorkerAllocator / 生产约束需要节点位置（docs/test-plan.md world 节 resource_nodes）。
+    WorkerAllocator / 生产约束需要节点位置（docs/contract/test-plan.md world 节 resource_nodes）。
     """
     units = [adapt_unit(u) for u in raw.units if not is_neutral_resource(u.type_name)]
     resources = [adapt_unit(u) for u in raw.units if is_neutral_resource(u.type_name)]

@@ -30,7 +30,7 @@ from sc2.data import Difficulty, Race
 from tactical_map import instantiate_spawn, load_ladder_map, spawn_layout_nearest
 from world.adapter import adapt
 
-LOG = Path(__file__).resolve().parents[2] / "docs" / "tank_production_check.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "tank_production_check.log"
 
 
 def log(msg: object) -> None:

@@ -23,7 +23,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2 as SC2Point2
 
 OUT_SUFFIX = sys.argv[1] if len(sys.argv) > 1 else ""  # 输出文件名后缀（多次跑不互相覆盖）
-LOG = Path(__file__).resolve().parents[2] / "docs" / f"factory_slot_scan{OUT_SUFFIX}.log"
+LOG = Path(__file__).resolve().parents[2] / "docs" / "evidence" / f"factory_slot_scan{OUT_SUFFIX}.log"
 
 
 def log(msg: object) -> None:

@@ -1,6 +1,6 @@
 """game 模块：全项目共享地基（唯一零依赖模块；不 import sc2，红线 R2/ADR-0001）。
 
-业务职责（docs/需求文档-v0.1.md §1 模块表；ADR-0002）：
+业务职责（docs/contract/需求文档-v0.1.md §1 模块表；ADR-0002）：
 - geometry：坐标/网格原语（左下原点约定）
 - raw：SC2 原生形态状态（driver 产、world 消费）
 - state：处理后形态状态（world 产、flow/constraint/planner 消费）

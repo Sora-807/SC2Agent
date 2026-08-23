@@ -14,7 +14,7 @@ __pycache__/
 
 # 运行产物（run_*.py 生成；trace fixture 缺则自动 skip，重新生成见 run_recorder.py）
 *.log
-docs/state_trace.jsonl
+docs/evidence/state_trace.jsonl
 
 # OS
 Thumbs.db

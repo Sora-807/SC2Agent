@@ -1,4 +1,4 @@
-"""game.production：生产队列 schema（docs/P0-影响边界.md「生产模块安排」）。
+"""game.production：生产队列 schema（docs/contract/P0-影响边界.md「生产模块安排」）。
 
 生产 = 运行时线性 build/train/research/assign_workers 队列，按序消费。
 QueueItem 是队列项；placement 用抽象标记（PlacementExact/PlacementInRegion），

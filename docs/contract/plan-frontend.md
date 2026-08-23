@@ -3,7 +3,7 @@
 > 目标:把"看不见的运行时"变成可看、可拖时间、可和 agent 商量的工作台;前端零规则复算。
 > 基线:后端无任何服务层(全仓库 0 处 fastapi/ws);flow 运行时状态全是私有字段;planner 投影曲线已可直接画图。
 > 关联:`docs/plan-backend-view.md`(后端配套任务)、`docs/需求文档-v0.1.md`(红线 R1-R8)、`docs/P0-影响边界.md`、
->       `docs（旧）/adr/0017/0022/0023/0024/0025`(UI 构想来源,本文件按代码现状取舍)。
+>       `docs/adr/0017/0022/0023/0024/0025`(UI 构想来源,本文件按代码现状取舍)。
 > 并行前提:`docs/plan-strategy-dsl-v02.md` 正在执行(T1-T6 重写 flow/allocator/predicates/engine/manifest/runtime)。
 >          **F0-F6 对后端零依赖**(跑在自己定义的夹具上),因此本计划可与 DSL 重构同时进行。
 

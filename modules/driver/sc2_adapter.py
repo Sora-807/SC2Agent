@@ -230,7 +230,7 @@ def _t_focus_fire(op, find_unit, catalog=None):
 
 
 def _t_siege(op, find_unit, catalog=None):
-    # 架起后实体 type_id 由 SIEGETANK 变 SIEGETANKSIEGED（真机观测，见 docs/siege_probe.log）：
+    # 架起后实体 type_id 由 SIEGETANK 变 SIEGETANKSIEGED（真机观测，见 docs/evidence/siege_probe.log）：
     # flow 计数需经 T3 形态变体归一化（catalog variants 反查）才能仍算作 SIEGETANK 组。
     # 无具名 Unit 方法 → 走 __call__(AbilityId)，与挂件 BUILD_REACTOR 同路径。
     return [u(AbilityId.SIEGEMODE_SIEGEMODE) for u in _units(op, find_unit)]
@@ -266,7 +266,7 @@ def _t_build(op, find_unit, catalog=None):
     type_id = _resolve_type_id(op.params["type"], catalog)
     # 挂件（REACTOR/TECHLAB）：game_data 里 creation_ability 为 None，build() 静默返回 False；
     # 需直接发通用 BUILD_REACTOR/BUILD_TECHLAB 能力（catalog build_ability），由母建筑自建、
-    # SC2 吸附到右下 2×2。真机踩坑（trace 见 docs/full_flow.log）：per-parent 拼名
+    # SC2 吸附到右下 2×2。真机踩坑（trace 见 docs/evidence/full_flow.log）：per-parent 拼名
     # BUILD_REACTOR_BARRACKS 被接受、扣钱、订单常驻却永不产实体——通用能力才有实体产出。
     entry = catalog.by_burnysc2_name(type_id.name) if catalog is not None else None
     if entry is not None and "addon" in entry.capabilities:
@@ -477,7 +477,7 @@ class SC2GamePort:
     def start(self, request_id: str) -> None:
         bot = self._bot_cls()
         # burnysc2 现代模式：unit 方法返回 UnitCommand，由我们的 do() 统一下发。
-        # 默认旧式直发路径返回 bool、do(True) 被静默忽略——挂件建造真机踩坑（trace 见 docs/full_flow.log）。
+        # 默认旧式直发路径返回 bool、do(True) 被静默忽略——挂件建造真机踩坑（trace 见 docs/evidence/full_flow.log）。
         bot.unit_command_uses_self_do = True
         bot._sink = self._sink
         bot._op_queue = self._op_queue

@@ -2,7 +2,7 @@
 
 > 本文记录「三个并行审查 → 修复批次 → WS 断线 → F14 全链 → I5/I6 → F15-F19 → 用户四轮反馈」
 > 这一执行轮的工作、决策与发现。
-> 承接：newdocs/PLAN.md（计划）、newdocs/ARCHITECTURE.md（架构）、newdocs/ISSUES.md（问题清单）。
+> 承接：docs/PLAN.md（计划）、docs/ARCHITECTURE.md（架构）、docs/ISSUES.md（问题清单）。
 > 每节最后标了哪些 ISSUES/红线被关闭。
 
 ## 0. 提交清单（本执行轮，按时间序）
@@ -22,6 +22,26 @@
 | `e13ca82` | R1 god file 拆分：app.py 998→薄装配+state.py+routes/×11；manifest.py validate_strategy 分段（REFACTOR G1/G3）|
 | `1316232` | R2 god file 拆分收尾：runtime.py 948→564 编排+flights.py 336（Mixin）+placement.py 98（纯函数）（REFACTOR G2）|
 
+## 0.35 三十一轮：三文档目录合一 docs/（分类收纳 + 内容修剪）（2026-08-23，未提交）
+
+用户拍板「合并成一个文件夹 + 分类 + 保留精华、删否决/无意义」：
+
+1. **布局**：`newdocs/` + `docs/` + `docs（旧）/` → 一个 `docs/`——根层 = 现行
+   （ARCHITECTURE/PLAN/WORKLOG/ISSUES/AGENT-LOOP/REFACTOR/DOCS），子目录六分类：
+   `contract/`（plan-frontend 等五份活性契约）、`adr/`（八份：现行 0029/0030 +
+   历史精华六份）、`spec/`（Flow v0.2 schema 契约六份+README）、`reference/`
+   （设计语言/driver spike）、`data/`（game_data_dump/tank_marine_push），
+   `evidence/`（三份代码引用的真机证据日志；探针新输出也改落这里）。
+2. **内容修剪**：删 `模块审查.md`（被 REFACTOR.md 审计取代）与
+   `issues-flow-production.md`（被 ISSUES.md 取代）——5 处代码引用同步改写
+   （其中两处本就是陈旧指针：经济维持器早已落地 ADR-0030）。契约/ADR/spec
+   **不修剪**：它们是活性真相源，修剪只发生在被取代层。
+3. **路径同步**：31 个代码文件 + 16 个探针脚本（含 parts 形式常量与误归校正）+
+   .gitignore + docs 内部 11 个文件的 newdocs/（旧）指向，全部对齐新布局；
+   `DOCS.md` 重写为合并后地图（逐份保留理由 + 删除可追）。
+- 回归：后端 **769/4s**、前端 **361/26** + tsc 0（test_tank_marine_push 吃
+  docs/data/ 新路径过）。
+
 ## 0.34 三十轮：R2 收尾 + 文档收归 + 根目录清理（2026-08-23，未提交）
 
 用户拍板「继续推进 + 文档收归 + 根目录清理」：
@@ -31,13 +51,13 @@
    `placement.py` 98（解析纯函数化）。三个 god file 全部拆完。
 2. **文档收归（开放清单 #9 关闭，按 2026-08-23 审计的 4 步计划执行）**：
    - 删 superseded 36 份 tracked：docs/ 的 4 份旧计划（plan-agent/planner/step-tank/
-     strategy-dsl-v02）+ 4 张探针截图；docs（旧）/ 的 22 份旧 ADR（0001-0012/0015-0023/
+     strategy-dsl-v02）+ 4 张探针截图；docs/ 的 22 份旧 ADR（0001-0012/0015-0023/
      0025-0026）+ plan/ 全部 + 重构共识总览 + adr/README。
    - 删 docs/ 未跟踪扫描日志 41 个：一次性 slot/scan/probe 输出；**保留 3 个被代码
      注释引用为真机证据的**（full_flow.log / bare_addon.log / slot_scan.log）。
    - 保留原则 = 活性引用驱动：docs/ 留 10 份（契约真相源 plan-frontend/需求文档/
      game_data_dump/tank_marine_push.yaml/现行 ADR 0029+0030 等，逐份理由见
-     [`DOCS.md`](DOCS.md) 新文档地图）；docs（旧）/ 留 spec 6 份（Flow v0.2 schema
+     [`DOCS.md`](DOCS.md) 新文档地图）；docs/ 留 spec 6 份（Flow v0.2 schema
      契约）+ ADR 6 份（0006§7-9/0013/0014/0024/0027/0028）。
    - 修正 2 处过期指针（`docs/测试计划.md` → `docs/test-plan.md`）。
 3. **根目录清理**：`traces/`（8-21 的 6 份旧运行轨迹，215K，gitignored 临时）删；
@@ -589,7 +609,7 @@ agent 只需遵守"哪个路径写什么格式"，钩子按路径分类校验。
 
 ## 0.15 ChatDock 设计改版 + 双主题落地（2026-08-22 用户四轮反馈，未提交）
 
-**ChatDock 按设计参考文档重构**（newdocs/前端对话框设计指导参考.md，提炼自
+**ChatDock 按设计参考文档重构**（docs/前端对话框设计指导参考.md，提炼自
 deepseek-harness）：不对称布局（用户=右对齐圆角气泡，agent=全宽纯文本无容器；
 无头像无角色标签）；思考链=内联折叠灰字行（Think·首行摘要→缩进全文）；工具
 调用=全宽单行折叠（工具名·参数摘要·耗时→展开 IN/OUT 圆角卡，失败 OUT 红字）；
@@ -1229,7 +1249,7 @@ P4 复盘记录列表（ViewRecorder 落盘接 registry）+ flow 装配定位（
   旧代码 `[...entries].sort()[0]` 按**字符串**排，"id:10" < "id:9" —— 10s 的 started 会被 9s 的抢先闭合。
   现在 `toLanes` 按数值排。
 - 卡点是时间点：一条红色竖线贯穿全部泳道（叠加层），与曲线里的红色虚线同一条轴。
-- 验收截图：`newdocs/I5-projection-board-verify.png`（含像素级对齐测量：泳道轨道与 uPlot 绘图区
+- 验收截图：`docs/I5-projection-board-verify.png`（含像素级对齐测量：泳道轨道与 uPlot 绘图区
   左边缘 x 均为 146.8，7 条卡点竖线两侧偏差均 < 1px）。
 
 **I6 首帧等待横幅**（ISSUES I6 关闭）：

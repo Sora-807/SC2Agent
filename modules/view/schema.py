@@ -1,6 +1,6 @@
 """view.schema：ViewFrame v0.1 数据模型（契约 rev 2）。
 
-**唯一真相源是 `docs/plan-frontend.md` §2**（消费方定义、本模块实现）。字段名必须逐字一致 ——
+**唯一真相源是 `docs/contract/plan-frontend.md` §2**（消费方定义、本模块实现）。字段名必须逐字一致 ——
 前端有 zod 逐字段校验，任何改名都会在那里当场炸，而不是变成静默的 undefined。
 
 依赖红线：本文件**只依赖 game**（几何/枚举），不 import flow/production/planner/tactical_map。

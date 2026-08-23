@@ -16,7 +16,7 @@ from driver.recorder import StateRecorder
 from driver.sc2_adapter import SC2GamePort
 from sc2.data import Difficulty, Race
 
-TRACE = Path(__file__).resolve().parents[2] / "docs" / "state_trace.jsonl"
+TRACE = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "evidence" / "state_trace.jsonl"
 
 
 def main() -> None:

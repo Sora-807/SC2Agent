@@ -21,7 +21,7 @@ from game import GameState, Grid, Owner, Point2, Unit
 
 CAT = load_all()
 
-_DOC = Path(__file__).resolve().parent.parent.parent / "docs" / "tank_marine_push.yaml"
+_DOC = Path(__file__).resolve().parent.parent.parent / "docs" / "data" / "tank_marine_push.yaml"
 _DATA = yaml.safe_load(_DOC.read_text(encoding="utf-8"))
 # 测试用近目标（2 轮可达：0 → 10.4 → 20.8，距 [20,0] 0.8 < 8）；yaml 默认 [127.5,119.5] 留真机
 _DATA["assembly"]["strategy_instances"][0]["params"]["target"] = [20.0, 0.0]

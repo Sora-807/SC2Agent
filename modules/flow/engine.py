@@ -222,7 +222,7 @@ class FlowEngine:
         如果 UI 直接依赖私有字段，之后任何重构都会打断 UI。这里是唯一的观测出口。
 
         返回**普通 dict**（不是 view 的 dataclass）：flow 不认识 view，架构测试锁死这个方向。
-        键名与 `docs/plan-frontend.md` §2 的 StrategyView 对齐，由 view.adapt 显式映射。
+        键名与 `docs/contract/plan-frontend.md` §2 的 StrategyView 对齐，由 view.adapt 显式映射。
         """
         now = self._last_game_time
         entered = self._step_entered
@@ -355,7 +355,7 @@ def _allocator_snapshot(alloc) -> list[dict]:
         raise TypeError(
             f"注入的 allocator（{type(alloc).__name__}）缺 snapshot()："
             "flow 的读模型要靠它给出 composition/current/refill_state/leased_tags"
-            "（契约 frame/flow.groups；见 docs/plan-backend-view.md B1）"
+            "（契约 frame/flow.groups；见 docs/contract/plan-backend-view.md B1）"
         )
     return snap()
 
