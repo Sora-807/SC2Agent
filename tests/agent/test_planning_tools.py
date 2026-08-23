@@ -112,10 +112,23 @@ def test_read_module_unknown_ref_is_readable(tools):
     assert "list_modules" in call(tools["read_module"], {"ref": "nope"})
 
 
-def test_read_current_strategy_is_yaml(tools):
-    out = run(tools["read_current_strategy"])
-    assert "strategy" in out and "```yaml" in out
-    assert "sandbox_hold" in out and "assembly" in out
+def test_strategy_lib_readable_via_api(tmp_path):
+    """read_current_strategy 已退役（2026-08-23）：策略内容 = 文件。
+    模板库 _lib 有专用只读端点（会话装配/agent 文件树共用同一份）。"""
+    import shutil
+
+    # api fixture 没挂 strategies_dir（内存态）—— 这里单独建一个带 _lib 的 app
+    from flow.templates import SEED_LIB_PATH
+
+    lib_src = SEED_LIB_PATH
+    dst = tmp_path / "strategies"
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy(lib_src, dst / "_lib.yaml")
+    api = TestClient(create_app(tmp_path / "frames", tmp_path / "p.jsonl",
+                                strategies_dir=dst))
+    client = _client_for(api)
+    text = client.strategy_lib_text()
+    assert "step_templates" in text and "gather" in text
 
 
 # ---------------- transport 层 ----------------

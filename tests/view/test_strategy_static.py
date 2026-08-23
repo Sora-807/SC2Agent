@@ -133,8 +133,13 @@ def test_readability_fields_forwarded():
     s = strategy_static(parse_strategy(zh_strategy), parse_assembly(zh_assembly))
     assert s.display_name_zh == "探针策略"
     assert s.description_zh == "验证转发"
-    assert s.reasons == {"READY": "就绪", "LOOP": "回环", "DONE": "完成"}
+    # rev 15（ADR-0031 同批）：reasons = REASON_ZH 默认表 ∪ 策略覆盖（只写增量，
+    # 同名覆盖默认 —— READY 被"就绪"覆盖、LOOP 是策略自有词、默认词 FORMED 不写也有）
+    assert s.reasons["READY"] == "就绪" and s.reasons["LOOP"] == "回环"
+    assert s.reasons["DONE"] == "完成"      # 与默认表同文案（覆盖前后一致）
+    assert s.reasons["FORMED"] == "成型"    # 默认表透出
     assert s.group_names == {"G1": "步兵组"}
+    assert s.imported == []                 # 手写策略没有 imports
     assert s.steps[0].display_name_zh == "甲"
     assert s.steps[1].display_name_zh == ""  # 没写 = 空串，不是 KeyError
     d = to_json(s)

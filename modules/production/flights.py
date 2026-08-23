@@ -205,7 +205,8 @@ class BuildFlightsMixin:
                 return u
         return None
 
-    def _try_build_addon(self, head: QueueItem, q_name: str, gs: GameState) -> str:
+    def _try_build_addon(self, head: QueueItem, q_name: str, gs: GameState,
+                        q_index: int | None = None) -> str:
         """挂件：母建筑自建（builder = 母建筑，非 SCV）；SC2 把挂件吸附到右下 2×2。"""
         res = check_addon(gs, self._catalog, head.type)
         if not res.ok:
@@ -225,6 +226,7 @@ class BuildFlightsMixin:
             "type": head.type,
             "builder": parent.tag,
             "frames": 0,
+            "from_index": q_index,   # B3：来源队列序号（observe 答"执行到第几项"）
             "attempted": set(),
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_addon_reported(parent),  # 并行挂件也按位置确认（防互认）
@@ -303,7 +305,8 @@ class BuildFlightsMixin:
                      <= NODE_RADIUS ** 2]
         return next((u for u in nodes if not _taken(u)), None)
 
-    def _try_build_gas(self, head: QueueItem, q_name: str, gs: GameState) -> str:
+    def _try_build_gas(self, head: QueueItem, q_name: str, gs: GameState,
+                      q_index: int | None = None) -> str:
         """气矿：SCV 把精炼厂建在空闲气井上（build_gas 动作，target = 气井 Unit）。"""
         res = check_gas(gs, self._catalog, head.type)
         if not res.ok:
@@ -325,6 +328,7 @@ class BuildFlightsMixin:
             "type": head.type,
             "builder": builder.tag,
             "frames": 0,
+            "from_index": q_index,   # B3：来源队列序号
             "attempted": set(),
             "attempted_geysers": {geyser.tag},  # P4：重试要换井，不能重撞同一口
             "seen_tags": self._type_entity_tags(gs, head.type),

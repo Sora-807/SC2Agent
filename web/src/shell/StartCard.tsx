@@ -12,7 +12,9 @@ import { T } from "./tokens";
 export function StartCard() {
   const { api, probe } = useFrames();
   const { info, mapPlans, mapPlanId, setMapPlanId,
-          strategies, strategyId, setStrategyId, confirming, start } = useSessionStore();
+          strategies, strategyId, setStrategyId,
+          loadouts, loadoutId, setLoadoutId,
+          confirming, start } = useSessionStore();
 
   if (!api.ok) {
     return (
@@ -37,6 +39,25 @@ export function StartCard() {
           一个会话 = 一个 SC2 游戏进程（不允许多开，后端也会拒绝）。
           启动后自动接入驾驶画面；从「启动」到首帧约需 1-2 分钟。
         </div>
+
+        {loadouts && loadouts.length > 0 && (
+          <label className="mb-3 flex items-center gap-2">
+            <span className={T.label + " text-dim"}>装配清单</span>
+            <select
+              value={loadoutId ?? ""}
+              onChange={(e) => setLoadoutId(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-l2 bg-inset px-2 py-1 text-label"
+              title="loadout：地图规划 + 策略 + 生产序列（自动入队）一发入魂；选中时下方两项不生效"
+            >
+              <option value="">（手动挑下面两项）</option>
+              {loadouts.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.title_zh}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {mapPlans && mapPlans.length > 0 && (
           <label className="mb-3 flex items-center gap-2">

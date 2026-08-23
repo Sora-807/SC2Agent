@@ -109,3 +109,64 @@ def test_copy_respects_lock_and_renames_inner_id(client: TestClient):
     assert doc["strategy"]["id"] == "cp"     # 内层 id 跟文件名走（转储里不残留旧名）
     assert client.put("/api/strategies/cp/doc", json={
         "strategy": doc["strategy"], "assembly": doc["assembly"]}).json()["ok"] is True
+
+
+def test_lib_is_locked_and_not_a_strategy(client: TestClient, tmp_path: Path):
+    """`_lib.yaml`（ADR-0031）：模板库不是策略 —— 清单里没有它；id 规则挡住
+    `_` 前缀的建/存；但 `GET /api/strategies/_lib` 能读原文（store 会播种种子库）。"""
+    rows = client.get("/api/strategies").json()
+    assert all(not r["id"].startswith("_") for r in rows)
+    r = client.get("/api/strategies/_lib")
+    assert r.status_code == 200        # store 启动时播种了出厂种子
+    assert "step_templates" in r.json()["text"]
+    assert client.post("/api/strategies", json={"id": "_lib"}).status_code == 400
+    assert client.put("/api/strategies/_lib/doc", json=VALID_DOC).status_code == 404
+
+
+IMPORT_DOC = {
+    "strategy": {
+        "id": "lib_rush", "version": 1, "group_slots": ["main"],
+        "params": {"min_units": {"type": "int", "default": 6}},
+        "variables": {},
+        "initial_step": "gather",
+        # ADR-0031：imports 引用模板库 —— 键名即 step_id，绑定值可桥接策略级参数
+        "imports": {"gather": {"from": "_lib", "template": "gather",
+                               "params": {"min_units": {"param": "min_units"}}}},
+        "steps": [{"step_id": "finish", "branches": [
+            {"do": [{"op": "exit_strategy", "kind": "done", "reason": "DONE"}]}]}],
+        "edges": [{"from": "gather", "to": "finish", "kind": "done", "reason": "FORMED"}],
+    },
+    "assembly": {
+        "id": "lib_rush_asm",
+        "groups": [{"group_id": "G1", "composition":
+                    {"terran/marine": {"min": 4, "target": 6, "max": 8}}}],
+        "strategy_instances": [{"instance_id": "s1", "strategy_ref": "lib_rush",
+                                "bindings": {"main": "G1"}, "params": {}}],
+    },
+}
+
+
+def test_save_with_imports_needs_lib(tmp_path: Path):
+    """带 imports 的策略在**内存态** store（无目录、无播种）里保存：编译红。"""
+    c = TestClient(create_app(tmp_path / "frames", tmp_path / "p.jsonl"))
+    c.post("/api/strategies", json={"id": "lib_rush"})
+    r = c.put("/api/strategies/lib_rush/doc", json=IMPORT_DOC).json()
+    assert r["ok"] is False
+    assert any("imports" in e["text_zh"] or "_lib" in e["text_zh"] for e in r["errors"])
+
+
+def test_store_seeds_lib_and_imports_compile(tmp_path: Path):
+    """出厂种子（modules/flow/data/_lib.yaml）在 store 建目录时播种成工作副本；
+    带 imports 的策略保存通过（展开+全套校验在保存时跑）。"""
+    from view.strategies import LIB_FILENAME, StrategyStore
+
+    from api.session import DEFAULT_ASSEMBLY, DEFAULT_STRATEGY
+
+    store = StrategyStore(tmp_path, seed=(DEFAULT_STRATEGY, DEFAULT_ASSEMBLY))
+    assert (tmp_path / LIB_FILENAME).is_file(), "播种：runtime 副本缺失时从种子拷"
+    assert "gather" in store.templates()
+    store.create({"id": "lib_rush"})
+    r = store.save_doc("lib_rush", IMPORT_DOC)
+    assert r["ok"] is True, r["errors"]
+    m_doc = store.doc("lib_rush")
+    assert "imports" in m_doc["strategy"]      # 转储保留 imports（编辑还在源形态）

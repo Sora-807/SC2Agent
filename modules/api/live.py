@@ -28,6 +28,7 @@ from typing import Any
 
 from view.schema import REV, STATIC_TOPICS
 
+from api.commands import QUEUE_OPS
 from api.session import MAX_STALE_SEQ, StaleObservation
 from api.sources import SourceInfo
 
@@ -52,6 +53,7 @@ class LiveSession:
                  label: str | None = None, python: str | None = None,
                  map_plan: str | None = None,
                  strategy_path: str | None = None,
+                 spawn: str | None = None,
                  record_dir: Path | None = None) -> None:
         self.driver = driver
         self.label = label or (f"真机会话（{map_name}）" if driver == "sc2"
@@ -98,6 +100,21 @@ class LiveSession:
             except OSError:
                 self._rec_fh = None   # 录不了不拦对局：帧流照跑，只是没文件
 
+        # 控制文件通道（B1/C）：sc2 的 stdin 是 DEVNULL（burnysc2 继承管道会挂起），
+        # 命令改经文件 —— append 写、子进程帧边界 rename→读→删（无损）。sim 不用它
+        #（stdin 管道本来就好好的），但通道两条腿都在：真机从此有命令面。
+        self._ctl_lock = threading.Lock()
+        self._ctl_path: Path | None = None
+        if driver == "sc2":
+            import tempfile
+
+            ctl_dir = Path(tempfile.gettempdir())
+            fd, name = tempfile.mkstemp(prefix="sc2agent-ctl-", suffix=".json",
+                                        dir=str(ctl_dir))
+            os.close(fd)
+            self._ctl_path = Path(name)
+            self._ctl_path.unlink(missing_ok=True)   # mkstemp 建的是占位，通道用"存在=有待办"
+
         cmd = [
             python or sys.executable, "-X", "utf8", str(RUNNER),
             "--driver", driver, "--map", map_name, "--seconds", str(seconds),
@@ -109,6 +126,10 @@ class LiveSession:
             cmd += ["--map-plan", str(map_plan)]
         if strategy_path:
             cmd += ["--strategy-file", str(strategy_path)]   # 二十七轮：开放写策略
+        if spawn:
+            cmd += ["--spawn", str(spawn)]                   # B1：loadout 的出生点布局
+        if self._ctl_path is not None:
+            cmd += ["--control-file", str(self._ctl_path)]
         # 真机发现：`stdin=PIPE` 且保持打开会让 SC2 挂起（burnysc2 启动的 SC2 进程
         # 继承了打开的 stdin 管道句柄）。给 stdin 发 EOF（关闭写端）即可解除 ——
         # 但那样命令也写不进去了。所以：sim 用 PIPE（命令走 stdin），
@@ -214,6 +235,9 @@ class LiveSession:
     def _frame(self, frame: dict) -> None:
         with self._lock:
             if frame.get("topic") in STATIC_TOPICS:
+                # 同 topic 的静态帧**替换**而不是并列（热切换策略会重发 static/strategy；
+                # latest_at 的 setdefault 是首帧优先，并列会让旧图永远遮住新图）
+                self._statics = [f for f in self._statics if f["topic"] != frame["topic"]]
                 self._statics.append(frame)
             self.frames.append(frame)
             if len(self.frames) > FRAME_BUFFER:
@@ -330,18 +354,28 @@ class LiveSession:
     def _send(self, obj: dict) -> None:
         if self.proc.poll() is not None:
             raise RuntimeError(f"会话已结束（{self.state}）：{self.error or '子进程已退出'}")
+        if self._ctl_path is not None:
+            self._send_control(obj)     # sc2：stdin 是 DEVNULL，命令走控制文件
+            return
         if self.proc.stdin is None:
             raise RuntimeError("该会话没有 stdin 命令通道（sc2 驱动；写面只有 op 队列）")
         assert self.proc.stdin is not None
         self.proc.stdin.write(json.dumps(obj, ensure_ascii=False) + "\n")
         self.proc.stdin.flush()
 
+    def _send_control(self, obj: dict) -> None:
+        """sc2 的命令通道：append 一行 JSON 到控制文件（子进程帧边界 rename→读→删）。"""
+        assert self._ctl_path is not None
+        with self._ctl_lock:
+            with self._ctl_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
     def queue_op(self, op: str, name: str, *, items: list | None = None,
                  index: int | None = None, order: list[int] | None = None) -> dict:
         from view.proposals import item_to_json
 
-        if op not in ("submit", "append", "prepend", "clear", "remove", "reorder"):
-            raise ValueError(f"未知队列 op {op!r}（submit|append|prepend|clear|remove|reorder）")
+        if op not in QUEUE_OPS:
+            raise ValueError(f"未知队列 op {op!r}（{'|'.join(sorted(QUEUE_OPS))}）")
         self._send({
             "op": "queue", "kind": op, "name": name,
             "items": [item_to_json(i) for i in (items or [])],
@@ -349,11 +383,23 @@ class LiveSession:
         })
         # 命令在**下一个帧边界**生效，所以这里回报的是"已送达"而不是"已生效"。
         # 前端据此显示 pending，等下一帧的 frame/production 确认。
-        return {"queue": name, "dispatched": True, "accepted_seq": self.seq}
+        # B7 shape 统一：与 OfflineSession 同键 —— items = 这条命令携带的项数
+        #（真身在子进程里，父进程只有帧；剩余长度等下一帧看 frame/production）。
+        return {"queue": name, "items": len(items or []), "accepted_seq": self.seq}
 
     def set_worker_target(self, task: str, count: int) -> dict:
         self._send({"op": "workers", "task": task, "count": int(count)})
-        return {"task": task, "quota": int(count), "dispatched": True, "accepted_seq": self.seq}
+        return {"task": task, "quota": int(count), "accepted_seq": self.seq}
+
+    def swap_strategy(self, strategy_file: str) -> dict:
+        """热切 V1（批 C）：把 swap 命令发进子进程通道（stdin / sc2 走控制文件）。
+
+        帧边界应用；约束校验在子进程侧跑（引擎 swap_strategy 先校验后变更），
+        失败 → error 控制行 → `_note_error`，会话继续跑旧策略。
+        """
+        self._send({"op": "swap", "strategy": str(strategy_file)})
+        return {"swap": "dispatched", "strategy": Path(strategy_file).stem,
+                "accepted_seq": self.seq}
 
     def tick(self) -> None:
         """手动步进一次 = 等一帧。子进程按墙钟自推，父进程的 `tick` 只是"等到新帧"。
@@ -462,6 +508,10 @@ class LiveSession:
             self._send({"op": "stop"})
         except (RuntimeError, OSError, ValueError):
             pass
+        # 控制文件通道收尾：unlink 掉（无论子进程有没有消费完，会话都停了）
+        if self._ctl_path is not None:
+            self._ctl_path.unlink(missing_ok=True)
+            self._ctl_path.with_suffix(".pending").unlink(missing_ok=True)
         try:
             self.proc.wait(timeout=STOP_GRACE)
         except subprocess.TimeoutExpired:

@@ -138,7 +138,8 @@ class OfflineSession:
     def __init__(self, catalog: Catalog, *, workers: int = 12, minerals: float = 400.0,
                  label: str = "离线沙盒（真引擎 + 假世界）",
                  map_plan: str | None = None,
-                 strategy_path: str | None = None) -> None:
+                 strategy_path: str | None = None,
+                 spawn: str | None = None) -> None:
         from worldsim import WorldSim
 
         self.catalog = catalog
@@ -152,7 +153,10 @@ class OfflineSession:
         self.world.bootstrap(workers=workers)
         # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
         tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
-        _, layout = sorted(tpl.spawns.items())[0]
+        if spawn and spawn in tpl.spawns:
+            _, layout = spawn, tpl.spawns[spawn]      # B1：loadout 显式选出生点布局
+        else:
+            _, layout = sorted(tpl.spawns.items())[0]
         self.layer = instantiate_spawn(tpl, layout, self.world.cc_pos)
         # I8：预设固定建造点名进 layer —— placement 的 exact.mark 可直接引用
         # （蓝方主矿气井1…）。名字是全图命名空间，与装载哪份规划无关。
@@ -190,13 +194,16 @@ class OfflineSession:
         self.producer = FrameProducer(
             catalog=catalog, engine=self.engine, runtime=self.runtime, keeper=self.keeper,
             ring=self.ring, planner=Planner(catalog), region_layer=self.layer,
-            manifest=self.manifest, assembly=self.assembly, spawn="bl",
+            manifest=self.manifest, assembly=self.assembly, spawn=spawn or "bl",
             frame_source="live", enemy_race="protoss",
             projection_plan=[ProductionModuleInstance(
                 instance_id="m0", module_ref="basic_opening", version=1, params={})],
         )
         self.frames: list[dict] = list(self.producer.statics(self.world.game_state()))
         self._statics = list(self.frames)
+        # 热切 V1（批 C）：swap_strategy() 只置 pending，帧边界（tick 开头）应用 ——
+        # API 线程与 pump 线程不同步地改引擎字段才是真危险。
+        self._swap_pending = None
 
     def _clock(self) -> float:
         return self.world.t
@@ -208,6 +215,21 @@ class OfflineSession:
 
         顺序有语义：建造征用要先落到 lease 表，维持器才知道哪些工兵不能动（ADR-0030 D3.3）。
         """
+        # 帧边界：先应用挂起的热切（批 C）—— 本帧的观察/求值必须基于换完的策略
+        if self._swap_pending is not None:
+            manifest, assembly = self._swap_pending
+            self._swap_pending = None
+            self.engine.swap_strategy(manifest)
+            self.manifest = manifest
+            self.producer.manifest = manifest
+            if assembly is not None:
+                self.assembly = assembly
+                self.producer.assembly = assembly
+            refreshed = next(f for f in self.producer.statics(self.world.game_state())
+                             if f["topic"] == "static/strategy")
+            self.frames.append(refreshed)
+            self._statics = [refreshed if f["topic"] == "static/strategy" else f
+                             for f in self._statics]
         gs = self.world.game_state()
         # 会话协议要求 `game_time` 一直反映「最新一帧」：提案的 anchor/失效判断读它。
         # 必须在这里更新，而不是依赖 producer 的某个调用路径（proposals 可能没接上）。
@@ -285,7 +307,13 @@ class OfflineSession:
 
         `remove`/`reorder` 用**下标**而不是对象引用：HTTP 上传不了对象引用，
         而下标是前端在同一帧看到的东西 —— 配合 `based_on_seq` 的新鲜度门就够安全。
+        `insert`（B2）：index = 剩余队列位置（0=队首前），越界 400。
+        `replace_head`（B2）：原子换队首（remove 未执行队首 + prepend 一步完成）。
         """
+        from api.commands import QUEUE_OPS
+
+        if op not in QUEUE_OPS:
+            raise ValueError(f"未知队列 op {op!r}（{'|'.join(sorted(QUEUE_OPS))}）")
         q = self.runtime.queue(name)
         if op == "submit":
             self.runtime.submit_queue(name, items or [])
@@ -293,6 +321,14 @@ class OfflineSession:
             self.runtime.append(name, items or [])
         elif op == "prepend":
             self.runtime.prepend(name, items or [])
+        elif op == "insert":
+            if index is None:
+                raise ValueError("insert：缺 index（剩余队列位置，0=队首前）")
+            self.runtime.insert(name, index, items or [])
+        elif op == "replace_head":
+            if not items:
+                raise ValueError("replace_head：缺 items（要换上的新队首；清空请用 clear）")
+            self.runtime.replace_head(name, items)
         elif op == "clear":
             self.runtime.clear(name)
         elif op == "remove":
@@ -306,10 +342,19 @@ class OfflineSession:
                 raise ValueError(
                     f"reorder：order 必须是 0..{len(q.items) - 1} 的一个排列，收到 {order}")
             self.runtime.reorder(name, [q.items[i] for i in order])
-        else:
-            raise ValueError(f"未知队列 op {op!r}（submit|append|prepend|clear|remove|reorder）")
         after = self.runtime.queue(name)
         return {"queue": name, "items": len(after.items) if after else 0, "accepted_seq": self.seq}
+
+    def swap_strategy(self, manifest, assembly=None) -> dict:
+        """热切 V1（批 C）：挂起 pending，**下一个帧边界**（tick 开头）应用并重发
+        static/strategy。约束校验（group_slots 一致等）在 API 层做过了；
+        引擎侧 swap_strategy 还有自己的防御性校验（assembly shim 的全套 validate）。"""
+        self._swap_pending = (manifest, assembly)
+        return {"swap": "pending", "strategy": manifest.id,
+                "active_step_next": (self.engine.snapshot()["active_step"]
+                                     if self.engine.snapshot()["active_step"] in manifest.steps
+                                     else manifest.initial_step),
+                "accepted_seq": self.seq}
 
     def set_worker_target(self, task: str, count: int) -> dict:
         """采集配额 = **目标值**（维持 N 个，幂等；ADR-0030 D2），不是"再派 N 个"。"""

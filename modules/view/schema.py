@@ -61,9 +61,15 @@ from typing import Any
 #:     目的：`formup/advance/G_INF` 这类裸标识符读不出意图（用户原话），zh 单一真相源在后端（C4）。
 #: rev 14：槽位命名统一简写（`build_slots[].name` 即 D1/R4+/F1 形态，约定由后端校验强制），
 #:   `static/map.build_slots[]` 增 `alias_zh`（中文别名，展示用；标记归 name、展示归别名）。
+#: rev 16：`frame/production.in_flight[]` 增 `from_index`（emit 时的剩余队列下标，
+#:   B3 状态感知收口 —— observe 能答"队列执行到第几项"；可空 = 旧 flight/未知）。
+#: rev 15：ADR-0031 模板化一轮 —— `static/strategy` 增 `imported`（从 _lib 展开来的
+#:   step_id 列表，前端可标「模板」出身）；`reasons` 改为 `flow.vocab.REASON_ZH`
+#:   默认表 ∪ 策略覆盖（值内容变化，按 rev 5 先例走 REV+1）；branches 值树内新增
+#:   可选 `display_name_zh` 键（分支中文别名 —— 值树是 unknown record，契约形状不变）。
 #: rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度（协议没有该
 #:   字段），原先恒发 `0.0` 是把"未知"伪装成"刚开始"；改为 None（前端 zod 同步 nullable）。
-REV = 14
+REV = 16
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -319,10 +325,13 @@ class StrategyStatic:
     #: rev 12（I2/I4）：可读名与 reason 中文创 —— 全部 "" / 空 = 没写，UI 退回 identifier
     display_name_zh: str = ""
     description_zh: str = ""
-    #: reason 标识符 → 中文（FORMED → 成型）；edges 的切换原因与 exit 的终局原因共用
+    #: reason 标识符 → 中文（FORMED → 成型）；edges 的切换原因与 exit 的终局原因共用。
+    #: rev 15 起是 `flow.vocab.REASON_ZH` 默认表 ∪ 策略覆盖（策略内 reasons 只写增量）
     reasons: dict[str, str] = field(default_factory=dict)
     #: group_id → 中文（G_INF → 步兵组），来自 assembly 的 GroupSpec.display_name_zh
     group_names: dict[str, str] = field(default_factory=dict)
+    #: rev 15（ADR-0031）：从 _lib 模板展开来的 step_id —— 前端可标「模板」出身（V1 透传）
+    imported: list[str] = field(default_factory=list)
 
 
 # ---------------- frame/session ----------------
@@ -546,6 +555,8 @@ class InFlightView:
 
     `builder_tag is None` = 上帧失败、本帧待重试。
     `attempted_slots` 给摆放调试叠加层用：画出"这个建筑已经试过哪几个槽位"。
+    `from_index`（rev 16，B3）：emit 时该项在剩余队列里的下标 ——
+    observe 据此答"队列执行到第几项"；None = 旧 flight/未知。
     """
 
     queue: str
@@ -557,6 +568,7 @@ class InFlightView:
     frames_waited: int
     retries: int
     attempted_slots: list[str]
+    from_index: int | None = None
 
 
 @dataclass(slots=True)

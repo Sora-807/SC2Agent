@@ -278,7 +278,7 @@ def default_areas(*, client, trace_root: Path, recordings_dir: Path | None,
     `client` 供 maps/ 的 live 源解析（问当前会话装配的规划）。
     `map_plans_dir=None` 时 maps/ 区不挂（测试隔离用）。
     """
-    areas: list[ReadOnlyArea] = [TraceArea(trace_root)]
+    areas: list[ReadOnlyArea] = [TraceArea(trace_root), SurfaceArea(client)]
     if recordings_dir is not None:
         areas.append(RecordingsArea(recordings_dir))
     if proposals_log is not None:
@@ -286,3 +286,82 @@ def default_areas(*, client, trace_root: Path, recordings_dir: Path | None,
     if map_plans_dir is not None:
         areas.append(MapsArea(client, map_plans_dir))
     return areas
+
+
+class SurfaceArea(ReadOnlyArea):
+    """`system/surface.md`（A5，2026-08-23）：写面清单挂成只读文件。
+
+    write_surface 工具退役，「不确定能不能做 → read system/surface.md」——
+    读=文件彻底统一（三次孤儿工具的教训：新能力优先问"能不能是一个文件"）。
+    内容由 `GET /api/agent/tools` 现算渲染，永远与后端同源。
+    """
+
+    prefix = "system/"
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    def list_paths(self, prefix: str = "") -> list[str]:
+        return ["system/surface.md"] if "system/surface.md".startswith(prefix) else []
+
+    def read(self, path: str) -> str:
+        if path != "system/surface.md":
+            raise WorkspaceError(f"system/ 下只有 surface.md（写面清单），没有 {path!r}")
+        from agent.client import ApiError
+
+        try:
+            return render_surface_md(self._client.agent_tools())
+        except ApiError as exc:
+            raise WorkspaceError(
+                f"system/surface.md 渲染失败（HTTP {exc.status}）：{exc.detail}"
+                "—— 后端的 /api/agent/tools 不可用") from None
+
+
+def render_surface_md(data: dict) -> str:
+    """`GET /api/agent/tools` 的 JSON → Markdown（人/LLM 都顺眼的读面）。"""
+    import json
+
+    lines = ["# 写面：能做什么 / 为什么不能做（system/surface.md）",
+             "",
+             "> 由 GET /api/agent/tools 渲染（与后端同源）。所有命令必带 "
+             "`based_on_seq`（取自观察包 facts）。写 = 与 UI 同一 REST 入口，没有后门。", ""]
+    cmds = data.get("commands") or []
+    if cmds:
+        lines.append("## 命令")
+        for c in cmds:
+            body = "；".join(f"{k}: {v}" for k, v in (c.get("body") or {}).items())
+            lines.append(f"- **{c.get('method')} {c.get('path')}**"
+                         + (f"（ops: {'|'.join(c['ops'])}）" if c.get("ops") else ""))
+            if body:
+                lines.append(f"  - body —— {body}")
+            if c.get("note"):
+                lines.append(f"  - {c['note']}")
+        lines.append("")
+    rules = data.get("rules") or []
+    if rules:
+        lines.append("## 规则")
+        lines.extend(f"- {r}" for r in rules)
+        lines.append("")
+    readable = data.get("readable") or {}
+    if readable:
+        lines.append("## 只读清单（历史产物 / 派生视图）")
+        for p, desc in readable.items():
+            lines.append(f"- `{p}` —— {desc}")
+        lines.append("")
+    unsupported = data.get("unsupported") or {}
+    if unsupported:
+        lines.append("## 不支持（带原因，别原样重试）")
+        for group, items in unsupported.items():
+            lines.append(f"- **{group}**")
+            for op, reason in (items or {}).items():
+                lines.append(f"  - {op} —— {reason}")
+        lines.append("")
+    if data.get("max_stale_seq") is not None:
+        lines.append(f"- 观察新鲜度阈值 max_stale_seq = {data['max_stale_seq']}"
+                     "（based_on_seq 落后超过它 → 409，重取观察再试）")
+    known = {"commands", "rules", "readable", "unsupported", "max_stale_seq"}
+    extra = {k: v for k, v in data.items() if k not in known}
+    if extra:
+        lines += ["", "## 其它（后端新增、渲染器还没认的键 —— 原样给出不静默）",
+                  "```json", json.dumps(extra, ensure_ascii=False, indent=1), "```"]
+    return "\n".join(lines)

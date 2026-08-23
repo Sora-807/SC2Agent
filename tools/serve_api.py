@@ -37,6 +37,8 @@ def main() -> int:
                     help="地图规划文件目录（默认地图锁定 + 复制新建）")
     ap.add_argument("--recordings", default=str(ROOT / DEFAULT_RECORDINGS_DIR),
                     help="对局记录目录（live 帧流落盘；复盘下拉里的对局记录）")
+    ap.add_argument("--loadouts", default=str(ROOT / "runtime/loadouts"),
+                    help="装配清单目录（loadout：三件套引用，只读）")
     ap.add_argument("--strategies", default=str(ROOT / "runtime/strategies"),
                     help="策略文件目录（开放写策略：strategy+assembly 两段 YAML）")
     ap.add_argument("--log-level", default="warning")
@@ -52,6 +54,7 @@ def main() -> int:
     uvicorn.run(create_app(args.frame_dir, args.proposals, args.plans, args.map_plans,
                            recordings_dir=args.recordings,
                            strategies_dir=args.strategies,
+                           loadouts_dir=args.loadouts,
                            agent_base=f"http://{args.host}:{args.port}"),
                 host=args.host, port=args.port, log_level=args.log_level)
     return 0

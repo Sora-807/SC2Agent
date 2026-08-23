@@ -1,0 +1,168 @@
+# 策略模板库（ADR-0031 编译期模板展开）。`_` 前缀 = 锁定文件，只有人改这里（agent 可读不可写）。
+#
+# 策略侧引用（parse 阶段展开，展开后与手写策略同构、全套校验照跑）：
+#   imports:
+#     gather: {from: _lib, template: gather, params: {min_units: 1}}
+#     push:   {from: _lib, template: push, params: {target: {param: enemy_base}}}
+#   edges:
+#     - {from: gather, to: push, kind: done, reason: FORMED}
+#
+# 两条纪律：
+# - 模板体只看得见自己的 params；要接策略级参数，在 imports 的 params 里绑 {param: 名字}
+#   （两层词法作用域：绑定值可以引用策略级参数，模板体不行）；
+# - exits 是接口契约（函数签名）：edges 接到导入 step 的 (kind, reason) 必须落在这里，
+#   声明与 branches 的 exit_step 逐对一致（parse_lib 校验）。
+#
+# 语义注记：attack_move_to / move_to 是**每帧续压**（do 每帧重执行、引擎按单位集+参数去重）
+# —— 走位被打断会自动续上；想只发一次，用 set_local 自己记"已下令"再在 when 里挡。
+step_templates:
+  gather:
+    display_name_zh: 集结
+    description_zh: 等待部队成型（组内数量 ≥ min_units 即以 done/FORMED 退出）
+    params:
+      min_units: {type: int, default: 8, description_zh: 出发所需的单位数}
+      group_slot: {type: str, default: main, description_zh: 编组槽位}
+      unit_type: {type: str, default: terran/marine, description_zh: 计数的兵种}
+    exits:
+      - {kind: done, reason: FORMED}
+    branches:
+      - branch_id: b_ready
+        display_name_zh: 成型即走
+        when: {op: ">=", args: [{op: group_count, group: {param: group_slot}, type: {param: unit_type}}, {param: min_units}]}
+        do: [{op: exit_step, kind: done, reason: FORMED}]
+      - branch_id: b_wait
+        display_name_zh: 等待
+        do: []
+
+  push:
+    display_name_zh: 推进
+    description_zh: 全组攻击移动到目标点（每帧续压）；抵达即以 done/ARRIVED 退出
+    params:
+      target: {type: point, description_zh: 推进目标点（必填，无默认）}
+      group_slot: {type: str, default: main, description_zh: 编组槽位}
+      unit_type: {type: str, default: terran/marine, description_zh: 推进的兵种}
+      radius: {type: float, default: 4.0, description_zh: 抵达判定半径}
+    exits:
+      - {kind: done, reason: ARRIVED}
+    branches:
+      - branch_id: b_arrived
+        display_name_zh: 已抵达
+        when: {op: arrived, group: {param: group_slot}, target: {param: target}, radius: {param: radius}}
+        do: [{op: exit_step, kind: done, reason: ARRIVED}]
+      - branch_id: b_move
+        display_name_zh: 前压
+        do:
+          - {op: group_action, group_slot: {param: group_slot}, type: {param: unit_type},
+             action_atom: attack_move_to, params: {position: {param: target}}}
+
+  hold_ramp:
+    display_name_zh: 堵口
+    description_zh: 移动到口子并原地驻守；凑够 min_units 个单位即以 done/BREAKOUT 突围
+    params:
+      hold_point: {type: point, description_zh: 口子坐标（必填）}
+      group_slot: {type: str, default: main, description_zh: 编组槽位}
+      unit_type: {type: str, default: terran/marine, description_zh: 驻守的兵种}
+      min_units: {type: int, default: 3, description_zh: 突围所需的单位数}
+      radius: {type: float, default: 3.0, description_zh: 到位判定半径}
+    exits:
+      - {kind: done, reason: BREAKOUT}
+    branches:
+      - branch_id: b_breakout
+        display_name_zh: 成型突围
+        when: {op: ">=", args: [{op: group_count, group: {param: group_slot}, type: {param: unit_type}}, {param: min_units}]}
+        do: [{op: exit_step, kind: done, reason: BREAKOUT}]
+      - branch_id: b_in_pos
+        display_name_zh: 到位驻守
+        when: {op: arrived, group: {param: group_slot}, target: {param: hold_point}, radius: {param: radius}}
+        do:
+          - {op: group_action, group_slot: {param: group_slot}, type: {param: unit_type}, action_atom: hold_position}
+      - branch_id: b_move
+        display_name_zh: 前往口子
+        do:
+          - {op: group_action, group_slot: {param: group_slot}, type: {param: unit_type},
+             action_atom: move_to, params: {position: {param: hold_point}}}
+
+  garrison:
+    display_name_zh: 驻守入口
+    description_zh: 攻击移动到驻扎点防守（沿路接敌）；凑够 min_units 以 done/READY 转出
+    params:
+      garrison_pos: {type: point, description_zh: 驻扎点（必填）}
+      group_slot: {type: str, default: main, description_zh: 编组槽位}
+      unit_type: {type: str, default: terran/marine, description_zh: 驻守的兵种}
+      min_units: {type: int, default: 8, description_zh: 转出所需的单位数}
+    exits:
+      - {kind: done, reason: READY}
+    branches:
+      - branch_id: b_ready
+        display_name_zh: 集结完成
+        when: {op: ">=", args: [{op: group_count, group: {param: group_slot}, type: {param: unit_type}}, {param: min_units}]}
+        do: [{op: exit_step, kind: done, reason: READY}]
+      - branch_id: b_garrison
+        display_name_zh: 前往驻扎点
+        do:
+          - {op: group_action, group_slot: {param: group_slot}, type: {param: unit_type},
+             action_atom: attack_move_to, params: {position: {param: garrison_pos}}}
+
+  armor_hop:
+    display_name_zh: 坦克前压
+    description_zh: 装甲单位推进到跟进组组心 3 格内（done/IN_PLACE）；跟进组已近目标则整队抵达（done/ARRIVED）
+    params:
+      armor_slot: {type: str, default: armor, description_zh: 装甲编组槽位}
+      inf_slot: {type: str, default: inf, description_zh: 跟进编组槽位（前压的参照系）}
+      armor_type: {type: str, default: terran/siegetank, description_zh: 装甲兵种}
+      target: {type: point, description_zh: 最终目标点（必填）}
+    exits:
+      - {kind: done, reason: ARRIVED}
+      - {kind: done, reason: IN_PLACE}
+    branches:
+      - branch_id: b_arrived
+        display_name_zh: 整队抵达
+        when: {op: arrived, group: {param: inf_slot}, target: {param: target}, radius: 8.0}
+        do: [{op: exit_step, kind: done, reason: ARRIVED}]
+      - branch_id: b_in_place
+        display_name_zh: 坦克就位
+        when: {op: arrived, group: {param: armor_slot}, target: {op: group_center, group: {param: inf_slot}}, radius: 3.0}
+        do: [{op: exit_step, kind: done, reason: IN_PLACE}]
+      - branch_id: b_move
+        display_name_zh: 前压
+        do:
+          - {op: group_action, group_slot: {param: armor_slot}, type: {param: armor_type},
+             action_atom: move_to, params: {position: {op: group_center, group: {param: inf_slot}}}}
+
+  inf_hop:
+    display_name_zh: 步兵跟进
+    description_zh: 跟进组攻击移动到前沿点（装甲组心朝目标 hop_dist）；脱队 interrupted/STRAGGLED、就位 done/IN_PLACE、整队抵达 done/ARRIVED
+    params:
+      inf_slot: {type: str, default: inf, description_zh: 跟进编组槽位}
+      armor_slot: {type: str, default: armor, description_zh: 装甲编组槽位（前沿的参照系）}
+      inf_type: {type: str, default: terran/marine, description_zh: 跟进兵种}
+      target: {type: point, description_zh: 最终目标点（必填）}
+      hop_dist: {type: float, default: 10.4, description_zh: 前沿点距装甲组心的距离}
+      hold_dist: {type: float, default: 12.0, description_zh: 脱队判定距离}
+    exits:
+      - {kind: done, reason: ARRIVED}
+      - {kind: interrupted, reason: STRAGGLED}
+      - {kind: done, reason: IN_PLACE}
+    branches:
+      - branch_id: b_arrived
+        display_name_zh: 整队抵达
+        when: {op: arrived, group: {param: inf_slot}, target: {param: target}, radius: 8.0}
+        do: [{op: exit_step, kind: done, reason: ARRIVED}]
+      - branch_id: b_straggled
+        display_name_zh: 脱队停等
+        when: {op: ">", args: [{op: distance_between, a: {param: inf_slot}, b: {param: armor_slot}}, {param: hold_dist}]}
+        do: [{op: exit_step, kind: interrupted, reason: STRAGGLED}]
+      - branch_id: b_in_place
+        display_name_zh: 已就位
+        when:
+          op: arrived
+          group: {param: inf_slot}
+          radius: 3.0
+          target: {op: point_toward, origin: {op: group_center, group: {param: armor_slot}}, toward: {param: target}, dist: {param: hop_dist}}
+        do: [{op: exit_step, kind: done, reason: IN_PLACE}]
+      - branch_id: b_move
+        display_name_zh: 跟进前压
+        do:
+          - {op: group_action, group_slot: {param: inf_slot}, type: {param: inf_type},
+             action_atom: attack_move_to,
+             params: {position: {op: point_toward, origin: {op: group_center, group: {param: armor_slot}}, toward: {param: target}, dist: {param: hop_dist}}}}

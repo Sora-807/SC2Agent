@@ -22,6 +22,15 @@ from game.production import (
 )
 from production.runtime import UNSUPPORTED_QUEUE_OPS
 
+#: 队列工具 op 的全集（B2 扩到 8 个：insert/replace_head 入列）。
+#: OfflineSession / LiveSession / run_session 三处的白名单共用这一份 ——
+#: 各自手抄迟早漂移（LiveSession 曾漏过 prepend 的 allowlist 同款问题）。
+QUEUE_OPS = frozenset({
+    "submit", "append", "prepend", "clear", "remove", "reorder",
+    "insert",          # B2：按剩余队列位置插入（0=队首前；只影响未来，越界 400）
+    "replace_head",    # B2：原子换队首（remove 未执行队首 + prepend 新项一步完成）
+})
+
 
 class PlacementIn(BaseModel):
     """放置标记：精确槽位 或 区域内找位（ADR-0029）。"""

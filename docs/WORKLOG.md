@@ -22,6 +22,57 @@
 | `e13ca82` | R1 god file 拆分：app.py 998→薄装配+state.py+routes/×11；manifest.py validate_strategy 分段（REFACTOR G1/G3）|
 | `1316232` | R2 god file 拆分收尾：runtime.py 948→564 编排+flights.py 336（Mixin）+placement.py 98（纯函数）（REFACTOR G2）|
 
+## 0.41 三十四轮：模板化 + 生产序列补齐 + 热切 V1 三批执行（2026-08-23，未提交）
+
+> 立项与决策见 ADR-0031 与本文各节（原执行计划 PLAN-TEMPLATES-HOTSWAP.md 已执行完毕删除；
+> 决策浓缩在 §0，不要重新讨论）。三批一提交的纪律由用户在提交时执行。
+
+**批 A（模板库与展示层，REV 15）**：
+- `flow/templates.py` + 模板库（ADR-0031）：编译期模板展开。出厂种子
+  `modules/flow/data/_lib.yaml` 随版本库（runtime/ 整目录 gitignore），StrategyStore
+  建目录时播种成 `runtime/strategies/_lib.yaml` 工作副本（人改副本）。
+  `imports:` 节引用模板（键名=step_id、params 绑定、绑定值可桥接策略级 `{param}`）；
+  exits 接口契约（edges 接错线当场红）；展开产物与手写同构，运行时零改动。
+  种子六件：gather/push/hold_ramp/garrison/armor_hop/inf_hop（全部过编译+引擎转移）。
+- `StrategyStore`：`_` 前缀=锁定保留名（`_lib` 不是策略、清单不列）；带 imports 的
+  保存喂模板库编译；`load_strategy_file` 自动装同目录 `_lib`；`GET /api/strategies/_lib`
+  只读原文（agent `read strategies/_lib.yaml` 走它，写被指路拒绝）。
+- 展示层：branch `display_name_zh`（BRANCH_KEYS+校验+前端渲染）；`flow/vocab.REASON_ZH`
+  全局默认表，`static/strategy.reasons` = 默认 ∪ 策略覆盖；`imported: [step_id]` 标记。
+- memory lint（A4）：`agent/memory_lint.py` 纯函数 + ApiWorkspace 写钩子（软提示不拒绝）；
+  write/append/edit/insert 换 lint 版工具（vendor 不改：drop 名字条目换直接 factory），
+  写 memory/*.md 的结果尾部附 [ID]/状态字段提示。
+- 工具退役（A5，19→17）：`read_current_strategy`（dump 写死常量误导 live）与
+  `write_surface`（挂成只读文件 `system/surface.md`，SurfaceArea 渲染 /api/agent/tools）
+  退役；原则进 AGENT-LOOP §6：**新能力优先问"能不能是一个文件"**。
+
+**批 B（生产序列补齐 + loadout，REV 16）**：
+- B1 loadout：`runtime/loadouts/<id>.yaml`（map_plan/strategy/plan/spawn 三件套引用，
+  只读文件即真相）+ `view/loadouts.py`；`session/start?loadout=` 解析并把 plan 的
+  队列**自动 submit 入队**；start_session 工具 + StartCard 下拉。
+- B2 队列命令：`insert(index)`（剩余队列位置，越界 400，天然只具后效性）+
+  `replace_head`（原子换队首，无 409 窗口）；QUEUE_OPS 三处共用一份（api/commands.py）。
+- B3：flight 记 `from_index`（emit 时剩余队列下标）→ InFlightView（rev 16）；
+  observe 生产段收口（队首+剩余+在途带原序号）+ 新增「op 流水」段。
+- **sc2 控制文件通道**（顺带解决 sc2 一直无命令面的问题）：stdin=DEVNULL 的真机，
+  命令经控制文件 —— 父进程 append、子进程帧边界 rename→读→删（无损协议）。
+  queue/workers/swap 全走它；LiveSession._statics 按 topic 去重（热切重发静态面不再被旧帧遮住）。
+- B7 关账：live/offline 命令返回统一 `{queue/task, items, accepted_seq}`（dispatched 删除）。
+
+**批 C（热切 V1）**：
+- `FlowEngine.swap_strategy(manifest)`：同装配约束（assembly shim 重跑全套 validate_assembly
+  + map 名校验，先校验后变更零中间态）；同名 active_step 续位（locals/timers 保留）、
+  异名从 initial_step 重起；variables 同名保留；对已结束策略 swap=复活；去重键清空
+  （新策略首帧命令不被旧签名吞）；转移历史记 `swap` 事件（from 旧@版本→新，续位/重起）。
+- `POST /api/session/swap?strategy=<id>`：offline=帧边界 pending 应用 + 重发 static/strategy；
+  live（sim stdin / sc2 控制文件）子进程帧边界应用；group_slots 不一致 409（会话不受影响）。
+- 提示词/写面规则更新：策略**可**热切（用户的动作，agent 无工具）；装配热切/参数级热改/
+  多实例明确不做。
+
+**回归**：后端 851 passed（新增 tests/flow/test_templates.py 22、tests/agent/test_memory_lint.py 8、
+tests/api/test_loadouts_swap.py 18）；前端 361 passed + tsc/build 绿；夹具按 REV 16 重生成。
+真机（sc2）swap 端到端待用户验一次（控制文件通道已被 sim 子进程测试覆盖）。
+
 ## 0.35 三十一轮：三文档目录合一 docs/（分类收纳 + 内容修剪）（2026-08-23，未提交）
 
 用户拍板「合并成一个文件夹 + 分类 + 保留精华、删否决/无意义」：

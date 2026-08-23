@@ -17,7 +17,7 @@ from game.catalog import Catalog
 from game.geometry import Grid
 from game.production import QueueOp, WorkerTask
 
-from flow.vocab import dump_vocabulary
+from flow.vocab import REASON_ZH, dump_vocabulary
 from production.runtime import UNSUPPORTED_QUEUE_OPS
 from tactical_map.region import RegionLayer
 
@@ -256,6 +256,9 @@ def strategy_static(manifest, assembly) -> StrategyStatic:
     edges 的 `from` 因为是 Python 保留字，在 schema 里叫 `from_step`、编码时改名。
     rev 12：display_name_zh/description_zh/reasons（strategy 级与 step 级）、
     group_names（assembly 组名中文）一并转发 —— 可读性字段的真相源在 manifest/assembly。
+    rev 15：reasons = `flow.vocab.REASON_ZH` 默认表 ∪ 策略覆盖（策略内 reasons 只写增量，
+    同名覆盖默认）；`imported` = 从 _lib 模板展开来的 step_id（ADR-0031，
+    前端可标「模板」出身，V1 只透传）。
     """
     steps = [
         StepView(step_id=step_id, branches=list(step.get("branches", [])),
@@ -282,7 +285,8 @@ def strategy_static(manifest, assembly) -> StrategyStatic:
         bindings=dict(instance.bindings),
         display_name_zh=manifest.display_name_zh,
         description_zh=manifest.description_zh,
-        reasons=dict(manifest.reasons or {}),
+        reasons={**REASON_ZH, **(manifest.reasons or {})},
         group_names={g.group_id: g.display_name_zh
                      for g in assembly.groups if g.display_name_zh},
+        imported=list(getattr(manifest, "imported", ()) or ()),
     )

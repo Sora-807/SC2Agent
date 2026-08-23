@@ -7,6 +7,7 @@
  */
 import { create } from "zustand";
 import { fetchSessionInfo, sessionAction, type SessionInfo } from "../api/commands";
+import { listLoadouts, type LoadoutMeta } from "../api/loadouts";
 import { listMapPlans } from "../api/map-plans";
 import { listStrategies, type StrategyMeta } from "../api/strategies";
 import { pickMapPlan } from "./mode";
@@ -32,6 +33,9 @@ interface SessionStore {
   /** 策略文件清单（二十七轮「开放写策略」）：null = 还没到/后端没有；启动时选一份装配 */
   strategies: StrategyMeta[] | null;
   strategyId: string | null;
+  /** 装配清单（B1）：三件套一发入魂；null = 还没到/后端没有；选中时优先于单独的规划/策略下拉 */
+  loadouts: LoadoutMeta[] | null;
+  loadoutId: string | null;
   /** 启动/停止失败的原因（后端 detail 原文；会话活过来时自动清） */
   opErr: string | null;
   /** 真机两段式确认：第一点变「确认启动」，再点才真启动 */
@@ -39,6 +43,7 @@ interface SessionStore {
   setWatch(on: boolean): void;
   setMapPlanId(id: string): void;
   setStrategyId(id: string): void;
+  setLoadoutId(id: string): void;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -65,6 +70,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   mapPlanId: null,
   strategies: null,
   strategyId: null,
+  loadouts: null,
+  loadoutId: null,
   opErr: null,
   confirming: false,
 
@@ -93,6 +100,18 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           }));
         })
         .catch(() => set({ strategies: null }));
+      // 装配清单（B1；失败不致命：不选 = 手动挑规划/策略）
+      void listLoadouts()
+        .then((rows) => {
+          if (token !== watchToken) return;
+          set((st) => ({
+            loadouts: rows,
+            loadoutId: st.loadoutId && rows.some((r) => r.id === st.loadoutId)
+              ? st.loadoutId
+              : null,
+          }));
+        })
+        .catch(() => set({ loadouts: null }));
       timer = setInterval(() => void pollOnce(), POLL_MS);
     } else {
       ++watchToken;
@@ -110,6 +129,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set({ strategyId: id || null });
   },
 
+  setLoadoutId(id) {
+    set({ loadoutId: id || null });
+  },
+
   async start() {
     set({ opErr: null });
     if (!get().confirming) {
@@ -120,14 +143,19 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
     set({ confirming: false });
     if (confirmTimer) clearTimeout(confirmTimer);
+    // 装配清单（B1）：选了它就只发 loadout —— 三件套由后端解析
+    //（含生产序列自动入队）；单独的规划/策略选择只在没选清单时生效。
+    const los = get().loadouts;
+    const loadoutId = los && get().loadoutId && los.some((r) => r.id === get().loadoutId)
+      ? get().loadoutId! : undefined;
     // 发送前兜底（pickMapPlan）：规划 id 必须在清单里，不在就不带（后端用出厂模板）
     const plans = get().mapPlans;
-    const planId = plans ? pickMapPlan(plans, get().mapPlanId) ?? undefined : undefined;
+    const planId = !loadoutId && plans ? pickMapPlan(plans, get().mapPlanId) ?? undefined : undefined;
     // 策略同规则：选中的 id 必须仍在清单里，否则不带（后端用内置默认）
     const st = get().strategies;
-    const strategyId = st && get().strategyId && st.some((r) => r.id === get().strategyId)
+    const strategyId = !loadoutId && st && get().strategyId && st.some((r) => r.id === get().strategyId)
       ? get().strategyId! : undefined;
-    const r = await sessionAction("start", { driver: "sc2", mapPlan: planId, strategy: strategyId });
+    const r = await sessionAction("start", { driver: "sc2", mapPlan: planId, strategy: strategyId, loadout: loadoutId });
     if (!r.ok) {
       set({ opErr: r.detail, info: await fetchSessionInfo() });
       return;

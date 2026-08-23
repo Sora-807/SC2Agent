@@ -844,3 +844,124 @@ def test_under_attack_via_hp_drop_within_window():
     eng2.on_game_state(_gs_with_enemy(2, 16.0, hp=30.0))         # 6s 后，窗口已过
     snap2 = eng2.snapshot()
     assert snap2["active_step"] == "watch" and not snap2["done"]
+
+
+# ---------------- 热切 V1（批 C，2026-08-23）：续位的 locals/timers 语义 ----------------
+
+def _swap_gs(seq, t):
+    """带 1 个工人的最小 GameState（引擎只求值，不产 op）。"""
+    from game import GameState, Grid, Owner, Point2, Unit
+
+    g = Grid(1, 1, [[0]])
+    u = Unit(tag=1, type_name="SCV", position=Point2(0, 0), owner=Owner.SELF,
+             hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return GameState(seq=seq, game_time=t, minerals=0, vespene=0,
+                     supply_used=1, supply_cap=10, units=[u],
+                     map_size=(176, 160), creep=g, visibility=g)
+
+
+_A = """
+id: a
+group_slots: [main]
+variables: {}
+initial_step: s
+steps:
+  - step_id: s
+    locals: [x]
+    branches:
+      - do:
+          - {op: set_local, name: x, value: 7}
+          - {op: start_timer, name: t}
+"""
+
+_B_SAME_STEP = """
+id: b
+group_slots: [main]
+variables: {}
+initial_step: s
+steps:
+  - step_id: s
+    locals: [x]
+    branches:
+      - do: []
+"""
+
+_C_OTHER_STEP = """
+id: c
+group_slots: [main]
+variables: {}
+initial_step: w
+steps:
+  - step_id: w
+    branches:
+      - do: []
+"""
+
+_SWAP_ASM = """
+id: swap_asm
+groups:
+  - group_id: G1
+    composition: {terran/scv: {min: 1, target: 1, max: 1}}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: a
+    bindings: {main: G1}
+    params: {}
+"""
+
+
+def test_swap_same_step_keeps_locals_and_timers():
+    """续位的可证语义：同名 step 的 locals/timers 原样保留；异名重起清零。"""
+    from driver.fake import FakeGamePort
+    from game.catalog import load_all
+
+    eng = FlowEngine(parse_strategy(_A), parse_assembly(_SWAP_ASM),
+                     FakeGamePort(script=[]), catalog=load_all())
+    eng.on_game_state(_swap_gs(0, 0.0))
+    assert eng.snapshot()["locals"] == {"x": 7}
+    assert "t" in eng.snapshot()["timers"]
+
+    # 同名 step 续位：locals/timers 保留
+    eng.swap_strategy(parse_strategy(_B_SAME_STEP))
+    eng.on_game_state(_swap_gs(1, 5.0))
+    snap = eng.snapshot()
+    assert snap["active_step"] == "s"
+    assert snap["locals"] == {"x": 7}
+    assert snap["timers"]["t"] == 5.0        # 表还在走（没被 swap 归零）
+
+    # 异名重起：locals/timers 清零、从 initial_step 起
+    eng.swap_strategy(parse_strategy(_C_OTHER_STEP))
+    eng.on_game_state(_swap_gs(2, 6.0))
+    snap = eng.snapshot()
+    assert snap["active_step"] == "w"
+    assert snap["locals"] == {}
+    assert snap["timers"] == {}
+
+
+def test_swap_clears_dedup_keys_and_revives_done():
+    """去重键清空（新策略首帧不被旧签名吞）+ 对已结束策略 swap = 复活。"""
+    from driver.fake import FakeGamePort
+    from game.catalog import load_all
+
+    done_doc = """
+id: d
+group_slots: [main]
+variables: {}
+initial_step: fin
+steps:
+  - step_id: fin
+    branches:
+      - do: [{op: exit_strategy, kind: done, reason: DONE}]
+"""
+    asm_d = _SWAP_ASM.replace("strategy_ref: a", "strategy_ref: d")
+    eng = FlowEngine(parse_strategy(done_doc), parse_assembly(asm_d),
+                     FakeGamePort(script=[]), catalog=load_all())
+    eng.on_game_state(_swap_gs(0, 0.0))
+    assert eng.snapshot()["done"] is True
+    eng._last_emitted[("main", "terran/marine", "attack_move_to")] = (("stale",), "pkey")
+
+    eng.swap_strategy(parse_strategy(_B_SAME_STEP))
+    eng.on_game_state(_swap_gs(1, 1.0))
+    snap = eng.snapshot()
+    assert snap["done"] is False and snap["active_step"] == "s"
+    assert eng._last_emitted == {}

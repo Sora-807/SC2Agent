@@ -82,13 +82,15 @@ async def _run(api_client: TestClient, llm: FakeLLMClient, tmp_path: Path) -> ob
 #: 改这个集合 = 改授权边界，必须连着 WORKLOG 的决策记录一起改。
 EXPECTED_TOOLS = {
     "done",
-    # 文件契约（规划文件读写；存储后端 = agent.workspace.ApiWorkspace）
+    # 文件契约（规划文件读写；存储后端 = agent.workspace.ApiWorkspace；
+    # write/append/edit/insert 是 lint 版 —— 行为不变，memory 写入附软提示）
     "ls", "read", "glob", "grep", "write", "append", "edit", "insert", "delete", "stat",
-    # 对局域（提案制，提交即自动应用）
-    "observe", "write_surface", "propose",
-    # 语义动作（文件表达不了的：干跑/会话/战术素材）
+    # 对局域（提案制，提交即自动应用）。写面清单不是工具：只读文件 system/surface.md
+    "observe", "propose",
+    # 语义动作（文件表达不了的：干跑/会话/战术素材）。
+    # 2026-08-23 工具审视 19→17：write_surface/read_current_strategy 退役
     "simulate_plan", "start_session",
-    "list_modules", "read_module", "read_current_strategy",
+    "list_modules", "read_module",
 }
 
 
@@ -162,12 +164,19 @@ def test_observe_reports_the_blockage_so_the_agent_can_act(api: TestClient):
     assert "工厂" in text
 
 
-def test_write_surface_tells_it_what_it_cannot_do(api: TestClient):
-    """"为什么不能做"和"能做什么"一起给 —— 省得它在不存在的动作上反复打转。"""
-    tools_ = {t.name: t for t in make_tools(_client_for(api))}
-    body = json.loads(asyncio.run(tools_["write_surface"].function({})))
-    assert body["unsupported"]["queue_ops"]
-    assert any("based_on_seq" in r for r in body["rules"])
+def test_surface_file_tells_it_what_it_cannot_do(api: TestClient):
+    """写面清单挂成只读文件 system/surface.md（write_surface 工具退役，读=文件）。"""
+    from agent.readonly import SurfaceArea
+
+    text = SurfaceArea(_client_for(api)).read("system/surface.md")
+    assert "queue_ops" in text and "不支持" in text
+    assert "based_on_seq" in text
+    # 只读：handles 覆盖 system/ 前缀，read 别的路径要指路而不是空字符串
+    import pytest
+    from agentic.workspace.workspace import WorkspaceError
+
+    with pytest.raises(WorkspaceError):
+        SurfaceArea(_client_for(api)).read("system/other.md")
 
 
 # ---------------- 工具层的拦截（在打到 api 之前） ----------------

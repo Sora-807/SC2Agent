@@ -70,6 +70,7 @@ def observation_packet(
     session = _payload(frames, "frame/session")
     strategy = _payload(frames, "static/strategy")
     proposals = _payload(frames, "proposals")
+    ops = _payload(frames, "frame/ops")
 
     seq = int(_env(frames, "frame/world").get("seq", 0)) if "frame/world" in frames else 0
     game_time = float(_env(frames, "frame/world").get("game_time", 0.0)) if "frame/world" in frames else 0.0
@@ -80,6 +81,7 @@ def observation_packet(
         "经济": _economy_text(world, econ, zh),
         "部队": _groups_text(flow, zh),
         "生产": _production_text(prod, zh),
+        "op 流水": _ops_text(ops, zh),
         "策略": _strategy_text(flow, strategy),
         "风险": _alerts_text(alerts),
         "投影": _projection_text(proj, game_time, zh),
@@ -154,11 +156,12 @@ def _groups_text(flow: dict | None, zh) -> str:
 
 
 def _production_text(prod: dict | None, zh) -> str:
+    """B3 收口：队首状态 + 剩余队列 + 在途（带原序号）——「跑到哪了」一眼可读。"""
     if not prod:
         return ""
     out = []
     for q in prod.get("queues", []):
-        head = f"队列 {q['name']}（队首 {q['head_status']}）"
+        head = f"队列 {q['name']}（队首 {q['head_status']}，剩余 {len(q.get('items', []))} 项）"
         if q.get("blocked"):
             b = q["blocked"]
             head += f" —— 已阻塞 {b['waited']:.0f}s：{b['reason']}"
@@ -170,13 +173,31 @@ def _production_text(prod: dict | None, zh) -> str:
         if len(q["items"]) > 8:
             out.append(f"  …还有 {len(q['items']) - 8} 项")
     if prod.get("in_flight"):
-        out.append("在途：" + "，".join(
-            f"{zh(f['stable_id'])}（等待 {f['frames_waited']} 帧"
-            + (f"，重试 {f['retries']}" if f["retries"] else "") + "）"
-            for f in prod["in_flight"]))
+        parts = []
+        for f in prod["in_flight"]:
+            origin = f"原第 {f['from_index']} 项，" if f.get("from_index") is not None else ""
+            seg = f"{zh(f['stable_id'])}（{origin}等待 {f['frames_waited']} 帧"
+            if f["retries"]:
+                seg += f"，重试 {f['retries']}"
+            parts.append(seg + "）")
+        out.append("在途：" + "，".join(parts))
     if prod.get("dropped"):
         out.append("被丢弃：" + "；".join(
             f"{d['op']} {zh(d['stable_id'])} —— {d['reason']}" for d in prod["dropped"][-3:]))
+    return "\n".join(out)
+
+
+def _ops_text(ops: dict | None, zh) -> str:
+    """op 流水（frame/ops 的环形缓冲取最近几条）：命令真的发出去没有，看这里。"""
+    rows = (ops or {}).get("ops") or []
+    if not rows:
+        return ""
+    out = []
+    for o in rows[-5:]:
+        what = zh(o["params"].get("type")) if o["action"] in ("build", "train", "research") \
+            else o["action"]
+        apply_state = {True: "✓", False: "✗"}.get(o.get("apply", {}).get("ok") if o.get("apply") else None, "…")
+        out.append(f"[{o['at']:>6.0f}s] {o['origin']}/{o['action']} {what} {apply_state}")
     return "\n".join(out)
 
 

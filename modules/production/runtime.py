@@ -119,6 +119,37 @@ class ProductionRuntime(BuildFlightsMixin):
         q = self._queues.setdefault(name, Queue(name=name))
         q.items[0:0] = items  # 队首插入（紧急/LLM 临时决策）
 
+    def insert(self, name: str, index: int, items: list[QueueItem]) -> None:
+        """按**剩余队列位置**插入（B2：0=队首前；越界 ValueError → REST 400）。
+
+        生产队列 = 未来清单：已执行项出队（BUILD 进在途、TRAIN 直接走），队列里没有
+        "过去区" —— 插入天然只具后效性。index 是调用方在同一帧看到的下标，
+        配合 based_on_seq 的新鲜度门（R8）就够安全。帧边界语义由会话层保证
+        （命令在帧边界应用，一帧内世界不变）。
+        """
+        self._check_items(items)
+        q = self._queues.get(name)
+        if q is None:
+            if index != 0:
+                raise ValueError(f"insert：队列 {name!r} 不存在，index 只能是 0（当前 {index}）")
+            q = Queue(name=name)
+            self._queues[name] = q
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index > len(q.items):
+            raise ValueError(
+                f"insert：index 必须在 0..{len(q.items)}（剩余队列位置，0=队首前），当前 {index}")
+        q.items[index:index] = items
+
+    def replace_head(self, name: str, items: list[QueueItem]) -> None:
+        """原子换队首（B2）= remove 未执行队首 + prepend 新项一步完成，不留 409 窗口。
+
+        在途项不受影响（已下令、确认中）。空队列 = 纯 prepend。
+        """
+        self._check_items(items)
+        q = self._queues.setdefault(name, Queue(name=name))
+        if q.items:
+            q.items.pop(0)
+        q.items[0:0] = items
+
     def clear(self, name: str) -> None:
         """清空队列 **并取消在途建造**（P2）。
 
@@ -269,6 +300,9 @@ class ProductionRuntime(BuildFlightsMixin):
                 in_flight.append({
                     "queue": q_name,
                     "stable_id": f["type"],
+                    # 来源队列序号（B3）：emit 时该项在剩余队列里的下标 ——
+                    # observe 答"队列执行到第几项"靠它，None = 旧 flight/未知
+                    "from_index": f.get("from_index"),
                     "builder_tag": f.get("builder"),
                     "expect_pos": f.get("expect_pos"),
                     "radius": f.get("radius", 0.0),
@@ -351,7 +385,7 @@ class ProductionRuntime(BuildFlightsMixin):
                     self._block(shortage)
                     blocked_head = head
                     break
-                outcome = self._try_build(head, q.name, gs)
+                outcome = self._try_build(head, q.name, gs, q_index=i)
                 if outcome == "blocked":
                     blocked_head = head
                     break
@@ -436,11 +470,13 @@ class ProductionRuntime(BuildFlightsMixin):
         self._charge(head.type)  # P3
         return "emitted"
 
-    def _try_build(self, head: QueueItem, q_name: str, gs: GameState) -> str:
+    def _try_build(self, head: QueueItem, q_name: str, gs: GameState,
+                   q_index: int | None = None) -> str:
         """发出首个候选放置位并记入在途确认（不立即出队）。
 
         按目标类型分派：addon 挂件（母建筑自建）→ gas 气矿（SCV 建在气井）→ 常规。
         挂件/气矿的分派实现在 `production/flights.py`（Mixin）。
+        `q_index`（B3）：emit 时该项在剩余队列里的下标，进 flight["from_index"]。
         """
         if head.type is None:
             self._drop(head, "build 缺 type")
@@ -450,9 +486,9 @@ class ProductionRuntime(BuildFlightsMixin):
             self._drop(head, f"build 未知类型 {head.type!r}")
             return "consumed"
         if "addon" in entry.capabilities:
-            return self._try_build_addon(head, q_name, gs)
+            return self._try_build_addon(head, q_name, gs, q_index=q_index)
         if "gas" in entry.capabilities:
-            return self._try_build_gas(head, q_name, gs)
+            return self._try_build_gas(head, q_name, gs, q_index=q_index)
         pos, slot_name, reason = self._resolve_placement(head, gs, attempted=frozenset())
         if reason is not None:
             self._drop(head, reason)  # 作者错误：丢弃并继续，不阻塞整队
@@ -474,6 +510,7 @@ class ProductionRuntime(BuildFlightsMixin):
             "type": head.type,
             "builder": builder.tag,
             "frames": 0,
+            "from_index": q_index,
             "attempted": {slot_name} if slot_name else set(),
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）

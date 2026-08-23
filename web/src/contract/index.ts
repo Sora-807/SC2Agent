@@ -7,8 +7,11 @@
  */
 import { z } from "zod";
 
-/**
- * 契约版本。
+/** rev 16：`frame/production.in_flight[]` 增 `from_index`（emit 时的剩余队列下标，
+ *   B3 状态感知收口 —— observe 能答「队列执行到第几项」；可空 = 旧 flight/未知）。
+ * rev 15：ADR-0031 模板化一轮 —— static/strategy 增 `imported`（从 _lib 展开来的
+ *   step_id，前端可标「模板」出身）；`reasons` 改为后端默认表 ∪ 策略覆盖（值内容变化，
+ *   按 rev 5 先例走 REV+1）；branches 值树内新增可选 `display_name_zh`（unknown record，形状不变）。
  * rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度
  *   （协议没有该字段），后端原先恒发 `0.0` 是把「未知」伪装成「刚开始」，改为 null。
  * rev 10：B12+B13 一轮两字段（F11 地图视觉语言需要）：
@@ -58,7 +61,7 @@ import { z } from "zod";
  *   strategy 增 display_name_zh/description_zh（策略级与 step 级）、reasons、group_names。
  *   新字段全部 `.default()` 容错：旧夹具/旧缓存帧缺字段时退回 identifier，不炸整页。
  */
-export const REV = 14 as const;
+export const REV = 16 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -319,10 +322,13 @@ export const zStrategyStatic = z.object({
   loop_limits: z.record(z.string(), z.number().int()),
   /** slot → group_id：画图时标注每个 slot 落在哪个组 */
   bindings: z.record(z.string(), z.string()),
-  /** reason 标识符 → 中文（FORMED → 成型）：edges 切换原因与 exit 终局原因共用（rev 12） */
+  /** reason 标识符 → 中文（FORMED → 成型）：edges 切换原因与 exit 终局原因共用。
+   *  rev 15 起为后端默认表（flow.vocab.REASON_ZH）∪ 策略覆盖 */
   reasons: z.record(z.string(), z.string()).default({}),
   /** group_id → 中文（G_INF → 步兵组），来自 assembly（rev 12） */
   group_names: z.record(z.string(), z.string()).default({}),
+  /** 从 _lib 模板展开来的 step_id（rev 15，ADR-0031）：前端可标「模板」出身 */
+  imported: z.array(z.string()).default([]),
 });
 
 export const zSessionFrame = z.object({
@@ -540,6 +546,8 @@ export const zProductionFrame = z.object({
       frames_waited: z.number().int(),
       retries: z.number().int(),
       attempted_slots: z.array(z.string()),
+      /** emit 时的剩余队列下标（rev 16）：observe 答"执行到第几项"；null = 未知 */
+      from_index: z.number().int().nullable().default(null),
     }),
   ),
   dropped: z.array(

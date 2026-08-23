@@ -76,6 +76,8 @@ export function renderValue(node: Node, depth = 0, vocab: Vocab = EMPTY_VOCAB): 
 
 export interface RenderedBranch {
   id: string | null;
+  /** 分支中文别名（rev 15，模板/手写皆可声明）；null = 没写 */
+  nameZh: string | null;
   index: number;
   /** null = else 分支（无 when，只能放最后） */
   when: string | null;
@@ -91,6 +93,8 @@ export function renderBranches(
   const vocab = vocabOf(schema);
   return branches.map((b, index) => ({
     id: typeof b["branch_id"] === "string" ? b["branch_id"] : null,
+    nameZh: typeof b["display_name_zh"] === "string" && b["display_name_zh"]
+      ? b["display_name_zh"] : null,
     index,
     when: "when" in b ? renderValue(b["when"], 0, vocab) : null,
     actions: (Array.isArray(b["do"]) ? (b["do"] as Record<string, unknown>[]) : []).map((a) => ({

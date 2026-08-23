@@ -110,7 +110,9 @@ class Session:
     def __init__(self, *, driver: str, reader: _CommandReader,
                  cc: Point2, map_name: str = "LadderMap",
                  map_plan: str | None = None,
-                 strategy_file: str | None = None) -> None:
+                 strategy_file: str | None = None,
+                 spawn: str | None = None,
+                 control_path: Path | None = None) -> None:
         self.driver = driver
         self.reader = reader
         self.catalog = load_all()
@@ -119,10 +121,16 @@ class Session:
         self.seq = 0
         self.game_time = 0.0
         self.stopping = False
+        #: 控制文件通道（B1/C）：sc2 的 stdin 是 DEVNULL（burnysc2 继承管道会挂起），
+        #: 命令改经文件 —— 父进程 append 写，帧边界 rename→读→删（无损）。
+        self._control_path = Path(control_path) if control_path else None
 
         # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
         tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
-        _, layout = sorted(tpl.spawns.items())[0]
+        if spawn and spawn in tpl.spawns:
+            _, layout = spawn, tpl.spawns[spawn]      # loadout 显式选出生点布局
+        else:
+            _, layout = sorted(tpl.spawns.items())[0]  # 缺省 = 排序第一个（现状）
         self.layer = instantiate_spawn(tpl, layout, cc)
         # I8：预设固定建造点名进 layer（与 OfflineSession 同一语义，见 api/session.py）
         from tactical_map.reserved import reserved_marks
@@ -181,6 +189,8 @@ class Session:
             _emit({"_": "meta", "map_name": self.layer.map_name, "driver": self.driver})
 
         # 命令在**帧边界**应用：帧中间改状态会让"这一帧的观察对应哪个世界"说不清
+        for cmd in self._drain_control():
+            self._apply(cmd)
         for cmd in self.reader.drain():
             self._apply(cmd)
 
@@ -189,6 +199,36 @@ class Session:
         self.keeper.on_game_state(gs)      # 征用先落表，维持器才知道谁不能动（ADR-0030 D3.3）
         for frame in self.producer.on_game_state(gs):
             _emit(frame)
+
+    def _drain_control(self) -> list[dict]:
+        """控制文件 → 命令列表（sc2 的命令通道；sim 走 stdin，两者都在帧边界应用）。
+
+        rename → 读 → 删：rename 之后父进程再 append 会建新文件，读删之间无丢失窗口。
+        坏行（非 JSON）记 error 控制行并跳过 —— 一行坏数据不该弄死会话。
+        """
+        import os
+
+        if self._control_path is None or not self._control_path.exists():
+            return []
+        pending = self._control_path.with_suffix(".pending")
+        try:
+            os.replace(self._control_path, pending)
+            lines = pending.read_text(encoding="utf-8").splitlines()
+            pending.unlink(missing_ok=True)
+        except OSError:
+            return []
+        out: list[dict] = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    out.append(obj)
+            except ValueError:
+                _emit({"_": "error", "detail": f"控制行不是合法 JSON：{line[:120]}"})
+        return out
 
     # ---- 命令 ----
 
@@ -213,6 +253,10 @@ class Session:
                 _emit({"_": "meta", "state": "已结束"})
             elif op == "queue":
                 self._queue_op(cmd)
+            elif op == "swap":
+                # 热切 V1（批 C）：整份策略文件切换，帧边界应用（本方法就在帧边界被调）
+                self._swap_strategy(str(cmd["strategy"]))
+                _emit({"_": "ack", "op": op, "seq": self.seq})
             elif op == "workers":
                 self.keeper.set_target(str(cmd["task"]), int(cmd["count"]))
                 _emit({"_": "ack", "op": op, "seq": self.seq})
@@ -248,17 +292,45 @@ class Session:
                                  skipped=tr.skipped)
         _emit({"_": "projection", "id": cmd.get("id"), "frame": to_json(frame)})
 
+    def _swap_strategy(self, strategy_file: str) -> None:
+        """热切（批 C）：装载新 manifest → 引擎换脑（同装配约束 + 续位）→ 重发 static/strategy。
+
+        失败（编译红/装配不兼容/地图名字校验）在这里抛 → _apply 的兜底把它变成
+        error 控制行 —— 会话继续跑旧策略，不静默也不崩。
+        """
+        from view.strategies import load_strategy_file
+
+        manifest, _assembly = load_strategy_file(Path(strategy_file))
+        self.engine.swap_strategy(manifest)
+        self.manifest = manifest
+        self.producer.manifest = manifest
+        if self._last_gs is not None:
+            for frame in self.producer.statics(self._last_gs):
+                if frame["topic"] == "static/strategy":
+                    _emit(frame)     # 事件式静态面：swap 后补发新图
+
     def _queue_op(self, cmd: dict) -> None:
+        from api.commands import QUEUE_OPS
+
         name = str(cmd.get("name") or "main")
         kind = str(cmd.get("kind") or "")
         items = [parse_item(i) for i in (cmd.get("items") or [])]
         q = self.runtime.queue(name)
+        if kind not in QUEUE_OPS:
+            raise ValueError(f"未知队列 kind {kind!r}（{'|'.join(sorted(QUEUE_OPS))}）")
         if kind == "submit":
             self.runtime.submit_queue(name, items)
         elif kind == "append":
             self.runtime.append(name, items)
         elif kind == "prepend":
             self.runtime.prepend(name, items)
+        elif kind == "insert":
+            index = int(cmd["index"])
+            self.runtime.insert(name, index, items)
+        elif kind == "replace_head":
+            if not items:
+                raise ValueError("replace_head：缺 items（要换上的新队首；清空请用 clear）")
+            self.runtime.replace_head(name, items)
         elif kind == "clear":
             self.runtime.clear(name)
         elif kind == "remove":
@@ -271,8 +343,6 @@ class Session:
             if q is None or sorted(order) != list(range(len(q.items))):
                 raise ValueError(f"reorder：order 必须是 0..{len(q.items) if q else 0}-1 的排列")
             self.runtime.reorder(name, [q.items[i] for i in order])
-        else:
-            raise ValueError(f"未知队列 kind {kind!r}")
 
 
 # ---------------- 两种驱动 ----------------
@@ -377,6 +447,10 @@ def main() -> int:
                     help="策略文件（strategy+assembly 两段 YAML）；缺省 = 内置常量")
     ap.add_argument("--map-plan", default=None,
                     help="地图规划文件路径（会话装配用它；缺省 = 手写出厂模板）")
+    ap.add_argument("--spawn", default=None, choices=("bl", "tr"),
+                    help="出生点布局（地图规划 spawns 的键；缺省 = 排序第一个）")
+    ap.add_argument("--control-file", default=None,
+                    help="控制文件路径（sc2 的命令通道：父进程 append 写、帧边界应用）")
     ap.add_argument("--seconds", type=float, default=600.0, help="时长上限（游戏秒）")
     ap.add_argument("--workers", type=int, default=12, help="sim：开局工兵数")
     ap.add_argument("--minerals", type=float, default=400.0, help="sim：开局矿")
@@ -390,7 +464,9 @@ def main() -> int:
     try:
         session = Session(driver=args.driver, reader=reader, cc=Point2(30.5, 30.5),
                           map_name=args.map, map_plan=args.map_plan,
-                          strategy_file=args.strategy_file)
+                          strategy_file=args.strategy_file,
+                          spawn=args.spawn,
+                          control_path=Path(args.control_file) if args.control_file else None)
         if args.driver == "sim":
             _run_sim(session, seconds=args.seconds, workers=args.workers,
                      minerals=args.minerals, tick_seconds=args.tick_seconds)

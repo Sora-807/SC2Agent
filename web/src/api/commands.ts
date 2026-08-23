@@ -72,15 +72,17 @@ export type SessionActionResult =
   | { ok: false; detail: string };
 
 export async function sessionAction(
-  action: "start" | "stop" | "tick",
+  action: "start" | "stop" | "tick" | "swap",
   opts: { autotick?: boolean; count?: number; driver?: "sim" | "sc2";
-          mapPlan?: string; strategy?: string } = {},
+          mapPlan?: string; strategy?: string; loadout?: string } = {},
 ): Promise<SessionActionResult> {
   const url = new URL("/api/session/" + action, API_BASE);
   if (action === "start" && opts.autotick === false) url.searchParams.set("autotick", "false");
   if (action === "start" && opts.driver) url.searchParams.set("driver", opts.driver);
   if (action === "start" && opts.mapPlan) url.searchParams.set("map_plan", opts.mapPlan);
   if (action === "start" && opts.strategy) url.searchParams.set("strategy", opts.strategy);
+  if (action === "start" && opts.loadout) url.searchParams.set("loadout", opts.loadout);
+  if (action === "swap" && opts.strategy) url.searchParams.set("strategy", opts.strategy);
   if (action === "tick" && opts.count) url.searchParams.set("count", String(opts.count));
   try {
     const res = await fetch(url.toString(), { method: "POST" });

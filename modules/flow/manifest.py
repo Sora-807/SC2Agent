@@ -27,6 +27,7 @@ from flow.predicates import (
     UNIMPLEMENTED_PREDICATE_OPS,
     UNIMPLEMENTED_SPATIAL_OPS,
 )
+from flow.templates import expand_strategy
 
 
 @dataclass
@@ -46,6 +47,9 @@ class StrategyManifest:
     description_zh: str = ""
     # I2：reason 标识符 → 中文（edges 的切换原因 / exit 的终局原因共用一张表）
     reasons: dict = field(default_factory=dict)
+    # ADR-0031（编译期模板展开）：从 _lib 导入的 step_id 列表 —— 展开产物与手写
+    # 同构，运行时零感知；这个标记只喂展示层（static/strategy.imported）
+    imported: list = field(default_factory=list)
 
 
 @dataclass
@@ -98,15 +102,18 @@ PARAM_TYPES = frozenset({"int", "float", "point", "bool", "str"})
 # display_name_zh/description_zh（I2）：step 的人类可读名与意图描述，随 static/strategy 下发。
 # locals（二十六轮 T8）：step 局部变量名声明（set_local 写 / {local} 读，换 step 清空）。
 STEP_KEYS = frozenset({"step_id", "branches", "display_name_zh", "description_zh", "locals"})
-# branch_id 是可选的分支稳定标识（B1 观测/读模型用；不写就按 index 定位）
-BRANCH_KEYS = frozenset({"when", "do", "branch_id"})
+# branch_id 是可选的分支稳定标识（B1 观测/读模型用；不写就按 index 定位）。
+# display_name_zh（ADR-0031 同批）：分支中文别名 —— 观测/转移历史读得出意图（与 rev 14
+# 槽位别名同一哲学：标识符归 branch_id，展示归别名）。
+BRANCH_KEYS = frozenset({"when", "do", "branch_id", "display_name_zh"})
 
 # strategy / assembly 顶层键白名单：删掉一个字段（如 on_exit）后，旧文件继续写它必须**报错**，
 # 不能静默忽略 —— 否则"删字段"就变成了"悄悄失效"（D5 的反面）。
 # display_name_zh/description_zh/reasons（I2）：可读名、意图描述、reason 中文创。
+# imports（ADR-0031）：模板引用节，parse 阶段展开（展开后不再出现在顶层键里）。
 STRATEGY_KEYS = frozenset({
     "id", "version", "group_slots", "params", "variables", "definitions",
-    "initial_step", "steps", "edges", "loop_limits",
+    "initial_step", "steps", "edges", "loop_limits", "imports",
     "display_name_zh", "description_zh", "reasons",
 })
 ASSEMBLY_KEYS = frozenset({"id", "groups", "strategy_instances", "production_sequence"})
@@ -132,8 +139,17 @@ def _check_top_level_keys(d: dict, allowed: frozenset, what: str) -> None:
     )
 
 
-def parse_strategy(yaml_str: str) -> StrategyManifest:
+def parse_strategy(yaml_str: str, templates: dict | None = None) -> StrategyManifest:
+    """`templates`（可选）= 模板库（`flow.templates.parse_lib` 的产物，来自 _lib.yaml）。
+    策略带 `imports` 时必须有它，否则编译错误 —— 不静默退回"导入的 step 凭空消失"。"""
     d = yaml.safe_load(yaml_str)
+    imported: list[str] = []
+    if isinstance(d, dict) and "imports" in d:
+        if not templates:
+            raise AssertionError(
+                "strategy 编译校验失败:\n- imports 需要模板库（strategies/_lib.yaml），"
+                "但这里没有装载 —— 用 StrategyStore/load_strategy_file 装配，或先补 _lib")
+        d, imported = expand_strategy(d, templates)
     _check_top_level_keys(d, STRATEGY_KEYS, "strategy")
     raw_steps = d["steps"]
     steps = {s["step_id"]: s for s in raw_steps}
@@ -150,6 +166,7 @@ def parse_strategy(yaml_str: str) -> StrategyManifest:
         display_name_zh=d.get("display_name_zh", "") or "",
         description_zh=d.get("description_zh", "") or "",
         reasons=d.get("reasons", {}) or {},
+        imported=imported,
     )
     validate_strategy(m)
     return m
@@ -608,6 +625,8 @@ def _validate_steps(m: StrategyManifest, err) -> None:
                     "拼错 when 会让条件被丢掉、这条分支变成无条件执行）")
             if "branch_id" in b:
                 _check_identifier(b["branch_id"], where, "branch_id", err)
+            if "display_name_zh" in b and not isinstance(b["display_name_zh"], str):
+                err(f"{where}: display_name_zh 必须是字符串，当前 {b['display_name_zh']!r}")
             if "when" not in b and i != len(branches) - 1:
                 err(f"{where}: else（无 when）分支必须且只能放在最后（spec-003 §2）")
             if "when" in b:

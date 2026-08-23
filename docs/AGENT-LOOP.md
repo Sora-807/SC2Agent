@@ -133,14 +133,18 @@ traces、未来的每个历史产物都得来一套——正是现在孤儿反�
 
 ## §6 闭环检查清单（给未来功能用）
 
-新加一个后端能力/数据时，过一遍——四项全过才算闭环，缺一项就是下一个孤儿：
+新加一个后端能力/数据时，过一遍——全过才算闭环，缺一项就是下一个孤儿：
 
+- [ ] **先问"能不能是一个文件"**：`system/surface.md` / `strategies/_lib.yaml` /
+      `maps/<bbox>.md` / `recordings/<id>.md` 都是这个原则的产物。三次孤儿工具教训
+      （notes.jsonl、read_current_strategy、write_surface）+ 两处退役（2026-08-23 工具
+      审视 19→17）都指向同一条：**新能力优先是一个只读文件，其次才是一个工具**。
 - [ ] `agent/client.py` 包了方法？
 - [ ] `agent/tools.py` 暴露了工具，**或** `agent/workspace.py` 挂了只读虚拟路径？
-- [ ] `write_surface`（`agent_tools()`）把它列进了"Agent 能读什么"？
+- [ ] `system/surface.md`（`agent_tools()` 渲染）把它列进了"Agent 能读什么"？
 - [ ] 提示词告诉 Agent 它存在 + 怎么用？
 
-> 这条清单本身可塞进 `write_surface` 的输出——让 Agent 也能反过来审计"我有没有够着"。
+> 这条清单本身可塞进 `system/surface.md` 的输出——让 Agent 也能反过来审计"我有没有够着"。
 
 ---
 

@@ -28,10 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from agentic.types import Tool
 from agentic.workspace.disk import DiskWorkspace
-from agentic.workspace.workspace import Workspace, WorkspaceConfig, WorkspaceError
+from agentic.workspace.workspace import Workspace, WorkspaceConfig, WorkspaceError, line_info
 
 from agent.client import ApiClient, ApiError
+from agent.memory_lint import lint_memory
 from agent.readonly import ReadOnlyArea
 
 PLAN_PREFIX = "plans/"
@@ -119,6 +121,12 @@ class ApiWorkspace(Workspace):
         self._disk = DiskWorkspace(scratch_root)
         self._changes = changes
         self._readonly: list[ReadOnlyArea] = readonly or []
+        # memory lint（A4）的软提示队列：写钩子记、lint 版文件工具取（写入照常）
+        self._lint_hints: list[str] = []
+
+    def drain_lint_hints(self) -> list[str]:
+        out, self._lint_hints = self._lint_hints, []
+        return out
 
     def _readonly_of(self, path: str) -> ReadOnlyArea | None:
         return next((a for a in self._readonly if a.handles(path)), None)
@@ -208,6 +216,12 @@ class ApiWorkspace(Workspace):
     # ---- 策略：YAML 两段直读直写（服务端编译期校验） ----
 
     def _save_strategy(self, sid: str, content: str) -> None:
+        if sid.startswith("_"):
+            # `_` 前缀 = 锁定保留名（模板库 `_lib` 等）：不改走 REST 也会在服务端被
+            # id 规则拒掉，但这里的文案能直接说清"它是模板库、只能看"
+            raise WorkspaceError(
+                f"strategies/{sid}.yaml 是锁定文件（`_` 前缀 = 模板库等人管资源，只读）——"
+                "想复用模板：在你的策略里 imports 引用它（写法看 read strategies/_lib.yaml）")
         try:
             doc = yaml.safe_load(content) or {}
         except yaml.YAMLError as exc:
@@ -251,6 +265,14 @@ class ApiWorkspace(Workspace):
         ro = self._readonly_of(path)
         if ro is not None:
             return ro.read(path)    # 只读区适配器自带错误文案（指路而非干巴巴 404）
+        if path == "strategies/_lib.yaml":
+            # 模板库（ADR-0031）：原文直读（锁定文件，REST 只有 GET /api/strategies/_lib）
+            try:
+                return self._client.strategy_lib_text()
+            except ApiError as exc:
+                raise WorkspaceError(
+                    f"读取失败（HTTP {exc.status}）：{_err_text(exc)}"
+                    "（没有 _lib.yaml = 这个部署没有模板库）") from None
         area, pid = _split(path)
         try:
             if area == "plan":
@@ -293,6 +315,9 @@ class ApiWorkspace(Workspace):
                 label=f"策略 {pid}"))
             return
         self._disk._write_file(path, content)
+        # A4 memory lint：写钩子软提示（不拒绝）。所有落盘路径（write/edit/insert/append
+        # —— 基类把它们全都组合成 _write_file）都过这里，提示由 lint 版文件工具附在写结果上。
+        self._lint_hints.extend(lint_memory(path, content))
 
     def _list_file_paths(self, prefix: str = "") -> list[str]:
         out: list[str] = []
@@ -309,6 +334,11 @@ class ApiWorkspace(Workspace):
         if prefix in ("", "strategies", "strategies/"):
             try:
                 out += [f"{STRATEGY_PREFIX}{r['id']}.yaml" for r in self._client.strategies_list()]
+            except ApiError:
+                pass
+            try:
+                self._client.strategy_lib_text()   # 探测：404 = 这个部署没有模板库
+                out.append(f"{STRATEGY_PREFIX}_lib.yaml")
             except ApiError:
                 pass
         for area in self._readonly:
@@ -348,3 +378,89 @@ class ApiWorkspace(Workspace):
             return hashlib.md5(self._read_file(path).encode("utf-8")).hexdigest()
         except WorkspaceError:
             return None
+
+
+# ---- lint 版文件工具（A4）：行为与框架内置一致，写结果尾部附 memory 软提示 ----
+# vendor 不改；引擎把 "write"/"append"/"edit"/"insert" 按名解析到内置工具（engine._seed_tools），
+# spec 侧 drop 掉名字条目、换成这里的直接 factory（assemble 对直接 factory 不查 registry）。
+
+def _lint_tools_of(ws) -> list[Tool]:
+    def _n(content: str) -> int:
+        lines, _ = line_info(content)
+        return len(lines)
+
+    def hints(msg: str) -> str:
+        extra = ws.drain_lint_hints() if hasattr(ws, "drain_lint_hints") else []
+        return msg + "".join("\n[lint] " + h for h in extra)
+
+    def run(fn):
+        async def wrapped(arguments: dict) -> str:
+            try:
+                return fn(arguments)
+            except Exception as error:  # noqa: BLE001 —— 与框架 _safe 同款：错误以 error: 前缀回喂
+                return f"error: {error}"
+        return wrapped
+
+    def write_file(a: dict) -> str:
+        ws.write_text(a["path"], a["content"])
+        return hints(f"wrote {a['path']} ({_n(a['content'])} lines)")
+
+    def append_file(a: dict) -> str:
+        ws.append_text(a["path"], a["content"])
+        return hints(f"appended {_n(a['content'])} lines to {a['path']}")
+
+    def edit_file(a: dict) -> str:
+        count = ws.edit_text(a["path"], a["old_string"], a["new_string"],
+                             bool(a.get("replace_all", False)))
+        return hints(f"edited {a['path']} ({count} replacement(s))")
+
+    def insert_file(a: dict) -> str:
+        ws.insert_text(a["path"], int(a["line_number"]), a["content"])
+        return hints(f"inserted {_n(a['content'])} lines into {a['path']} after line {a['line_number']}")
+
+    return [
+        Tool(name="write",
+             description=("Create or fully replace a UTF-8 text file. Existing files must be read first. "
+                          "Writing memory/*.md appends soft lint hints ([ID]/状态字段) to the result."),
+             parameters={"type": "object",
+                         "properties": {"path": {"type": "string"},
+                                        "content": {"type": "string",
+                                                    "description": "full UTF-8 text content to write"}},
+                         "required": ["path", "content"]},
+             function=run(write_file)),
+        Tool(name="append",
+             description="Append text to the end of a UTF-8 text file. Existing files must be read first.",
+             parameters={"type": "object",
+                         "properties": {"path": {"type": "string"},
+                                        "content": {"type": "string", "description": "text to append"}},
+                         "required": ["path", "content"]},
+             function=run(append_file)),
+        Tool(name="edit",
+             description=("Edit an existing UTF-8 text file by replacing literal text. old_string must appear "
+                          "exactly once unless replace_all=true; use an empty new_string to delete the match."),
+             parameters={"type": "object",
+                         "properties": {"path": {"type": "string"},
+                                        "old_string": {"type": "string", "description": "literal text to replace; must match exactly"},
+                                        "new_string": {"type": "string", "description": "literal replacement; use '' to delete the match"},
+                                        "replace_all": {"type": "boolean", "description": "replace all matches (default false; when false old_string must be unique)"}},
+                         "required": ["path", "old_string", "new_string"]},
+             function=run(edit_file)),
+        Tool(name="insert",
+             description="Insert text into a UTF-8 text file after a given line number.",
+             parameters={"type": "object",
+                         "properties": {"path": {"type": "string"},
+                                        "line_number": {"type": "integer", "description": "insert after this line (1-based; 0 = top of file)"},
+                                        "content": {"type": "string"}},
+                         "required": ["path", "line_number", "content"]},
+             function=run(insert_file)),
+    ]
+
+
+def lint_aware_file_tool_factories() -> dict:
+    """name → factory(agent) → Tool。AdvisorSpec 用它替换内置的四个写入工具。"""
+    out = {}
+    for name in ("write", "append", "edit", "insert"):
+        def factory(agent, _name=name):
+            return next((t for t in _lint_tools_of(agent.workspace) if t.name == _name), None)
+        out[name] = factory
+    return out

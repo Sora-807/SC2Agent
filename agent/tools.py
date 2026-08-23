@@ -1,14 +1,18 @@
-"""agent.tools：语义工具面（文件工作区改造后，2026-08-22）。
+"""agent.tools：语义工具面（文件工作区改造后，2026-08-22；2026-08-23 工具审视 19→17）。
 
 **给什么工具就等于给什么权限**（§6 P1）。规划文件的读写不再走 CRUD 包装 ——
 文件契约（ls/read/grep/edit/insert/…）由引擎按 agent.workspace（ApiWorkspace：
-plans/ + map-plans/ 虚拟目录 + scratch）装配，见 agent/workspace.py。这里只剩：
+plans/ + map-plans/ + strategies/ 虚拟目录 + scratch）装配，见 agent/workspace.py。这里只剩：
 
 - `observe`      读当前观察包（ADR-0009 的"当前事实"；规则是替换而非追加）
-- `write_surface` 读"能做什么 / 为什么不能做"（禁止清单连原因一起给，省得它反复试）
 - `propose`      对局域唯一改动通道（校验通过即自动应用；记录 ChangeRecord）
 - `simulate_plan`/`start_session` 规划域的**动作**（干跑/起会话，文件表达不了）
-- `list_modules`/`read_module`/`read_current_strategy` 战术素材（只读）
+- `list_modules`/`read_module` 战术素材（只读的参考生产模块库）
+
+写面清单（能做什么/为什么不能做）**不是工具**：挂成只读文件 `system/surface.md`
+（读=文件，SurfaceArea 渲染 /api/agent/tools）。`read_current_strategy` 同批退役
+—— 它 dump 的是写死常量而非当前会话实装的策略（对 live 有误导）；替代：
+`read strategies/<id>.yaml` + observe 的策略段（带 strategy_ref）。
 
 **不给** `queue_op` / `set_worker_quota`：那是直接改对局状态。agent 想改就提提案。
 """
@@ -37,12 +41,6 @@ def make_tools(client: ApiClient, *, source: str = "live",
         return (text[:OBSERVATION_CHARS]
                 + f"\n\n[机器可读] {facts}\n"
                 + f"[提醒] 提案/命令里的 based_on_seq 用 {obs.get('seq')}")
-
-    async def write_surface(_args: dict) -> str:
-        try:
-            return json.dumps(client.agent_tools(), ensure_ascii=False, indent=1)
-        except ApiError as exc:
-            return f"取写面清单失败：{exc}"
 
     async def propose(args: dict) -> str:
         body = {
@@ -84,12 +82,6 @@ def make_tools(client: ApiClient, *, source: str = "live",
                          "先调它再做判断；它给的 seq 就是提案要回填的 based_on_seq。"),
             parameters={"type": "object", "properties": {}, "additionalProperties": False},
             function=observe,
-        ),
-        Tool(
-            name="write_surface",
-            description="读「能做什么 / 为什么不能做」的清单（含不支持的操作及原因）。",
-            parameters={"type": "object", "properties": {}, "additionalProperties": False},
-            function=write_surface,
         ),
         Tool(
             name="propose",
@@ -209,20 +201,23 @@ def make_planning_tools(client: ApiClient) -> list[Tool]:
         if driver not in ("offline", "sim", "sc2"):
             return "拒绝：driver 只能是 offline（进程内假世界）/ sim（沙盒子进程）/ sc2（真机）"
         strategy = str(args.get("strategy") or "").strip() or None
+        loadout = str(args.get("loadout") or "").strip() or None
         try:
             d = client.session_start(
                 driver=driver, map_plan=args.get("map_plan"), strategy=strategy,
-                autotick=bool(args.get("autotick", True)))
+                loadout=loadout, autotick=bool(args.get("autotick", True)))
         except ApiError as exc:
             return f"启动会话失败：{_err(exc)}"
         keep = {k: v for k, v in d.items() if k in ("state", "driver", "map_plan_path",
                                                     "frame_source", "error")}
-        mp = str(args.get("map_plan") or "出厂模板")
-        st = strategy or "内置默认"
+        mp = str(args.get("map_plan") or (f"loadout·{loadout}" if loadout else "出厂模板"))
+        st = strategy or (f"loadout 内含" if loadout else "内置默认")
         return (f"会话已启动（driver={driver}，map_plan={mp}，strategy={st}）："
                 f"{json.dumps(keep, ensure_ascii=False)}")
 
-    # ---- 战术素材（参考模块库 + 当前策略；策略文件可写 —— 二十七轮放开，免审） ----
+    # ---- 战术素材（参考模块库；策略文件可写 —— 二十七轮放开，免审。
+    # read_current_strategy 已退役（2026-08-23）：dump 写死常量而非当前会话实装；
+    # 替代 = read strategies/<id>.yaml（含 _lib.yaml 模板库）+ observe 策略段） ----
 
     async def list_modules(_args: dict) -> str:
         from planner.build_order import MODULE_REGISTRY
@@ -253,13 +248,6 @@ def make_planning_tools(client: ApiClient) -> list[Tool]:
         out += [_item_line(i, it) for i, it in enumerate(items)]
         return _clip("\n".join(out))
 
-    async def read_current_strategy(_args: dict) -> str:
-        from api.session import DEFAULT_ASSEMBLY, DEFAULT_STRATEGY
-
-        return _clip("当前会话运行的策略与装配（沙盒默认；真机/live 一样从这里装配）：\n"
-                     "```yaml\n# ---- strategy ----\n" + DEFAULT_STRATEGY.strip()
-                     + "\n\n# ---- assembly ----\n" + DEFAULT_ASSEMBLY.strip() + "\n```")
-
     return [
         Tool(name="simulate_plan",
              description=("离线干跑：真 planner 投影 + 前瞻警报（不需要会话）。给 queue 直接试，"
@@ -275,7 +263,9 @@ def make_planning_tools(client: ApiClient) -> list[Tool]:
         Tool(name="start_session",
              description=("启动会话（可选带一份地图规划进游戏）。driver：sim = 沙盒子进程"
                           "（默认，验证装配）；sc2 = 真机，**会打开一个 SC2 游戏进程**，"
-                          "确认用户要真机才用；offline = 进程内假世界（最轻）。"),
+                          "确认用户要真机才用；offline = 进程内假世界（最轻）。"
+                          "loadout：装配清单 id（GET /api/loadouts 看有哪些）—— 一发入魂："
+                          "地图规划 + 策略 + 生产序列自动入队，显式 map_plan/strategy 覆盖它。"),
              parameters={"type": "object",
                          "properties": {"driver": {"type": "string",
                                                    "enum": ["offline", "sim", "sc2"]},
@@ -284,6 +274,9 @@ def make_planning_tools(client: ApiClient) -> list[Tool]:
                                         "strategy": {"type": "string",
                                                      "description": ("策略文件 id（strategies/<id>.yaml），"
                                                                      "缺省内置默认 —— 验证你写的策略就传它")},
+                                        "loadout": {"type": "string",
+                                                    "description": ("装配清单 id（三件套引用：map_plan/"
+                                                                    "strategy/plan），生产序列自动入队")},
                                         "autotick": {"type": "boolean",
                                                      "description": "默认 true；仅测试/单步调试传 false"}},
                          "additionalProperties": False},
@@ -298,9 +291,4 @@ def make_planning_tools(client: ApiClient) -> list[Tool]:
                          "properties": {"ref": {"type": "string"}},
                          "required": ["ref"], "additionalProperties": False},
              function=read_module),
-        Tool(name="read_current_strategy",
-             description=("读策略清单 + 内置默认策略与装配 YAML（策略 2026-08-23 起可写："
-                          "strategies/<id>.yaml，保存过编译校验，start_session(strategy=) 装配）。"),
-             parameters={"type": "object", "properties": {}, "additionalProperties": False},
-             function=read_current_strategy),
     ]

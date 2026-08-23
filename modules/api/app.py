@@ -41,6 +41,8 @@ DEFAULT_MAP_PLANS_DIR = Path("runtime/map-plans")
 #: 对局记录的**建议**落点（二十六轮：复盘要有真数据源 —— live 帧流同步落 JSONL）。
 #: 同样是 runtime 数据：测试不传路径就不录，serve_api 显式传 runtime/recordings。
 DEFAULT_RECORDINGS_DIR = Path("runtime/recordings")
+#: 装配清单（B1）的**建议**落点：loadout 是人管的装配预设（三件套引用），只读。
+DEFAULT_LOADOUTS_DIR = Path("runtime/loadouts")
 
 
 def create_app(frame_dir: Path | str | None = None,
@@ -49,6 +51,7 @@ def create_app(frame_dir: Path | str | None = None,
                map_plans_dir: Path | str | None = None,
                recordings_dir: Path | str | None = None,
                strategies_dir: Path | str | None = None,
+               loadouts_dir: Path | str | None = None,
                agent_talk: "object | None" = None,
                agent_base: str | None = None) -> FastAPI:
     registry = SourceRegistry(Path(frame_dir) if frame_dir else DEFAULT_FRAME_DIR)
@@ -96,6 +99,12 @@ def create_app(frame_dir: Path | str | None = None,
 
     app.state.strategies = StrategyStore(
         Path(strategies_dir) if strategies_dir else None, seed=(DEFAULT_STRATEGY, DEFAULT_ASSEMBLY))
+    #: 装配清单（B1）：`session/start?loadout=<id>` 解析三件套 + 生产序列自动入队。
+    #: 只读、文件即真相（默认内存态恒空 —— serve_api 显式传 runtime/loadouts）。
+    from view.loadouts import LoadoutStore
+
+    app.state.loadouts = LoadoutStore(
+        Path(loadouts_dir) if loadouts_dir else None)
     #: 对话式顾问（P3 切片 A）。两条装配路径：测试注入现成实例（FakeLLM 脚本 +
     #: transport client）；serve_api 传 agent_base（自己回环访问 REST —— 工具面与
     #: UI 同一入口 U7，不走 store 直连）。None = 端点报「未启用」。

@@ -150,12 +150,15 @@ def agent_tools() -> dict:
     return {
         "commands": [
             {"method": "POST", "path": "/api/commands/queue/{op}",
-             "ops": ["submit", "append", "prepend", "clear", "remove", "reorder"],
+             "ops": ["submit", "append", "prepend", "insert", "replace_head",
+                     "clear", "remove", "reorder"],
              "body": {"based_on_seq": "必填（取自观察包 facts.based_on_seq）",
                       "name": "队列名，默认 main",
-                      "items": "submit/append/prepend 用",
-                      "index": "remove 用", "order": "reorder 用（0..n-1 的排列）"},
-             "note": "队列 op 轻量、不走 validate/compile；执行时按 constraint 门控（S11）"},
+                      "items": "submit/append/prepend/insert/replace_head 用",
+                      "index": "remove/insert 用（insert：剩余队列位置，0=队首前）",
+                      "order": "reorder 用（0..n-1 的排列）"},
+             "note": "队列 op 轻量、不走 validate/compile；执行时按 constraint 门控（S11）。"
+                     "插入天然只具后效性 —— 已执行项不在队列里（BUILD 进在途、TRAIN 直接走）"},
             {"method": "POST", "path": "/api/commands/workers",
              "body": {"based_on_seq": "必填", "task": "mineral|gas|idle",
                       "count": "**维持** N 个（目标值、幂等），不是再派 N 个"}},
@@ -168,8 +171,11 @@ def agent_tools() -> dict:
         ],
         "rules": [
             "所有命令必带 based_on_seq；落后超过阈值会返 409 并回报当前 seq —— 重取观察再试（R8）",
-            "策略是文件（strategies/<id>.yaml，可写，保存即编译校验）—— 会话启动时装配，"
-            "不能热改正在跑的会话（2026-08-23 放开写策略后的边界）",
+            "策略是文件（strategies/<id>.yaml，可写，保存即编译校验；常用打法用 imports 引"
+            " strategies/_lib.yaml 模板库）。新会话装配生效；对局中换策略走 "
+            "POST /api/session/swap?strategy=<id>（同名 step 续位，group_slots 必须一致）",
+            "loadout（runtime/loadouts/<id>.yaml）一发装配：session/start?loadout=<id> = "
+            "地图规划 + 策略 + 生产序列自动入队",
             "flow 提交必须 validate + compile（R6）；生产队列 op 不需要",
             "不支持的东西会返 400 并带原因，别重试同一个动作",
         ],

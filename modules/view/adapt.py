@@ -433,6 +433,7 @@ def production_frame(snap: dict, catalog: Catalog) -> ProductionFrame:
             queue=f["queue"],
             stable_id=f["stable_id"],
             kind=_flight_kind(f["stable_id"], catalog),
+            from_index=f.get("from_index"),
             builder_tag=f["builder_tag"],
             expect_pos=None if f["expect_pos"] is None
             else (f["expect_pos"].x, f["expect_pos"].y),

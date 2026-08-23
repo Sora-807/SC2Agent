@@ -11,6 +11,17 @@ def strategies_list(request: Request) -> list[dict]:
     return request.app.state.strategies.list()
 
 
+@router.get("/api/strategies/_lib")
+def strategies_lib(request: Request) -> dict:
+    """模板库原文（ADR-0031）。锁定文件没有 REST 写面 —— 这个端点只读，
+    agent 侧 `read strategies/_lib.yaml` 走它（看模板怎么接、参数怎么绑）。"""
+    path = request.app.state.strategies.lib_path()
+    if path is None:
+        raise HTTPException(status_code=404,
+                            detail="没有模板库 _lib.yaml（--strategies 目录下不存在）")
+    return {"text": path.read_text(encoding="utf-8")}
+
+
 @router.get("/api/strategies/{sid}/doc")
 def strategies_doc(sid: str, request: Request) -> dict:
     """文档形状（strategy + assembly 两段；agent 文件工作区读写的载体）。"""

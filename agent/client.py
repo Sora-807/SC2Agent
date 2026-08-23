@@ -104,16 +104,26 @@ class ApiClient:
         return self._put(f"/api/map-plans/{pid}", {"hunks": hunks})
 
     def session_start(self, *, driver: str = "sim", map_plan: str | None = None,
-                      strategy: str | None = None, autotick: bool = True) -> dict:
+                      strategy: str | None = None, loadout: str | None = None,
+                      spawn: str | None = None, autotick: bool = True) -> dict:
         q = f"driver={driver}&autotick={'true' if autotick else 'false'}"
         if map_plan:
             q += f"&map_plan={urllib.parse.quote(map_plan)}"
         if strategy:
             q += f"&strategy={urllib.parse.quote(strategy)}"
+        if loadout:
+            q += f"&loadout={urllib.parse.quote(loadout)}"
+        if spawn:
+            q += f"&spawn={urllib.parse.quote(spawn)}"
         return self._post(f"/api/session/start?{q}", {})
 
     def strategies_list(self) -> list[dict]:
         return self._get("/api/strategies")
+
+    def strategy_lib_text(self) -> str:
+        """模板库 `_lib.yaml` 原文（ADR-0031；只读，锁定文件没有写面）。"""
+        r = self._get("/api/strategies/_lib")
+        return r.get("text") if isinstance(r, dict) else str(r)
 
     def strategy_doc(self, sid: str) -> dict:
         """策略文件的**文档形状**（strategy + assembly 两段）—— 文件视图的读写体。"""

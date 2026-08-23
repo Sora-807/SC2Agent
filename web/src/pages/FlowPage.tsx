@@ -372,7 +372,7 @@ export function FlowPage() {
                                 style={{ display: "-webkit-box", WebkitLineClamp: 2,
                                          WebkitBoxOrient: "vertical", overflow: "hidden",
                                          fontSize: "10px", lineHeight: "12px" }}>
-                            {b.when ?? "else"}
+                            {b.nameZh ? b.nameZh + "｜" : ""}{b.when ?? "else"}
                           </span>
                           <span className={"shrink-0 whitespace-nowrap "
                             + (hit
@@ -410,7 +410,7 @@ export function FlowPage() {
         const b = rows.find((r) => r.index === branchPick.idx);
         if (!b) return null;
         return (
-          <Card title={`分支详情 · ${stepZh(branchPick.step)}（${branchPick.step}）#${b.index}${b.id ? "（" + b.id + "）" : ""}`}
+          <Card title={`分支详情 · ${stepZh(branchPick.step)}（${branchPick.step}）#${b.index}${b.id ? "（" + b.id + "）" : ""}${b.nameZh ? " · " + b.nameZh : ""}`}
                 right={
                   <button className="btn btn-ghost"
                           onClick={() => setBranchPick(null)}>关闭</button>

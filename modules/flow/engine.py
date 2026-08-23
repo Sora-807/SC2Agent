@@ -54,6 +54,10 @@ class FlowEngine:
             raise AssertionError("地图名字校验失败:\n- " + "\n- ".join(name_problems))
         self._m = manifest
         self._port = port
+        # 热切 V1（批 C）要留着：swap 用改了 strategy_ref 的 assembly shim 重跑全套
+        # validate_assembly（同装配约束），并按实例参数重建 params。
+        self._assembly = assembly
+        self._instance_params = dict(assembly.strategy_instances[0].params)
         # Allocator 可由会话装配注入（ADR-0030 D3.5）：它同时是生产/经济的工兵所有权表（WorkerPoolPort），
         # 三方必须共用同一个实例；不注入就自建，保持既有用法与测试不变。
         self._alloc = allocator if allocator is not None else Allocator(catalog=catalog)
@@ -131,6 +135,65 @@ class FlowEngine:
                 self._track_hp(gs)
                 return  # 首条命中，本帧结束
         self._track_hp(gs)
+
+    # ---- 热切 V1（批 C）----
+
+    def swap_strategy(self, manifest: StrategyManifest) -> None:
+        """整份策略切换（对运行中的引擎；帧边界由会话层保证调用时机）。
+
+        同装配约束：当前 assembly 不换（组结构/绑定装配期固定），新策略必须吃得上它 ——
+        用改了 `strategy_ref` 的 assembly shim 跑全套 `validate_assembly`
+        （slots 绑定/产能覆盖/实例参数类型全查），不满足抛 AssertionError →
+        调用方转 409，**引擎状态不受影响**（先校验后变更，本方法没有中间态）。
+
+        续位规则：新策略含同名 `active_step` → 停留该 step（locals/timers 保留）；
+        不含 → 从 `initial_step` 起、locals/timers 清零。variables 是策略级：
+        同名保留现值、新名取默认、消失的丢弃。对已结束的策略 swap = 复活（done 清零）。
+        """
+        from dataclasses import replace as _replace
+
+        shim = _replace(
+            self._assembly,
+            strategy_instances=[
+                _replace(self._assembly.strategy_instances[0], strategy_ref=manifest.id)
+            ],
+        )
+        validate_assembly(manifest, shim)
+        name_problems = validate_map_names(manifest, self._region_layer)
+        if name_problems:
+            raise AssertionError("地图名字校验失败:\n- " + "\n- ".join(name_problems))
+
+        old = self._m
+        old_step = self._active_step
+        keep = old_step in manifest.steps
+        new_step = old_step if keep else manifest.initial_step
+        variables = {v: spec.get("default") for v, spec in manifest.variables.items()}
+        variables.update({k: val for k, val in self._variables.items()
+                          if k in manifest.variables})
+        self._m = manifest
+        self._strategy_ref = manifest.id
+        self._params = {p: spec.get("default") for p, spec in manifest.params.items()}
+        self._params.update(self._instance_params)
+        self._variables = variables
+        self._locals = dict(self._locals) if keep else {}
+        self._timers = dict(self._timers) if keep else {}
+        self._active_step = new_step
+        entries = {k: v for k, v in self._step_entries.items() if k in manifest.steps} if keep else {}
+        entries[new_step] = entries.get(new_step, 0) + 1
+        self._step_entries = entries
+        self._step_transition_count = 0
+        # 新策略的第一帧命令不该被旧去重键吞掉（旧签名只对"完全相同的重复命令"去重，
+        # 热切后第一条恰恰可能是想重发的同款命令）
+        self._last_emitted = {}
+        self._branch_hit = None
+        self._done = False
+        self.exit_record = None
+        self._transitions.append({
+            "from_step": old_step, "to": new_step, "kind": "swap",
+            "reason": (f"{old.id}@{old.version}→{manifest.id}@{manifest.version}"
+                       + ("（续位）" if keep else "（重起）")),
+            "at": self._last_game_time if self._last_game_time is not None else 0.0,
+        })
 
     # ---- 计时器 / 交火态（二十六轮 T8；供 EvalCtx 的 timers/combat 注入）----
 

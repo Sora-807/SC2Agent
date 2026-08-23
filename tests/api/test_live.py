@@ -95,7 +95,9 @@ def test_commands_go_through_the_subprocess_and_take_effect(client: TestClient):
         "based_on_seq": seq, "name": "main",
         "items": [{"op": "train", "type": "terran/marine", "count": 2}]})
     assert r.status_code == 200
-    assert r.json()["detail"]["dispatched"] is True, "父进程给的是「已送达」而非「已生效」"
+    # B7 shape 统一：live 与 offline 同键（items = 这条命令携带的项数；
+    # "已生效"与否看下一帧的 frame/production —— 下面的轮询就是干这个的）
+    assert r.json()["detail"]["items"] == 1
 
     # 等下一个帧边界，帧里应该看到这条队列。
     # 注意 poll 到"还没有 production 帧/队列"的窗口是正常的 —— 命令要等帧边界才生效。

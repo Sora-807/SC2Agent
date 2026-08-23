@@ -34,9 +34,12 @@ from pathlib import Path
 import yaml
 
 from flow.manifest import parse_assembly, parse_strategy
+from flow.templates import parse_lib, seed_lib_text
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 DEFAULT_STRATEGY_ID = "default"
+#: 模板库文件名（ADR-0031）。`_` 前缀 = 锁定：只有人改它，agent/REST 可读不可写
+LIB_FILENAME = "_lib.yaml"
 
 
 class StrategyStore:
@@ -47,9 +50,26 @@ class StrategyStore:
         self._lock = threading.Lock()
         #: id -> {"doc": 原始 YAML dict, "locked": bool, "updated_at": float}
         self._items: dict[str, dict] = {}
+        #: 模板库（ADR-0031）：`_lib.yaml` 的解析产物；带 imports 的策略保存时喂给 parse_strategy。
+        #: 坏库当场抛（锁定文件人管，坏了要在启动时说清楚，不能等某个策略保存时才炸）。
+        #: 出厂种子在 modules/flow/data/_lib.yaml（runtime/ 整目录 gitignore）——
+        #: 工作副本缺失就从种子播种，人改的是 runtime 副本。
+        self._templates: dict[str, dict] = {}
         if dir is not None:
             dir.mkdir(parents=True, exist_ok=True)
+            lib_path = dir / LIB_FILENAME
+            if not lib_path.is_file():
+                from flow.templates import seed_lib_text
+
+                try:
+                    lib_path.write_text(seed_lib_text(), encoding="utf-8")
+                except OSError:
+                    pass    # 播不了不拦启动（只读目录等场景）；imports 编译会如实红
+            if lib_path.is_file():
+                self._templates = parse_lib(lib_path.read_text(encoding="utf-8"))
             for p in sorted(dir.glob("*.yaml")):
+                if p.stem.startswith("_"):
+                    continue    # `_` 前缀 = 锁定保留名（模板库等），不是策略
                 item = self._read(p)
                 if item is not None:
                     self._items[item["id"]] = item
@@ -97,6 +117,16 @@ class StrategyStore:
         p = self._dir / f"{sid}.yaml"
         return p if p.is_file() else None
 
+    def templates(self) -> dict[str, dict]:
+        """模板库（`_lib.yaml` 的解析产物）。空 dict = 目录里没有 _lib（imports 会编译红）。"""
+        return self._templates
+
+    def lib_path(self) -> Path | None:
+        if self._dir is None:
+            return None
+        p = self._dir / LIB_FILENAME
+        return p if p.is_file() else None
+
     # ---- 写 ----
 
     def create(self, body: dict) -> dict:
@@ -139,7 +169,7 @@ class StrategyStore:
             if not isinstance(assembly, dict) or not assembly:
                 errors.append("文档必须有非空 assembly 段（groups/strategy_instances）")
             if not errors:
-                errors += _compile_errors(sid, strategy, assembly)
+                errors += _compile_errors(sid, strategy, assembly, templates=self._templates)
             if errors:
                 return {"ok": False, "errors": [{"text_zh": e} for e in errors]}
             it["doc"] = {"strategy": strategy, "assembly": assembly}
@@ -188,15 +218,18 @@ class StrategyStore:
         tmp.replace(path)
 
 
-def _compile_errors(sid: str, strategy: dict, assembly: dict) -> list[str]:
+def _compile_errors(sid: str, strategy: dict, assembly: dict,
+                    templates: dict | None = None) -> list[str]:
     """parse_strategy/parse_assembly 全套编译期校验；StrategyManifest 的报错本来
     就带 step/branch 定位（中文），原样透传。strategy.id 与文件名不要求一致
     （文件名是 authoring 键，内层 id 是运行时标识）—— 但 strategy_instances 的
-    strategy_ref 必须对上内层 id，validate_assembly 会抓。"""
+    strategy_ref 必须对上内层 id，validate_assembly 会抓。
+    `templates`（ADR-0031）：`_lib.yaml` 的解析产物，喂给 parse_strategy 展开 imports。"""
     import copy
 
     try:
-        m = parse_strategy(yaml.safe_dump(copy.deepcopy(strategy), allow_unicode=True))
+        m = parse_strategy(yaml.safe_dump(copy.deepcopy(strategy), allow_unicode=True),
+                           templates=templates)
     except (AssertionError, KeyError, TypeError, yaml.YAMLError) as exc:
         return [str(exc)]
     try:
@@ -214,11 +247,17 @@ def _compile_errors(sid: str, strategy: dict, assembly: dict) -> list[str]:
 
 def load_strategy_file(path: Path) -> tuple:
     """策略文件 → (StrategyManifest, FlowAssembly)。会话装配（Offline/run_session）用；
-    坏文件/编译失败原样抛（调用方 400 带原因 —— 会话起不来要说清楚是策略的问题）。"""
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    坏文件/编译失败原样抛（调用方 400 带原因 —— 会话起不来要说清楚是策略的问题）。
+    模板库取同目录 `_lib.yaml`（StrategyStore 播种/人改的工作副本）；没有则退
+    出厂种子（modules/flow/data/_lib.yaml）—— 换机器/自定义策略目录也能装配 imports。"""
+    path = Path(path)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     strategy = raw.get("strategy") or raw          # 允许裸 strategy 形态（没套两层）
     assembly = raw.get("assembly") or {}
     if not assembly:
         raise ValueError(f"{path.name} 缺 assembly 段（groups/strategy_instances）")
-    return parse_strategy(yaml.safe_dump(strategy, allow_unicode=True)), \
+    lib = path.parent / LIB_FILENAME
+    lib_text = lib.read_text(encoding="utf-8") if lib.is_file() else seed_lib_text()
+    templates = parse_lib(lib_text) if lib_text else {}
+    return parse_strategy(yaml.safe_dump(strategy, allow_unicode=True), templates=templates), \
         parse_assembly(yaml.safe_dump(assembly, allow_unicode=True))

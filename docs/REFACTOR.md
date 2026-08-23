@@ -15,7 +15,7 @@
 藏在体量里**——优先级是 **先修 bug（§1）→ 拆 god file（§2）→ 清死代码（§3）→ 去重（§4）**。
 
 > **进度（2026-08-23）**：§1 全修 + §2 三个 god file 全拆（WORKLOG §0.32-0.34）。
-> 剩 §3 死代码清理、§4 去重、B6/B7。
+> 剩 §3 死代码清理、§4 去重、B6。B7 已关（2026-08-23 §0.41：live/offline 命令返回统一 {queue/task, items, accepted_seq}，QUEUE_OPS 三处共用一份）。
 
 ---
 
@@ -32,7 +32,7 @@
 | B4 | `view/observe.py:99,101,223,232,238,242` | 提案状态字符串硬编码（`"待审批"/"已拒绝"/"已失效"`），而 `view/proposals.py:35` 有同值 `STATUS_*` 常量。改常量时 observe 过滤**静默失效**，agent 拿到错的 pending 列表——直接违反全仓"不静默"红线。**已修**：6 处全换 `STATUS_*`。 | P1 |
 | B5 | `planner/opening.py:17` vs `planner/economy.py:24` | 指挥中心供给**自相矛盾**：种子态设 `supply_cap=15`，模拟建 CC 加 13，真实 LotV 是 11。早期人口节奏前后不一致。**已修**：三份拷贝（含 worldsim `bases*15`）收敛到 `economy.supply_provided` 单源 = **13** —— 审计原文"真实 LotV 是 11"经查不适用于本机：本机 game_data_dump `food_provided=13` + 真机录像首帧 1CC/0depot → cap 13。附带发现真机起始 8 工 vs 种子 12 工（开放清单 #15）。 | P1 |
 | B6 | `planner/planner.py:73,131,138` + `planner/sim_state.py:71-72` + `planner/economy.py:23-26` | **三族 catalog 扩到 174 条了，planner 还是只认 Terran**。气矿写死 `terran/refinery`、人口写死 `terran/supplydepot`、检测 `type_name=="REFINERY"`、`supply_provided` 只列 Terran。I9 只解了数据层，投影器消费不了非人族。 | P1 |
-| B7 | `api/session.py:312` vs `api/live.py:340` | 命令返回 shape 不一致：`queue_op` 一个返回 `items` 一个返回 `dispatched`，`set_worker_target` 同样只在 live 多 `dispatched`。`CommandResult.detail: dict[str,Any]` 兜不住。 | P1 |
+| B7 | `api/session.py:312` vs `api/live.py:340` | 命令返回 shape 不一致：`queue_op` 一个返回 `items` 一个返回 `dispatched`，`set_worker_target` 同样只在 live 多 `dispatched`。`CommandResult.detail: dict[str,Any]` 兜不住。**已修（§0.41）**：统一 `{queue/task, items, accepted_seq}`。 | P1 |
 | B8 | `view/encode.py:21-26` | 双 docstring：两个相邻 `"""`，Python 只留第一个当 `__doc__`，更长那个解释（值裁剪/uint8 截断理由）被当无效表达式吞掉。**已修**：合并成一份。 | P2 |
 
 **修法要点**：B1/B2 先修（UI 直接假数据）；B4 改成 `from view.proposals import STATUS_*`；

@@ -60,6 +60,27 @@ OPERATOR_ZH: dict[str, str] = {
     "and": "且", "or": "或", "not": "非",
 }
 
+#: reason 标识符 → 中文的**全局默认表**（ADR-0031 同批，I2 的延伸）。
+#: 覆盖模板库与内置策略共用的那批出口词；策略自己的 reasons 只写增量、同名覆盖默认
+#:（`static/strategy.reasons` = 本表 ∪ 策略覆盖，view.statics 合并）。
+#: 没进表的 reason 不是错误 —— 前端退回标识符显示（U6/C4：zh 单一真相源在后端）。
+REASON_ZH: dict[str, str] = {
+    "READY": "就绪",
+    "FORMED": "成型",
+    "ARRIVED": "抵达",
+    "BREAKOUT": "突围",
+    "IN_PLACE": "就位",
+    "SIEGED": "已架起",
+    "SKIP": "跳过",
+    "STRAGGLED": "脱队",
+    "RESUME": "恢复推进",
+    "CLEARED": "威胁清除",
+    "DONE": "完成",
+    "FAIL": "失败",
+    "TIMEOUT": "超时",
+    "LOOP_LIMIT": "转移上限",
+}
+
 #: 动作原子中文名（I4 的延伸：分支详情里的动作行同样读得出意图）。
 ACTION_ZH: dict[str, str] = {
     "move_to": "移动",
