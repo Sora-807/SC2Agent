@@ -87,7 +87,12 @@ tests/api/test_loadouts_swap.py 18）；前端 361 passed + tsc/build 绿；夹�
 - **流式分段错位修复**（用户反馈：先吐正文再思考时，思考行插到正文上方）：live 状态从
   {steps,text} 两段改为**按到达顺序的时间线**（`shell/chat-live.ts` 纯 reducer + 5 测试），
   LiveMessage 交错渲染（正文分段各归其位；历史消息仍是两段形态不受影响）。
-- 回归：后端 839/4s，前端 373 + tsc/build 0。
+- **策略保存可读性 lint**（用户拍板「校验型钩子」补齐）：`view/strategies.strategy_lint_hints`
+  —— 保存**成功**后点名缺 display_name_zh/description_zh 的 step、没中文覆盖的 reason
+  （默认表 ∪ 策略 reasons 之外的），`{"ok": true, "hints": [...]}` 随结果返回；agent 工作区
+  把 hints 送进 memory lint 同一条提示通道（写结果尾部可见）。不拒绝 —— 硬错误仍在编译校验。
+  _lib 导入的 step 自带模板中文名，不误报。
+- 回归：后端 843/4s，前端 373 + tsc/build 0。
 
 ## 0.35 三十一轮：三文档目录合一 docs/（分类收纳 + 内容修剪）（2026-08-23，未提交）
 

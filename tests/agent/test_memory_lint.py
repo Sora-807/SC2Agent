@@ -77,3 +77,37 @@ def test_lib_file_is_readable_but_not_writable(tmp_path: Path):
     assert "step_templates" in text
     with pytest.raises(WorkspaceError, match="锁定文件"):
         ws.write_text("strategies/_lib.yaml", "step_templates: {}")
+
+
+def test_strategy_save_hints_ride_the_lint_channel(tmp_path: Path):
+    """策略保存成功后的可读性提示走 memory lint 同一条通道（写结果尾部点名）。"""
+    from agent.client import ApiClient
+    from agent.workspace import ApiWorkspace, ChangeLog
+
+    VALID = {"strategy": {}, "assembly": {}}   # 占位：transport 只对 save 返回 hints
+
+    class _FakeTransport:
+        def __call__(self, method, path, body):
+            if method == "GET" and path == "/api/strategies":
+                return 200, []                  # 不存在 → create → PUT
+            if method == "POST" and path == "/api/strategies":
+                return 200, {"id": "s"}
+            if method == "PUT" and path == "/api/strategies/s/doc":
+                return 200, {"ok": True, "errors": [],
+                             "hints": [{"text_zh": "step 'w' 缺 display_name_zh"}]}
+            return 404, {"detail": "not found"}
+
+    ws = ApiWorkspace(ApiClient(transport=_FakeTransport()), tmp_path, ChangeLog())
+    ws.write_text("strategies/s.yaml", yaml_dump_two_segments())
+    hints = ws.drain_lint_hints()
+    assert any("display_name_zh" in h for h in hints)
+
+
+def yaml_dump_two_segments() -> str:
+    return ("strategy:\n  id: s\n  group_slots: [main]\n  initial_step: w\n"
+            "  steps:\n    - step_id: w\n      branches:\n        - do: []\n"
+            "  edges: []\n"
+            "assembly:\n  id: a\n  groups:\n    - group_id: G\n      composition:\n"
+            "          terran/marine: {min: 1, target: 1, max: 1}\n"
+            "  strategy_instances:\n    - instance_id: s1\n      strategy_ref: s\n"
+            "      bindings: {main: G}\n      params: {}\n")

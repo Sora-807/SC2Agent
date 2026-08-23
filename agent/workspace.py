@@ -239,6 +239,11 @@ class ApiWorkspace(Workspace):
         if isinstance(r, dict) and not r.get("ok", True):
             errs = "；".join(str(e.get("text_zh") or e) for e in (r.get("errors") or []))
             raise WorkspaceError(f"编译校验未通过：{errs}")
+        # 保存成功的可读性软提示（step 缺中文名/reason 没中文）走 memory lint 同一条
+        # 提示通道 —— 写结果尾部点名，补上再继续
+        if isinstance(r, dict):
+            self._lint_hints.extend(
+                str(h.get("text_zh") or h) for h in (r.get("hints") or []))
 
     def _strategy_exists(self, sid: str) -> bool:
         try:

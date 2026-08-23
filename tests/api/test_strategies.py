@@ -170,3 +170,69 @@ def test_store_seeds_lib_and_imports_compile(tmp_path: Path):
     assert r["ok"] is True, r["errors"]
     m_doc = store.doc("lib_rush")
     assert "imports" in m_doc["strategy"]      # 转储保留 imports（编辑还在源形态）
+
+
+# ---------------- 可读性软提示（2026-08-23 用户拍板「校验型钩子」） ----------------
+
+def test_strategy_lint_hints_name_missing_readability():
+    """缺中文名的 step、没中文覆盖的 reason → 点名提醒（不拒绝）。"""
+    from flow.vocab import REASON_ZH
+    from view.strategies import strategy_lint_hints
+
+    m_doc = {
+        "id": "linty", "version": 1, "group_slots": ["main"],
+        "params": {}, "variables": {},
+        "initial_step": "w",
+        "steps": [
+            {"step_id": "w", "branches": [
+                {"when": {"op": ">=", "args": [{"op": "game_time"}, 999]},
+                 "do": [{"op": "exit_step", "kind": "done", "reason": "CUSTOM"}]},
+                {"do": []}]},
+            {"step_id": "fin", "branches": [
+                {"do": [{"op": "exit_strategy", "kind": "done", "reason": "DONE"}]}]},
+        ],
+        "edges": [{"from": "w", "to": "fin", "kind": "done", "reason": "CUSTOM"}],
+    }
+    from flow.manifest import parse_strategy
+
+    m = parse_strategy(yaml.safe_dump(m_doc))
+    hints = strategy_lint_hints(m)
+    assert any("step 'w'" in h and "display_name_zh" in h for h in hints)
+    assert any("CUSTOM" in h and "没有中文名" in h for h in hints)
+
+    # 补齐后清零：中文名/描述 + reason 进 reasons（或落默认表）
+    ok_doc = {
+        **m_doc,
+        "reasons": {"CUSTOM": "自定义"},
+        "steps": [
+            {**m_doc["steps"][0], "display_name_zh": "等待", "description_zh": "等一会儿"},
+            {**m_doc["steps"][1], "display_name_zh": "收尾", "description_zh": "结束"},
+        ],
+    }
+    assert strategy_lint_hints(parse_strategy(yaml.safe_dump(ok_doc))) == []
+    # 默认表覆盖的 reason（FORMED 等）不用自己写
+    assert "FORMED" in REASON_ZH
+
+
+def test_save_doc_returns_hints_without_rejecting(tmp_path: Path):
+    """保存成功（ok=True）也能带可读性提示 —— 拒绝留给编译错误，提醒走 hints。"""
+    from api.session import DEFAULT_ASSEMBLY, DEFAULT_STRATEGY
+    from view.strategies import StrategyStore
+
+    store = StrategyStore(tmp_path, seed=(DEFAULT_STRATEGY, DEFAULT_ASSEMBLY))
+    store.create({"id": "lint_rush"})
+    r = store.save_doc("lint_rush", IMPORT_DOC)      # IMPORT_DOC 的 finish step 没写中文
+    assert r["ok"] is True, r["errors"]
+    assert any("finish" in h["text_zh"] for h in r["hints"])
+
+
+def test_imported_steps_carry_template_names_no_hint(tmp_path: Path):
+    """从 _lib 导入的 step 自带模板的中文名/描述 —— 不产生误报。"""
+    from api.session import DEFAULT_ASSEMBLY, DEFAULT_STRATEGY
+    from view.strategies import StrategyStore
+
+    store = StrategyStore(tmp_path, seed=(DEFAULT_STRATEGY, DEFAULT_ASSEMBLY))
+    assert "gather" in store.templates()             # 种子库已播种
+    store.create({"id": "lib_rush"})
+    r = store.save_doc("lib_rush", IMPORT_DOC)
+    assert not any("gather" in h["text_zh"] for h in r["hints"])

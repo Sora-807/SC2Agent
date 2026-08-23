@@ -33,8 +33,9 @@ from pathlib import Path
 
 import yaml
 
-from flow.manifest import parse_assembly, parse_strategy
+from flow.manifest import parse_assembly, parse_strategy, StrategyManifest
 from flow.templates import parse_lib, seed_lib_text
+from flow.vocab import REASON_ZH
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 DEFAULT_STRATEGY_ID = "default"
@@ -172,10 +173,13 @@ class StrategyStore:
                 errors += _compile_errors(sid, strategy, assembly, templates=self._templates)
             if errors:
                 return {"ok": False, "errors": [{"text_zh": e} for e in errors]}
+            # 可读性软提示（2026-08-23 用户拍板「校验型钩子」）：保存成功≠读得出意图
+            # —— step 缺中文名/描述、reason 没中文覆盖，点名提醒但不拒绝（同 memory lint 哲学）
+            hints = strategy_lint_hints(_compile_manifest(strategy, self._templates))
             it["doc"] = {"strategy": strategy, "assembly": assembly}
             it["updated_at"] = time.time()
             self._write(sid)
-            return {"ok": True, "errors": []}
+            return {"ok": True, "errors": [], "hints": [{"text_zh": h} for h in hints]}
 
     def remove(self, sid: str) -> None:
         with self._lock:
@@ -243,6 +247,49 @@ def _compile_errors(sid: str, strategy: dict, assembly: dict,
     except AssertionError as exc:
         return [str(exc)]
     return []
+
+
+def _compile_manifest(strategy: dict, templates: dict | None = None) -> StrategyManifest | None:
+    """编译出 manifest（lint 用）；编译失败返回 None（save_doc 在此之前已把 errors 返回）。"""
+    import copy
+
+    try:
+        return parse_strategy(
+            yaml.safe_dump(copy.deepcopy(strategy), allow_unicode=True), templates=templates)
+    except (AssertionError, KeyError, TypeError, yaml.YAMLError):
+        return None
+
+
+def strategy_lint_hints(m: StrategyManifest | None) -> list[str]:
+    """保存成功后的可读性软提示（不拒绝）：
+
+    - step 缺 `display_name_zh` / `description_zh` → 点名补（策略图与转移历史读得出
+      意图靠它们；从 _lib 导入的 step 自带模板的中文名，不会误报）；
+    - edges / exit 用到的 reason 不在 `flow.vocab.REASON_ZH` 默认表也不在本策略
+      `reasons` → 转移历史/终局会显示裸标识符，提醒补一条。
+    """
+    if m is None:
+        return []
+    hints: list[str] = []
+    for sid, step in m.steps.items():
+        missing = [f for f in ("display_name_zh", "description_zh") if not step.get(f)]
+        if missing:
+            hints.append(f"step {sid!r} 缺 {'、'.join(missing)}"
+                         "（图中文名 + 意图一句话 —— 转移历史读得出意图靠它们）")
+    covered = set(REASON_ZH) | set(m.reasons or {})
+    used: set = {e.get("reason") for e in m.edges}
+    for step in m.steps.values():
+        for b in step.get("branches", []):
+            for a in (b.get("do") or []):
+                if isinstance(a, dict) and a.get("op") in ("exit_step", "exit_strategy"):
+                    used.add(a.get("reason"))
+    bare = sorted(r for r in used if r and r not in covered)
+    if bare:
+        hints.append(f"reason {bare} 没有中文名（不在默认表也不在本策略 reasons）——"
+                     "转移历史/终局会显示裸标识符；在 reasons: 里补一条")
+    if len(hints) > 6:
+        hints = hints[:6] + [f"…（还有 {len(hints) - 6} 条，先补这些）"]
+    return hints
 
 
 def load_strategy_file(path: Path) -> tuple:
