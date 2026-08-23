@@ -100,7 +100,7 @@ export function QueueSidebar() {
 
       <Section title="放置引用">
         <select value={st.refId ?? ""} onChange={(e) => st.patch({ refId: e.target.value || null })}
-                title="placement 选项来自这份地图规划：槽位/点位以「规划id/名」限定引用，预设固定建造点（蓝方主矿气井1…）全局可用"
+                title="placement 选项来自这份地图规划：槽位/点位以「规划id/名」限定引用（槽位名=简写标记：D 补给区/R·F·S 生产区/+挂件区，尺寸语义三族通用），预设固定建造点（蓝方主矿气井1…）全局可用"
                 className="w-full rounded border border-l2 bg-inset px-1 text-label">
           {spaceRefPlans.length === 0 && <option value="">（该空间无地图规划）</option>}
           {spaceRefPlans.map((p) => (

@@ -149,7 +149,7 @@ export function MapPlanSidebar() {
       </Card>
 
       {/* 用户拍板去掉切换选项卡：点位与槽位两组**常显堆叠**，双向高亮直接可见 */}
-      <Card title="点位与槽位"
+      <Card title="点位与槽位" help="槽位名是简写标记（rev 14）：D=2×2 补给类建造区（人族补给站/神族水晶塔）、R/F/S=3×3 生产类建造区（字母是人族助记，本质是生产区）、+ = 2×2 挂件/附属区。标记与种族无关——本质是「尺寸+类别」的建造区；括号里的中文名（补给站1）只是展示别名。"
             right={<span className="text-note text-faint">
               点位 {marks.length} · 槽位 {proj.slots.length}
             </span>}>
@@ -194,8 +194,8 @@ export function MapPlanSidebar() {
                     + (st.selectedName === s.name
                       ? "border border-l2 bg-active"
                       : "border border-transparent hover:bg-raised")}>
-                <span className="font-medium text-dim">{s.aliasZh || s.name}</span>
-                <span className="text-faint" title={`标记名 ${s.name}`}>{s.name} · {SLOT_KIND_ZH[s.kind] ?? s.kind} {s.size}×{s.size}</span>
+                <span className="font-medium text-dim" title={`标记名 ${s.name}`}>{s.aliasZh || s.name}</span>
+                <span className="text-faint">{s.aliasZh ? `${s.name} · ` : ""}{SLOT_KIND_ZH[s.kind] ?? s.kind} {s.size}×{s.size}</span>
                 <span className={"ml-auto text-note text-ghost " + T.mono}>
                   {s.pos[0].toFixed(1)},{s.pos[1].toFixed(1)}
                 </span>

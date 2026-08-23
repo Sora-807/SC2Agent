@@ -38,8 +38,9 @@ _RESERVED_LABEL = {"base": "CC", "geyser": "gas", "mineral": "M"}
 
 #: 词表脚注（每次渲染附在网格末尾 —— 读文件的人不一定先读过 maps/index.md）
 LEGEND = ("词表：`·` 空可建 · `✗` 地形障碍 · `gas/CC/M` 预设固定点；"
-           "**其余标签就是槽位正式名**（D=补给站 R=兵营 F=工厂 S=星港，序号=序，`+`=挂件位；"
-           "引用/编辑用它，中文别名看规划文件 alias_zh）")
+           "**其余标签就是槽位正式名**（D=2×2 补给区 R/F/S=3×3 生产区 `+`=挂件区 —— "
+           "字母是人族助记，语义是「尺寸+类别」的建造区，与种族无关；"
+           "引用/编辑用正式名，中文别名看规划文件 alias_zh）")
 
 _placeable_cache: tuple[tuple[int, int], bytes] | None = None
 

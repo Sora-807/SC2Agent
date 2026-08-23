@@ -89,7 +89,7 @@ export function QueueTable(props: {
             <tr>
               <th className="w-8">#</th><th className="w-24">op</th>
               <th>目标</th><th className="w-20">数量</th>
-              <th className="w-44">放置</th><th className="w-24" />
+              <th className="w-44" title="槽位名是简写标记：D=2×2 补给区 · R/F/S=3×3 生产区（人族助记，本质是类别建造区）· +=挂件区；预设固定建造点（蓝方主矿气井1…）用全名">放置 ?</th><th className="w-24" />
             </tr>
           </thead>
           <tbody>
