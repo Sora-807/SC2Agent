@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 
 const src = readFileSync(new URL("../src/shell/ChatDock.tsx", import.meta.url), "utf-8");
 const client = readFileSync(new URL("../src/api/agent-chat.ts", import.meta.url), "utf-8");
+// 流式事件的转移逻辑在 chat-live.ts（2026-08-23 时间线化），行为断言见 chat-live.test.ts
+const live = readFileSync(new URL("../src/shell/chat-live.ts", import.meta.url), "utf-8");
 
 function code(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -84,18 +86,24 @@ describe("ChatDock：真流式（2026-08-22 十五轮，接 BaseAgent start_stre
   });
 
   it("第一个思考 token 即点亮思考行：reasoning 分片直通 ThinkRow（running 态）", () => {
-    const c = code(src);
+    const c = code(live);
     expect(c).toMatch(/ev\.kind === "reasoning"/);
     expect(c).toMatch(/kind: "reasoning", text: ev\.text, running: true/);
-    expect(c).not.toContain("Typewriter");           // 假流式打字机退役（真分片直出）
-    expect(c).not.toContain("typing");               // typing 标记随 Typewriter 退役
+    expect(code(src)).not.toContain("Typewriter");   // 假流式打字机退役（真分片直出）
+    expect(code(src)).not.toContain("typing");       // typing 标记随 Typewriter 退役
   });
 
   it("工具调用从参数分片起就可见（运行中行），完成事件落真名/参数/结果", () => {
-    const c = code(src);
+    const c = code(live);
     expect(c).toMatch(/ev\.kind === "tool_call"/);
     expect(c).toContain('tool: "…"');                // 参数分片期：名字未知的运行中行
     expect(c).toContain("result_preview");
+  });
+
+  it("流式轮按到达顺序交错渲染（2026-08-23 分段错位修复）：时间线 + LiveMessage", () => {
+    const c = code(src);
+    expect(c).toContain("applyLiveEvent(p ?? [], ev)");   // 事件 → 时间线 reducer
+    expect(c).toContain("<LiveMessage entries={live}");   // 交错渲染入口
   });
 
   it("「顾问思考中」扫光占位退役（十五轮用户拍板：冗余）；工具行运行态保留扫光", () => {

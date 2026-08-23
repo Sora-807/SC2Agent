@@ -10,12 +10,14 @@
  *   运行中 —— 轮询假流式与「思考中」扫光占位已退役；
  * - 时间戳 hover 才出现（降低常驻噪音）。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type UIEvent } from "react";
 import {
   getChat, sayChatStream, type ChatChange, type ChatEvent, type ChatMessage, type ChatStep,
 } from "../api/agent-chat";
 import { useFrames } from "../store/frames";
 import { Markdown } from "./markdown";
+import { chatScroll, isNearBottom } from "./chat-scroll";
+import { applyLiveEvent, type LiveEntry } from "./chat-live";
 
 /** 对话时间戳 = 挂钟时间 HH:MM（fmtTime 是游戏时间格式化器，别拿来用） */
 function clock(t: number): string {
@@ -108,7 +110,7 @@ function ToolRow({ step, running = false }: {
 /** 流式期间的本地步骤行（running 标记动效；落盘后的 steps 没有这个字段） */
 type LiveStep = ChatStep & { running?: boolean };
 
-/** 一条 agent 消息：过程（按事件顺序的内联折叠行）+ 全宽叙述正文 + 改动按钮行。 */
+/** 一条 agent 消息（历史形态：steps 全列 + 正文收尾）。流式中的交错形态见 LiveMessage。 */
 function AgentMessage({ m }: { m: Omit<ChatMessage, "steps"> & { steps?: LiveStep[] } }) {
   return (
     <div className="group/msg">
@@ -129,6 +131,24 @@ function AgentMessage({ m }: { m: Omit<ChatMessage, "steps"> & { steps?: LiveSte
       <div className="h-5 text-right text-note tabular-nums text-ghost opacity-0 transition-opacity group-hover/msg:opacity-100">
         {clock(m.at)}
       </div>
+    </div>
+  );
+}
+
+/** 流式中的当前轮：**按事件到达顺序**交错渲染（正文分段各归其位，思考/工具行不再
+ *  跳到已输出正文的上方 —— 2026-08-23 用户反馈的分段错位 bug）。 */
+function LiveMessage({ entries }: { entries: LiveEntry[] }) {
+  return (
+    <div className="group/msg">
+      {entries.map((e, i) => e.kind === "text"
+        ? (
+          <div key={i} className="py-0.5 text-body leading-6 text-dim">
+            <Markdown text={e.text} />
+          </div>
+        )
+        : e.step.kind === "reasoning"
+          ? <ThinkRow key={i} text={e.step.text} running={e.step.running ?? false} />
+          : <ToolRow key={i} step={e.step} running={e.step.running ?? false} />)}
     </div>
   );
 }
@@ -169,9 +189,21 @@ export function ChatDock() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [chatErr, setChatErr] = useState<string | null>(null);
-  /** 流式中的当前轮（事件累积；round 到达后由服务端真源替换） */
-  const [live, setLive] = useState<{ steps: LiveStep[]; text: string } | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  /** 流式中的当前轮：按到达顺序的时间线（round 到达后由服务端真源替换） */
+  const [live, setLive] = useState<LiveEntry[] | null>(null);
+  // ---- 滚动跟随（chat-scroll.ts 的转移表；用户往上拨 = 钉住阅读位 + 显示回底浮钮）----
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [follow, setFollowState] = useState(true);
+  const followRef = useRef(true);          // effect 闭包要读最新值，state 不保证同步
+  const setFollow = (v: boolean): void => { followRef.current = v; setFollowState(v); };
+  /** 平滑跳底途中忽略中间落点（不然按钮会闪一下再消失） */
+  const jumpingRef = useRef(false);
+
+  const scrollToListBottom = (smooth: boolean): void => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  };
 
   useEffect(() => {
     if (!api.ok) return;
@@ -185,58 +217,31 @@ export function ChatDock() {
   }, [api.ok]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    // 只有本来就在底部才跟着滚；用户往上拨时阅读位置钉住（浮钮出现，见渲染）
+    if (chatScroll(followRef.current, { type: "content" }).scrollToBottom) {
+      scrollToListBottom(false);
+    }
   }, [messages, live]);
 
-  /** SSE 事件 → 本地过程行。规则：
-   *  - reasoning 分片追加到「运行中」的思考行（没有就开一行，第一个 token 即点亮）；
-   *  - tool_call 参数分片开一行「运行中」工具（名字在完成事件才有）；
-   *  - tool_call 完成事件收掉占位行、落真名/参数/结果；
-   *  - turn_end 收全部运行态（下一轮的思考另起一行）。 */
-  const applyEvent = (ev: ChatEvent): void => {
-    if (ev.type === "delta" && ev.kind === "reasoning") {
-      setLive((p) => {
-        const steps = [...(p?.steps ?? [])];
-        const last = steps.at(-1);
-        if (last && last.kind === "reasoning" && last.running) {
-          steps[steps.length - 1] = { kind: "reasoning", text: last.text + ev.text, running: true };
-        } else {
-          steps.push({ kind: "reasoning", text: ev.text, running: true });
-        }
-        return { steps, text: p?.text ?? "" };
-      });
-    } else if (ev.type === "delta" && ev.kind === "content") {
-      setLive((p) => ({ steps: p?.steps ?? [], text: (p?.text ?? "") + ev.text }));
-    } else if (ev.type === "delta" && ev.kind === "tool_call") {
-      setLive((p) => {
-        const steps = (p?.steps ?? []).map((s): LiveStep =>
-          s.kind === "reasoning" && s.running ? { ...s, running: false } : s);
-        const last = steps.at(-1);
-        if (last && last.kind === "tool" && last.running) {
-          steps[steps.length - 1] = { ...last, args: (last.args || "") + ev.text };
-        } else {
-          steps.push({ kind: "tool", tool: "…", args: ev.text, preview: "", duration_ms: 0, running: true });
-        }
-        return { steps, text: p?.text ?? "" };
-      });
-    } else if (ev.type === "tool_call") {
-      setLive((p) => {
-        const steps = (p?.steps ?? []).map((s): LiveStep => ({ ...s, running: false }));
-        const i = steps.map((s) => s.kind === "tool" && s.tool === "…").lastIndexOf(true);
-        const done: LiveStep = {
-          kind: "tool", tool: ev.tool,
-          args: ev.args ? JSON.stringify(ev.args) : "{}",
-          preview: ev.result_preview ?? "", duration_ms: 0,
-        };
-        if (i >= 0) steps[i] = done;
-        else steps.push(done);
-        return { steps, text: p?.text ?? "" };
-      });
-    } else if (ev.type === "turn_end") {
-      setLive((p) => p
-        ? { steps: p.steps.map((s): LiveStep => ({ ...s, running: false })), text: p.text }
-        : p);
+  const onListScroll = (e: UIEvent<HTMLDivElement>): void => {
+    const near = isNearBottom(e.currentTarget);
+    if (jumpingRef.current) {
+      if (near) jumpingRef.current = false;   // 跳底动画到达；中间落点全忽略
+      else return;
     }
+    if (near !== followRef.current) setFollow(near);
+  };
+
+  const jumpToBottom = (): void => {
+    jumpingRef.current = true;
+    setFollow(true);
+    scrollToListBottom(true);
+  };
+
+  /** SSE 事件 → 时间线（chat-live.ts 的纯 reducer；规则与测试锁都在那里）：
+   *  正文/思考/工具按**到达顺序**交错落位 —— 后到的思考不再插到已输出正文的上方。 */
+  const applyEvent = (ev: ChatEvent): void => {
+    setLive((p) => applyLiveEvent(p ?? [], ev));
   };
 
   const send = (): void => {
@@ -244,7 +249,8 @@ export function ChatDock() {
     if (!text || busy) return;
     setBusy(true);
     setChatErr(null);
-    setLive({ steps: [], text: "" });
+    setLive([]);
+    setFollow(true);   // 发出消息 = 想看回应：恢复跟随（chat-scroll 的 send 语义）
     setMessages((m) => [...m, { role: "user", text, at: Date.now() / 1000 }]);
     setInput("");
     sayChatStream(text, (ev) => {
@@ -280,20 +286,32 @@ export function ChatDock() {
         <span className="font-semibold text-strong">对话</span>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3">
-        {messages.length === 0 && !live && (
-          <div className="text-note text-ghost">
-            和顾问说第一句话（例：「看看默认规划，试算 300 秒，告诉我卡在哪」）。
-            它能直接读改生产/地图规划、干跑试算、记忆你的偏好。
-          </div>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={listRef} onScroll={onListScroll}
+             className="min-h-0 flex-1 space-y-3 overflow-auto p-3">
+          {messages.length === 0 && !live && (
+            <div className="text-note text-ghost">
+              和顾问说第一句话（例：「看看默认规划，试算 300 秒，告诉我卡在哪」）。
+              它能直接读改生产/地图规划、干跑试算、记忆你的偏好。
+            </div>
+          )}
+          {messages.map((m, i) => m.role === "user"
+            ? <UserMessage key={i} m={m} />
+            : <AgentMessage key={i} m={m} />)}
+          {live && <LiveMessage entries={live} />}
+        </div>
+        {/* 往上拨时出现（右下角）：点击平滑回底并恢复跟随；钉住阅读期间流式不再拽走位置 */}
+        {!follow && (
+          <button
+            onClick={jumpToBottom}
+            title="回到最新（跟随新内容）"
+            className="absolute bottom-3 right-3 flex h-7 w-7 items-center justify-center rounded-full border border-l2 bg-raised text-dim shadow-md hover:bg-inset hover:text-strong"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+              <path d="M6 1.5v8M2.5 6.5 6 10l3.5-3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
         )}
-        {messages.map((m, i) => m.role === "user"
-          ? <UserMessage key={i} m={m} />
-          : <AgentMessage key={i} m={m} />)}
-        {live && (
-          <AgentMessage m={{ role: "agent", text: live.text, at: Date.now() / 1000, steps: live.steps }} />
-        )}
-        <div ref={bottomRef} />
       </div>
 
       <div className="border-t border-l1 p-2">

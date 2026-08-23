@@ -73,6 +73,22 @@
 tests/api/test_loadouts_swap.py 18）；前端 361 passed + tsc/build 绿；夹具按 REV 16 重生成。
 真机（sc2）swap 端到端待用户验一次（控制文件通道已被 sim 子进程测试覆盖）。
 
+## 0.42 三十五轮：提示词六条整改 + 记忆工作区种子 + 流式分段错位（2026-08-23，未提交）
+
+- **提示词重写**（用户六条评审）：规则去重（「不能热改」×4 →「你做不到的事」一处 + surface.md 引用）；
+  术语统一（生产规划/提案（propose）/观察包（observe）/地图规划）；开局文件名点名（user-preferences +
+  strategy-notes + session/current）；**格式约定归各记忆文件头部**（提示词只说"见文件头部"，单一出处）；
+  「你做不到的事」只留原则（具体边界以 system/surface.md 为准）；新增「记忆写入触发」段（拍板/撞墙/
+  对局结束/轮末覆盖写 session/current——"轮"=一次交互回合/surface 变更对账）。全文 ~5000→3350 字。
+- **记忆工作区种子**（用户拍板"目录丢了要能自动初始化"）：`agent/seeds/` 随库存档当前模板
+  （runtime/ gitignore；含 replays/README 与 session/current 骨架），`agent/memory_seed.py`
+  在 AgentTalk/单回合 runner 装配时**只补缺失、绝不覆盖**（用户修改优先）；种子与现役副本的
+  write_surface 字样改指 system/surface.md。tests/agent/test_memory_seed.py 四条锁。
+- **流式分段错位修复**（用户反馈：先吐正文再思考时，思考行插到正文上方）：live 状态从
+  {steps,text} 两段改为**按到达顺序的时间线**（`shell/chat-live.ts` 纯 reducer + 5 测试），
+  LiveMessage 交错渲染（正文分段各归其位；历史消息仍是两段形态不受影响）。
+- 回归：后端 839/4s，前端 373 + tsc/build 0。
+
 ## 0.35 三十一轮：三文档目录合一 docs/（分类收纳 + 内容修剪）（2026-08-23，未提交）
 
 用户拍板「合并成一个文件夹 + 分类 + 保留精华、删否决/无意义」：

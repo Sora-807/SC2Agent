@@ -138,6 +138,9 @@ def main() -> int:
     args = ap.parse_args()
     task = args.task or (PLANNING_TASK if args.demo == "planning" else DEFAULT_TASK)
 
+    from agent.memory_seed import seed_memory_workspace
+
+    seed_memory_workspace(Path(args.workspace))   # 记忆工作区丢失时从随库种子补齐
     out = asyncio.run(run_round(
         base=args.base, task=task, dry=args.dry, source=args.source,
         trace_root=Path(args.traces), workspace_root=Path(args.workspace),

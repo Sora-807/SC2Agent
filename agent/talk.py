@@ -118,6 +118,11 @@ class AgentTalk:
         self._readonly_proposals = Path(proposals_log) if proposals_log else None
         self._readonly_map_plans = Path(map_plans_dir) if map_plans_dir else None
         self._round_timeout = float(round_timeout)
+        # 记忆工作区种子（2026-08-23 用户拍板）：目录丢了/换机器，从随库模板自动补齐
+        #（只补缺失，用户的修改永远优先）
+        from agent.memory_seed import seed_memory_workspace
+
+        seed_memory_workspace(self._workspace_root)
         self._target = target
         self._max_turns = max_turns
         self._changes = ChangeLog()
