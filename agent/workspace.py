@@ -323,6 +323,25 @@ class ApiWorkspace(Workspace):
                     and not any(a.handles(p) for a in self._readonly)]
         return sorted(out)
 
+    def snapshot(self) -> dict[str, str]:
+        """工作区快照 = **可写自留地**的内容（引擎每轮起止都会调）。
+
+        只读区（录像/轨迹/提案史/地图网格）刻意不进快照：它们是不可变历史，
+        嵌进每轮快照只会把 trace 撑爆（2026-08-23 事故：快照嵌快照指数到 4.2GB）。
+        ls/read/grep 照常可见它们 —— 只是"快照"这个搬运动作不搬运历史。
+        """
+        out: dict[str, str] = {}
+        for path in self._disk._list_file_paths():
+            if any(a.handles(path) for a in self._readonly):
+                continue
+            if path.startswith((PLAN_PREFIX, MAP_PREFIX, STRATEGY_PREFIX)):
+                continue    # 规划/策略走 REST，内容在服务端有单份真相
+            try:
+                out[path] = self._disk._read_file(path)
+            except WorkspaceError:
+                continue
+        return out
+
     def _current_version(self, path: str) -> str | None:
         """内容哈希当版本号：read-before-write 的一致性判断不依赖文件系统 mtime。"""
         try:

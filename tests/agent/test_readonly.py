@@ -57,15 +57,25 @@ def test_recordings_area_rejects_raw_jsonl(tmp_path: Path):
 
 
 def test_trace_area_whitelist_and_escape(tmp_path: Path):
+    """顶层小文件挂、子目录（快照/检查点）与大文件绝不挂 —— 2026-08-23 指数增长事故的锁。"""
     root = tmp_path / "traces" / "2026-01-01_run1"
     root.mkdir(parents=True)
     (root / "trace.md").write_text("# 轨迹", encoding="utf-8")
-    (root / "trace.html").write_text("<html>大文件</html>", encoding="utf-8")
+    (root / "trace.html").write_text("<html>可视化</html>", encoding="utf-8")
+    snap = root / "workspace_snapshots"
+    snap.mkdir()
+    (snap / "initial.json").write_text('{"嵌套快照": true}', encoding="utf-8")
+    (root / "huge.json").write_text("x" * (2 * 1024 * 1024 + 1), encoding="utf-8")
     area = TraceArea(tmp_path / "traces")
+    # 顶层小文件可挂；子目录快照与超限大文件不进清单
     assert area.list_paths() == ["traces/2026-01-01_run1/trace.md"]
     assert area.read("traces/2026-01-01_run1/trace.md") == "# 轨迹"
     with pytest.raises(WorkspaceError, match="白名单"):
         area.read("traces/2026-01-01_run1/trace.html")
+    with pytest.raises(WorkspaceError, match="白名单|上限"):
+        area.read("traces/2026-01-01_run1/workspace_snapshots/initial.json")
+    with pytest.raises(WorkspaceError, match="上限"):
+        area.read("traces/2026-01-01_run1/huge.json")
     with pytest.raises(WorkspaceError):
         area.read("traces/../../etc/passwd")
 
@@ -167,3 +177,23 @@ def test_maps_area_mounted_in_workspace(tmp_path: Path):
     assert "D1" in ws.read_text("maps/layout-bl/39_31_41_34.md")
     with pytest.raises(WorkspaceError, match="只读区"):
         ws.write_text("maps/layout-bl/1_1_2_2.md", "篡改")
+
+
+def test_workspace_snapshot_excludes_readonly_and_rest(tmp_path: Path):
+    """引擎每轮起止都会 snapshot()：只搬 scratch，历史只读区与 REST 区绝不进快照
+    （2026-08-23 事故：traces 快照嵌快照指数到 4.2GB → MemoryError/假性停滞）。"""
+    client = ApiClient(base="http://127.0.0.1:1")
+    from agent.readonly import default_areas
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "memory" ).mkdir()
+    (scratch / "memory" / "user-preferences.md").write_text("偏好", encoding="utf-8")
+    ws = ApiWorkspace(
+        client, scratch, ChangeLog(),
+        readonly=default_areas(client=client, trace_root=tmp_path / "traces",
+                               recordings_dir=_recordings_dir(tmp_path),
+                               proposals_log=tmp_path / "proposals.jsonl",
+                               map_plans_dir=_map_plans_dir(tmp_path)))
+    snap = ws.snapshot()
+    assert snap == {"memory/user-preferences.md": "偏好"}

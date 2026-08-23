@@ -99,8 +99,20 @@ class RecordingsArea(ReadOnlyArea):
         return text
 
 
+#: 单文件读取上限（字节）：历史产物挂载的第一原则是**小文件**——2026-08-23 事故里
+#: 4.2GB 的 trace 快照被 snapshot() 读爆（MemoryError/假性停滞），凡是超大文件一律拒。
+MAX_READ_BYTES = 2 * 1024 * 1024
+
+
 class TraceArea(ReadOnlyArea):
-    """`traces/`：会话执行轨迹（trace.md / summary.json / run.meta.json / tree.json）。"""
+    """`traces/`：会话执行轨迹——**只挂各 trace 目录的顶层小文件**（trace.md /
+    summary.json / run.meta.json / tree.json）。
+
+    子目录（agents/checkpoints/prompts/workspace_snapshots）一律不挂：快照嵌快照
+    会指数增长（2026-08-23 事故：一轮对话把 traces/ 撑到 4.2GB，之后的每轮开场
+    都在读 GB 级文件 —— MemoryError 或"无连接无事件"的假性停滞）。外加 2MB 单文件
+    上限兜底：未来任何挂载失误最多读爆 2MB，不会再 GB 级爆炸。
+    """
 
     prefix = "traces/"
 
@@ -110,21 +122,29 @@ class TraceArea(ReadOnlyArea):
     def list_paths(self, prefix: str = "") -> list[str]:
         if not self._root.is_dir():
             return []
-        out = [f"traces/{p.relative_to(self._root).as_posix()}"
-               for p in sorted(self._root.rglob("*"))
-               if p.is_file() and p.suffix in _TEXT_SUFFIXES]
+        out = []
+        for run_dir in sorted(p for p in self._root.iterdir() if p.is_dir()):
+            for f in sorted(run_dir.iterdir()):        # 只看顶层文件，不递归子目录
+                if f.is_file() and f.suffix in _TEXT_SUFFIXES and f.stat().st_size <= MAX_READ_BYTES:
+                    out.append(f"traces/{run_dir.name}/{f.name}")
         return [p for p in out if p.startswith(prefix)]
 
     def read(self, path: str) -> str:
         rel = path[len("traces/"):]
+        if len(Path(rel).parts) != 2:
+            raise WorkspaceError(
+                f"{path!r} 不在 traces 白名单（只挂各 trace 顶层 {'/'.join(_TEXT_SUFFIXES)}；"
+                "子目录（快照/检查点）与 trace.html 不进上下文）")
         target = (self._root / rel).resolve()
         root = self._root.resolve()
         if not str(target).startswith(str(root)):
             raise WorkspaceError(f"{path!r} 越出 traces 只读区")
         if not target.is_file() or target.suffix not in _TEXT_SUFFIXES:
             raise WorkspaceError(
-                f"{path!r} 不在 traces 白名单（只挂 {'/'.join(_TEXT_SUFFIXES)}；"
-                "trace.html 是给人看的可视化，不进上下文）")
+                f"{path!r} 不在 traces 白名单（只挂各 trace 顶层 {'/'.join(_TEXT_SUFFIXES)}；"
+                "子目录（快照/检查点）与 trace.html 不进上下文）")
+        if target.stat().st_size > MAX_READ_BYTES:
+            raise WorkspaceError(f"{path!r} 超过 2MB 读取上限（大文件不进工作区快照/上下文）")
         return target.read_text(encoding="utf-8")
 
 
