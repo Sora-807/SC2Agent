@@ -286,3 +286,48 @@ def test_start_round_empty_text_finishes_with_error(api: TestClient, tmp_path: P
     ev = handle.events.get(timeout=5)
     assert ev["type"] == "round" and "空消息" in ev["error"]
     assert handle.events.get(timeout=5) is None
+
+
+# ---------------- 看门狗（2026-08-23 真机案例：轮子停滞锁死整条通道） ----------------
+
+class _FirstCallHangs:
+    """首次 complete 永不返回（复现 2026-08-23 停滞），之后恢复 —— 同一实例验锁释放。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages, tools=None, *, model=None, on_delta=None):
+        self.calls += 1
+        if self.calls == 1:
+            await asyncio.sleep(10000)
+        return _done("恢复的一轮")
+
+
+def test_round_watchdog_frees_channel_and_surfaces_error(api: TestClient, tmp_path: Path):
+    """停滞轮：看门狗超时 → 错误显形（G7）+ _lock 释放（下一轮能正常跑）。"""
+    fake = _FirstCallHangs()
+    talk = AgentTalk(
+        _client_for(api), llm_factory=lambda: fake,
+        trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws",
+        round_timeout=0.5)
+    r = asyncio.run(talk.say("卡住的一轮"))
+    assert r.get("error") and "看门狗" in r["error"]
+
+    # 通道必须没被锁死：同一个引擎再说一句，能完整走完一轮（证明 _lock 已释放）
+    r2 = asyncio.run(talk.say("再来一句"))
+    assert r2.get("reply", "").startswith("恢复的一轮"), r2
+
+
+def test_round_handle_finish_is_idempotent():
+    """_finish 双收尾只发一串事件（看门狗与 runner 竞争时不能发两个 None 哨兵）。"""
+    from agent.talk import RoundHandle
+    h = RoundHandle()
+    h._finish({"error": "first"})
+    h._finish({"error": "second"})
+    drained = []
+    while True:
+        ev = h.events.get_nowait()
+        if ev is None:
+            break
+        drained.append(ev)
+    assert len(drained) == 1 and drained[0]["error"] == "first"

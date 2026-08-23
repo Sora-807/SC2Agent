@@ -74,6 +74,13 @@ def _event_dict(ev: StreamEvent) -> dict:
     return out
 
 
+#: 一轮对话的看门狗上限（秒）。**无论卡在哪**（LLM 停滞 / 工具死等 / 未知 await
+#: 永不返回——2026-08-23 真机案例：run_start 后 20 分钟无连接无事件，整条对话
+#: 通道被 _lock 锁死且无错误显形），超时即取消本轮并报错：宁可显形重来，不可静默挂死。
+#: 局限：协程卡在**同步阻塞**（非 await）时循环线程本身被占，看门狗也救不了。
+ROUND_TIMEOUT_SECONDS = 600.0
+
+
 class RoundHandle:
     """一轮流式对话的把手：events 是跨线程队列（dict 流 + None 哨兵收尾）。"""
 
@@ -83,6 +90,8 @@ class RoundHandle:
         self.result: dict | None = None
 
     def _finish(self, result: dict) -> None:
+        if self.result is not None:
+            return    # 幂等：看门狗与 runner 可能先后收尾，双哨兵会打乱 SSE 消费端
         self.result = result
         self.events.put({"type": "round", **result})
         self.events.put(None)
@@ -97,7 +106,8 @@ class AgentTalk:
                  history_path: Path | None = None,
                  recordings_dir: Path | None = None,
                  proposals_log: Path | None = None,
-                 map_plans_dir: Path | None = None) -> None:
+                 map_plans_dir: Path | None = None,
+                 round_timeout: float = ROUND_TIMEOUT_SECONDS) -> None:
         self._client = client
         self._llm_factory = llm_factory
         self._trace_root = Path(trace_root)
@@ -107,6 +117,7 @@ class AgentTalk:
         self._readonly_recordings = Path(recordings_dir) if recordings_dir else None
         self._readonly_proposals = Path(proposals_log) if proposals_log else None
         self._readonly_map_plans = Path(map_plans_dir) if map_plans_dir else None
+        self._round_timeout = float(round_timeout)
         self._target = target
         self._max_turns = max_turns
         self._changes = ChangeLog()
@@ -179,8 +190,13 @@ class AgentTalk:
         loop = self._loop
         if loop is None:
             return {"error": "对话循环线程没起来（内部错误）"}
-        fut = asyncio.run_coroutine_threadsafe(self._say_on_engine_loop(text), loop)
-        return await asyncio.wrap_future(fut)
+        try:
+            return await asyncio.wrap_future(
+                self._schedule_round(self._say_on_engine_loop(text)))
+        except asyncio.CancelledError:
+            # 看门狗超时取消的是**这轮**，不是调用方 —— 转成错误字典（G7：显形不抛炸）
+            return {"error": f"本轮超过 {self._round_timeout:g}s 未完成，"
+                             "看门狗已终止（停滞的轮会锁死整条对话通道，宁可报错重来）"}
 
     def start_round(self, text: str) -> RoundHandle:
         """流式开一轮：立即返回把手，事件经跨线程队列流式涌出（SSE 端点消费）。
@@ -205,13 +221,36 @@ class AgentTalk:
         async def runner() -> None:
             try:
                 result = await self._say_on_engine_loop(text, emit=emit)
+            except asyncio.CancelledError:
+                # 看门狗超时取消：不重抛（我们拥有这轮），错误走完事件流
+                result = {"error": "本轮被看门狗终止（超时）"}
             except Exception as exc:  # noqa: BLE001 —— 流面错误也要走完事件流（不挂死 SSE）
                 result = {"error": f"{type(exc).__name__}: {exc}"}
             handle._finish(result)
 
-        fut = asyncio.run_coroutine_threadsafe(runner(), loop)
+        fut = self._schedule_round(runner())
         fut.add_done_callback(lambda _f: handle.events.put(None))
         return handle
+
+    def _schedule_round(self, coro):
+        """协程排上专属循环 + 挂看门狗。say 与 start_round 共用 —— 两条路都不许挂死。
+
+        看门狗（daemon 定时器）：fut 正常完成即解除；超时则取消协程。取消会传播进
+        协程的 await 点（start_stream 的 finally 会连带取消引擎 runner_task，锁随
+        async with 释放）；协程尚未启动时取消由 cf future 兜住。
+        局限：协程卡在**同步阻塞**里时循环线程本身被占，看门狗无法送达（2026-08-23
+        真机案例复盘：无网络连接、无事件、循环空转——那种 await 永不返回正是要防的）。
+        """
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+        def _watchdog() -> None:
+            if not fut.done() and fut.cancel():
+                pass    # 取消成功：协程会在 await 点收到 CancelledError 自行收尾
+        timer = threading.Timer(self._round_timeout, _watchdog)
+        timer.daemon = True
+        fut.add_done_callback(lambda _f: timer.cancel())
+        timer.start()
+        return fut
 
     # ---- 以下全部跑在专属循环上 ----
 
