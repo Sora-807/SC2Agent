@@ -449,20 +449,8 @@ def validate_map_names(m: StrategyManifest, layer) -> list[str]:
     return problems
 
 
-def validate_strategy(m: StrategyManifest) -> None:
-    """编译期校验（spec-003 验收点 1-5 + spec-004 子集；其余后补）。
-
-    失败抛 AssertionError（parse_strategy 入口调用）；错误信息带 step/branch 定位。
-    """
-    errors: list[str] = []
-
-    def err(msg: str) -> None:
-        errors.append(msg)
-
-    if m.initial_step not in m.steps:
-        err(f"initial_step {m.initial_step!r} 不在 steps")
-
-    # I2 可读性字段：必须是字符串（YAML 可能把裸词解析成别的类型；"" = 没写，合法）
+def _validate_readability(m: StrategyManifest, err) -> None:
+    """I2 可读性字段：必须是字符串（YAML 可能把裸词解析成别的类型；"" = 没写，合法）。"""
     for field_name in ("display_name_zh", "description_zh"):
         val = getattr(m, field_name)
         if not isinstance(val, str):
@@ -470,48 +458,34 @@ def validate_strategy(m: StrategyManifest) -> None:
     for rname, rzh in (m.reasons or {}).items():
         if not isinstance(rname, str) or not isinstance(rzh, str):
             err(f"reasons.{rname!r}: 键与值都必须是字符串（reason 标识符 → 中文），当前 {rzh!r}")
-
     for sid, step in m.steps.items():
         for field_name in ("display_name_zh", "description_zh"):
             if field_name in step and not isinstance(step[field_name], str):
                 err(f"step {sid}: {field_name} 必须是字符串，当前 {step[field_name]!r}")
 
-    for sid in m.steps:
-        _check_identifier(sid, "steps", "step_id", err)
 
-    # params 声明（T2c #9）：键白名单 + type 白名单（live_editable 等无消费方的键先不收）
-    for pname, spec in (m.params or {}).items():
+def _validate_declaration_block(block: str, decls: dict, err) -> None:
+    """声明块（params/variables 共用）的形态校验：键白名单 + type 白名单 + default 类型。
+
+    两者本就是同一套形态（T2c #9 加 params 时 variables 没跟着，docstring 自承
+    "此前只查 params，不一致"）—— 一份实现，两个名字，别再各改各的。
+    """
+    for name, spec in decls.items():
         if not isinstance(spec, dict):
-            err(f"params.{pname}: 声明必须是 mapping（如 {{type: int, default: 1}}），当前 {spec!r}")
+            err(f"{block}.{name}: 声明必须是 mapping（如 {{type: int, default: 1}}），当前 {spec!r}")
             continue
         unknown = sorted(set(spec) - PARAM_KEYS)
         if unknown:
-            err(f"params.{pname}: 未知键 {unknown}（只允许 {sorted(PARAM_KEYS)}）")
+            err(f"{block}.{name}: 未知键 {unknown}（只允许 {sorted(PARAM_KEYS)}）")
         ptype = spec.get("type")
         if ptype is not None and ptype not in PARAM_TYPES:
-            err(f"params.{pname}: 未知 type {ptype!r}（白名单 {sorted(PARAM_TYPES)}）")
+            err(f"{block}.{name}: 未知 type {ptype!r}（白名单 {sorted(PARAM_TYPES)}）")
         elif "default" in spec:
-            _check_param_value(spec["default"], ptype, f"params.{pname}.default", err)
+            _check_param_value(spec["default"], ptype, f"{block}.{name}.default", err)
 
-    # variables 声明：与 params 同一套形态校验（此前只查 params，不一致）
-    for vname, spec in (m.variables or {}).items():
-        if not isinstance(spec, dict):
-            err(f"variables.{vname}: 声明必须是 mapping（如 {{type: int, default: 0}}），当前 {spec!r}")
-            continue
-        unknown = sorted(set(spec) - PARAM_KEYS)
-        if unknown:
-            err(f"variables.{vname}: 未知键 {unknown}（只允许 {sorted(PARAM_KEYS)}）")
-        vtype = spec.get("type")
-        if vtype is not None and vtype not in PARAM_TYPES:
-            err(f"variables.{vname}: 未知 type {vtype!r}（白名单 {sorted(PARAM_TYPES)}）")
-        elif "default" in spec:
-            _check_param_value(spec["default"], vtype, f"variables.{vname}.default", err)
 
-    # definitions 别名节（T2b）：值树同 when 词表，且不得自引用/成环
-    for dname, dnode in (m.definitions or {}).items():
-        _check_identifier(dname, "definitions", "别名名字", err)
-        _validate_value_node(dnode, f"definitions[{dname!r}]", m, err, (dname,))
-
+def _validate_edges(m: StrategyManifest, err) -> None:
+    """边校验：端点是 step / kind+reason 是标识符 / 无重复 / 无死边。"""
     seen_edges: set[tuple] = set()
     for e in m.edges:
         for endpoint in ("from", "to"):
@@ -539,6 +513,73 @@ def validate_strategy(m: StrategyManifest) -> None:
                 f"{e['from']} 没有任何 exit_step 产生这个 kind/reason"
             )
 
+
+def _validate_do_op(a: dict, op: str, where: str, m: StrategyManifest,
+                    step_locals: frozenset, err) -> bool:
+    """单条 do 操作的校验（词表关门已在 caller 完成）。返回"本条是否是 exit"。"""
+    if op == "exit_step":
+        k, r = a.get("kind"), a.get("reason")
+        _check_identifier(k, where, "exit_step.kind", err)
+        _check_identifier(r, where, "exit_step.reason", err)
+        sid = where.split("/")[0]      # where = f"{sid}/branch[{i}]"
+        if not any(
+            e["from"] == sid and e["kind"] == k and e["reason"] == r for e in m.edges
+        ):
+            err(f"{where}: exit_step {k}/{r} 无匹配 edge（spec-003 验收 #3）")
+        return True
+    if op == "exit_strategy":
+        _check_identifier(a.get("kind"), where, "exit_strategy.kind", err)
+        _check_identifier(a.get("reason"), where, "exit_strategy.reason", err)
+        return True
+    if op == "group_action":
+        slot = a.get("group_slot")
+        if slot not in m.group_slots:
+            err(f"{where}: 未声明的 group_slot {slot!r}（声明：{m.group_slots}）")
+        stable_type = a.get("type")
+        if stable_type is None:
+            err(f"{where}: group_action 缺 type（stable id，如 terran/marine）")
+        elif _check_identifier(stable_type, where, "group_action.type", err):
+            if stable_type.count("/") != 1:
+                err(f"{where}: group_action.type {stable_type!r} 不是两段式 stable id"
+                    "（race/name，如 terran/marine；T1 起 burnysc2 名不再接受）")
+        atom = a.get("action_atom")
+        if not is_known_action(atom):
+            err(f"{where}: 未知 action_atom {atom!r}")
+        elif is_composite_action(atom):
+            # flow 直接发它 → driver 的 translate_op 返回 [] → 静默 no-op
+            err(f"{where}: action_atom {atom!r} 是复合意图，flow 不能直接发"
+                f"（{COMPOSITE_ACTIONS[atom]}）")
+        else:
+            for pname, _ptype, required in OP_CATALOG[atom]:
+                if required and pname not in (a.get("params") or {}):
+                    err(f"{where}: {atom} 缺必需参数 {pname!r}（OP_CATALOG）")
+        # 动作参数值树：此前只查 when，param/var/ref 写错在运行期才炸（T2c #3）
+        for pname, pval in (a.get("params") or {}).items():
+            _validate_value_node(pval, f"{where}/{atom}.params.{pname}", m, err,
+                                 locals_names=step_locals)
+        return False
+    if op == "set_variable":
+        if a.get("name") not in m.variables:
+            err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
+        _validate_value_node(a.get("value"), f"{where}/set_variable.value", m, err,
+                             locals_names=step_locals)
+        return False
+    if op == "set_local":
+        # 二十六轮 T8：局部变量必须先在 step 的 locals 里声明（拼错名 = 永远读不到）
+        if a.get("name") not in step_locals:
+            err(f"{where}: set_local 写未声明的局部变量 {a.get('name')!r}"
+                f"（本 step 的 locals：{sorted(step_locals)}）")
+        _validate_value_node(a.get("value"), f"{where}/set_local.value", m, err,
+                             locals_names=step_locals)
+        return False
+    if op in ("start_timer", "stop_timer"):
+        # 计时器名是动态创建的（无声明表），只查字符串（YAML bool 陷阱同 H3）
+        _check_identifier(a.get("name"), where, f"{op}.name", err)
+    return False
+
+
+def _validate_steps(m: StrategyManifest, err) -> None:
+    """step/branch/do 三层校验：键白名单 → locals 声明 → 分支条件与动作。"""
     for sid, step in m.steps.items():
         # F3：step 键白名单 —— 拼错 branches（branchs）会让这个 step 每帧什么都不做，永远
         for key, reason in UNIMPLEMENTED_STEP_KEYS.items():
@@ -582,61 +623,42 @@ def validate_strategy(m: StrategyManifest) -> None:
                     continue
                 if exited:
                     err(f"{where}: exit 之后不得再有 do 项（{op}）（spec-003 §3.1）")
-                if op == "exit_step":
+                if _validate_do_op(a, op, where, m, step_locals, err):
                     exited = True
-                    k, r = a.get("kind"), a.get("reason")
-                    _check_identifier(k, where, "exit_step.kind", err)
-                    _check_identifier(r, where, "exit_step.reason", err)
-                    if not any(
-                        e["from"] == sid and e["kind"] == k and e["reason"] == r for e in m.edges
-                    ):
-                        err(f"{where}: exit_step {k}/{r} 无匹配 edge（spec-003 验收 #3）")
-                if op == "exit_strategy":
-                    exited = True
-                    _check_identifier(a.get("kind"), where, "exit_strategy.kind", err)
-                    _check_identifier(a.get("reason"), where, "exit_strategy.reason", err)
-                if op == "group_action":
-                    slot = a.get("group_slot")
-                    if slot not in m.group_slots:
-                        err(f"{where}: 未声明的 group_slot {slot!r}（声明：{m.group_slots}）")
-                    stable_type = a.get("type")
-                    if stable_type is None:
-                        err(f"{where}: group_action 缺 type（stable id，如 terran/marine）")
-                    elif _check_identifier(stable_type, where, "group_action.type", err):
-                        if stable_type.count("/") != 1:
-                            err(f"{where}: group_action.type {stable_type!r} 不是两段式 stable id"
-                                "（race/name，如 terran/marine；T1 起 burnysc2 名不再接受）")
-                    atom = a.get("action_atom")
-                    if not is_known_action(atom):
-                        err(f"{where}: 未知 action_atom {atom!r}")
-                    elif is_composite_action(atom):
-                        # flow 直接发它 → driver 的 translate_op 返回 [] → 静默 no-op
-                        err(f"{where}: action_atom {atom!r} 是复合意图，flow 不能直接发"
-                            f"（{COMPOSITE_ACTIONS[atom]}）")
-                    else:
-                        for pname, _ptype, required in OP_CATALOG[atom]:
-                            if required and pname not in (a.get("params") or {}):
-                                err(f"{where}: {atom} 缺必需参数 {pname!r}（OP_CATALOG）")
-                    # 动作参数值树：此前只查 when，param/var/ref 写错在运行期才炸（T2c #3）
-                    for pname, pval in (a.get("params") or {}).items():
-                        _validate_value_node(pval, f"{where}/{atom}.params.{pname}", m, err,
-                                             locals_names=step_locals)
-                if op == "set_variable":
-                    if a.get("name") not in m.variables:
-                        err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
-                    _validate_value_node(a.get("value"), f"{where}/set_variable.value", m, err,
-                                         locals_names=step_locals)
-                if op == "set_local":
-                    # 二十六轮 T8：局部变量必须先在 step 的 locals 里声明（拼错名 = 永远读不到）
-                    if a.get("name") not in step_locals:
-                        err(f"{where}: set_local 写未声明的局部变量 {a.get('name')!r}"
-                            f"（本 step 的 locals：{sorted(step_locals)}）")
-                    _validate_value_node(a.get("value"), f"{where}/set_local.value", m, err,
-                                         locals_names=step_locals)
-                if op in ("start_timer", "stop_timer"):
-                    # 计时器名是动态创建的（无声明表），只查字符串（YAML bool 陷阱同 H3）
-                    _check_identifier(a.get("name"), where, f"{op}.name", err)
 
+
+def validate_strategy(m: StrategyManifest) -> None:
+    """编译期校验（spec-003 验收点 1-5 + spec-004 子集；其余后补）。
+
+    失败抛 AssertionError（parse_strategy 入口调用）；错误信息带 step/branch 定位。
+    本函数只是**编排**：各段校验在 `_validate_*` 私有函数里（params/variables 共用
+    `_validate_declaration_block` —— 它们本是同一套形态）。
+    """
+    errors: list[str] = []
+
+    def err(msg: str) -> None:
+        errors.append(msg)
+
+    if m.initial_step not in m.steps:
+        err(f"initial_step {m.initial_step!r} 不在 steps")
+
+    _validate_readability(m, err)
+
+    for sid in m.steps:
+        _check_identifier(sid, "steps", "step_id", err)
+
+    # params 声明（T2c #9）：键白名单 + type 白名单（live_editable 等无消费方的键先不收）
+    _validate_declaration_block("params", m.params or {}, err)
+    # variables 声明：与 params 同一套形态校验（此前只查 params，不一致）
+    _validate_declaration_block("variables", m.variables or {}, err)
+
+    # definitions 别名节（T2b）：值树同 when 词表，且不得自引用/成环
+    for dname, dnode in (m.definitions or {}).items():
+        _check_identifier(dname, "definitions", "别名名字", err)
+        _validate_value_node(dnode, f"definitions[{dname!r}]", m, err, (dname,))
+
+    _validate_edges(m, err)
+    _validate_steps(m, err)
 
     for lk, lv in (m.loop_limits or {}).items():
         if lk not in LOOP_LIMIT_KEYS:

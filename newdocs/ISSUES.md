@@ -463,7 +463,8 @@
 - **建议归属**：I13 已建数据层；I20 是"把它接到 Agent"。挂虚拟只读区在 `agent/workspace.py`
   （+ 后端给录像 meta/帧摘要，或直接 read jsonl 文件）。与 I19（notes 孤儿同模式）、I18
   （Agent 触达数据同主题）同源——三件事都是"Agent 能不能够着系统已有的数据"，建议作为
-  一批"文件契约闭环"一起做。`session/current.md` 标 I19 扩展。**本轮只立项不写代码**。
+  一批"文件契约闭环"一起做（四 issue 串成母题的专档见 [`AGENT-LOOP.md`](AGENT-LOOP.md)）。
+  `session/current.md` 标 I19 扩展。**本轮只立项不写代码**。
 
 
 ## 开放任务清单（2026-08-23 二十七轮末快照；处理一条关一条）
