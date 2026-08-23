@@ -50,7 +50,8 @@ def test_unknown_predicate_rejected():
 
 
 def test_unimplemented_predicate_rejected_at_compile():
-    bad = VALID.replace("{op: group_count, group: main}", "{op: engaged, args: [main]}")
+    # engaged/under_attack/timer_elapsed 已落地（二十六轮）；仍待建的是事件/基地族
+    bad = VALID.replace("{op: group_count, group: main}", "{op: has_ready_base, args: [main]}")
     with pytest.raises(AssertionError, match="未实现"):
         parse_strategy(bad)
 
@@ -97,12 +98,29 @@ def test_undeclared_variable_write_rejected():
         parse_strategy(bad)
 
 
-def test_set_local_rejected_like_timer():
+def test_set_local_needs_declared_local():
+    """二十六轮 T8：set_local 转正 —— 但名字必须在 step 的 locals 里声明（拼错 = 永远读不到）。"""
     bad = VALID.replace(
         "do: [{op: exit_step, kind: done, reason: OK}]",
         "do: [{op: set_local, name: nope, value: {const: 1}}, {op: exit_step, kind: done, reason: OK}]",
     )
-    with pytest.raises(AssertionError, match="未实现"):
+    with pytest.raises(AssertionError, match="未声明的局部变量"):
+        parse_strategy(bad)
+
+
+def test_local_read_needs_declaration_too():
+    """{local: x} 读侧同查：没声明的名字编译期拒绝（写读两侧一起放行的 D8 完整版）。"""
+    bad = VALID.replace("{op: group_count, group: main}", "{local: nope}")
+    with pytest.raises(AssertionError, match="未声明的局部变量"):
+        parse_strategy(bad)
+
+
+def test_local_not_allowed_in_definitions():
+    bad = VALID.replace(
+        "variables: {v1: {type: int, default: 0}}",
+        "variables: {v1: {type: int, default: 0}}\ndefinitions: {d1: {local: v1}}",
+    )
+    with pytest.raises(AssertionError, match="definitions"):
         parse_strategy(bad)
 
 
@@ -239,11 +257,18 @@ def test_group_action_missing_type_rejected():
         parse_strategy(bad)
 
 
-def test_timer_do_ops_rejected_like_timer_elapsed():
-    """D8：start_timer/stop_timer 与 timer_elapsed 对称拒绝（写允许而读拒绝 = 静默无效）。"""
-    bad = VALID.replace("      - do: []", "      - do: [{op: start_timer, name: t1}]")
-    with pytest.raises(AssertionError, match="未实现"):
-        parse_strategy(bad)
+def test_timer_do_ops_and_local_roundtrip_parse():
+    """二十六轮 T8：start/stop_timer + timer_elapsed + locals/{local} 全链可用（不再对称拒绝）。"""
+    parse_strategy(VALID
+                   .replace("  - step_id: s1", "  - step_id: s1\n    locals: [burst]")
+                   .replace("      - do: []",
+                            "      - do: [{op: start_timer, name: t1},"
+                            " {op: set_local, name: burst, value: {const: 1}}]"))
+    # timer_elapsed 谓词读侧也要能进 when
+    m2 = parse_strategy(VALID.replace(
+        "{op: group_count, group: main}",
+        '{op: ">=", args: [{op: timer_elapsed, name: t1}, {const: 30}]}'))
+    assert m2.steps["s1"] is not None
 
 
 def test_duplicate_step_id_rejected():
@@ -493,11 +518,11 @@ def test_branch_key_typo_rejected():
         parse_strategy(bad)
 
 
-def test_locals_declaration_rejected_like_set_local():
-    """F2：step 局部变量整套未实现（写没人读）→ 声明 locals 也要报错，别给人错觉。"""
-    bad = VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: [x]")
-    with pytest.raises(AssertionError, match="未实现"):
-        parse_strategy(bad)
+def test_locals_declaration_typechecked():
+    """二十六轮 T8：locals 转正（字符串列表）；非列表/非字符串仍是编译错误。"""
+    parse_strategy(VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: [x]"))
+    with pytest.raises(AssertionError, match="locals 必须是字符串列表"):
+        parse_strategy(VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: 42"))
 
 
 def test_variables_declaration_validated_like_params():
@@ -597,3 +622,77 @@ def test_branch_id_is_allowed_and_must_be_string():
     bad = VALID.replace("      - do: []", "      - branch_id: no\n        do: []")
     with pytest.raises(AssertionError, match="布尔"):
         parse_strategy(bad)
+
+
+def test_display_names_and_reasons_parse():
+    """I2：策略级/step 级可读名 + reasons 中文表 + 组名中文 —— 编译期接受并进 manifest。"""
+    m = parse_strategy("""
+id: readable
+display_name_zh: 装甲蛙跳推进
+description_zh: 坦克掩护步兵循环前压
+group_slots: [main]
+params:
+  min_units: {type: int, default: 3, description_zh: 出发所需单位数}
+variables: {}
+reasons:
+  READY: 集结就绪
+  ARRIVED: 已抵达目标
+initial_step: s1
+steps:
+  - step_id: s1
+    display_name_zh: 集结
+    description_zh: 等待成型
+    branches:
+      - when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
+        do: [{op: exit_step, kind: done, reason: READY}]
+      - do: []
+  - step_id: s2
+    branches:
+      - when: {op: arrived, group: main, target: [1.0, 1.0], radius: 1.0}
+        do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
+      - do: []
+edges:
+  - {from: s1, to: s2, kind: done, reason: READY}
+""")
+    assert m.display_name_zh == "装甲蛙跳推进"
+    assert m.description_zh == "坦克掩护步兵循环前压"
+    assert m.reasons == {"READY": "集结就绪", "ARRIVED": "已抵达目标"}
+    assert m.steps["s1"]["display_name_zh"] == "集结"
+    assert m.steps["s1"]["description_zh"] == "等待成型"
+    assert m.params["min_units"]["description_zh"] == "出发所需单位数"
+
+    a = parse_assembly("""
+id: asm
+groups:
+  - group_id: G_INF
+    display_name_zh: 步兵组
+    composition:
+      terran/marine: {min: 3, target: 5, max: 6}
+strategy_instances:
+  - instance_id: s1
+    strategy_ref: readable
+    bindings: {main: G_INF}
+    params: {}
+""")
+    assert a.groups[0].display_name_zh == "步兵组"
+    validate_assembly(m, a)
+
+
+def test_reasons_must_be_strings():
+    """reasons 的值被 YAML 解析成非字符串（如数字/列表）→ 编译失败，不静默丢中文。"""
+    with pytest.raises(AssertionError, match="reasons"):
+        parse_strategy("""
+id: bad_reasons
+group_slots: [main]
+params: {}
+variables: {}
+reasons: {READY: 42}
+initial_step: s1
+steps:
+  - step_id: s1
+    branches:
+      - when: {op: ">=", args: [{op: group_count, group: main}, 1]}
+        do: [{op: exit_step, kind: done, reason: READY}]
+      - do: []
+edges: []
+""")

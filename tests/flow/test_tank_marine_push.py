@@ -16,10 +16,10 @@ import yaml
 from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
-from game.catalog import load_terran
+from game.catalog import load_all
 from game import GameState, Grid, Owner, Point2, Unit
 
-CAT = load_terran()
+CAT = load_all()
 
 _DOC = Path(__file__).resolve().parent.parent.parent / "docs" / "tank_marine_push.yaml"
 _DATA = yaml.safe_load(_DOC.read_text(encoding="utf-8"))

@@ -2,6 +2,9 @@
 
 loop:complete → 有 tool_calls 则执行 → 回喂 tool message → 继续;
 无 tool_calls 或 done 工具触发状态后走 before_finalize 校验 → 过即 done。
+
+可选 ``emit``(同步回调,收 StreamEvent):把 delta/turn/tool 进度发到内存流式通道
+(start_stream 消费);不发 run_end —— run 终态由 engine 归口(TaskStatus)。
 """
 from __future__ import annotations
 
@@ -9,12 +12,22 @@ import asyncio
 import dataclasses
 import inspect
 import time
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from ..llm import LLMClient
 from ..trace import Tracer
 from ..trace.events import LLM_CALL, LLM_TIMEOUT, RUN_END, TOOL_CALL, TURN_END, TURN_START
-from ..types import AgentInstance, Message, RunOutcome
+from ..types import (
+    STREAM_DELTA,
+    STREAM_LLM_TIMEOUT,
+    STREAM_TOOL_CALL,
+    STREAM_TURN_END,
+    STREAM_TURN_START,
+    AgentInstance,
+    Message,
+    RunOutcome,
+    StreamEvent,
+)
 
 LLM_TURN_TIMEOUT = 300
 
@@ -53,8 +66,9 @@ async def run(
     max_turns: int = 20,
     semaphore=None,
     llm_timeout: int = LLM_TURN_TIMEOUT,
+    emit: Callable[[StreamEvent], None] | None = None,
 ) -> RunOutcome:
-    """跑 agent LLM loop 到 done 或 max_turns(paused)。"""
+    """跑 agent LLM loop 到 done 或 max_turns(paused)。emit 可选:流式进度事件 sink。"""
     spec = agent.spec
     state = agent.state
     state.status = "running"
@@ -84,21 +98,33 @@ async def run(
     after_turn = hooks.get("after_turn")
     before_finalize = hooks.get("before_finalize")
 
+    def emit_event(type: str, **fields) -> None:
+        if emit is not None:
+            emit(StreamEvent(agent_id=target, type=type, **fields))
+
     while state.turn_no < max_turns:
         state.turn_no += 1
         tracer.event(target, TURN_START, turn_no=state.turn_no)
+        emit_event(STREAM_TURN_START, turn_no=state.turn_no)
 
         input_count = len(messages)
         started_at = tracer.now()
         start_time = time.monotonic()
+
+        def on_delta(delta) -> None:
+            emit_event(STREAM_DELTA, turn_no=state.turn_no, delta=delta)
+
+        # on_delta 只在开了流式时才传:未升级的自定义 LLMClient 仍按旧签名工作
+        llm_kwargs: dict = {"on_delta": on_delta} if emit is not None else {}
         try:
             if semaphore is not None:
                 async with semaphore:
-                    response = await asyncio.wait_for(llm.complete(messages, tools), timeout=llm_timeout)
+                    response = await asyncio.wait_for(llm.complete(messages, tools, **llm_kwargs), timeout=llm_timeout)
             else:
-                response = await asyncio.wait_for(llm.complete(messages, tools), timeout=llm_timeout)
+                response = await asyncio.wait_for(llm.complete(messages, tools, **llm_kwargs), timeout=llm_timeout)
         except asyncio.TimeoutError:
             tracer.event(target, LLM_TIMEOUT, turn_no=state.turn_no)
+            emit_event(STREAM_LLM_TIMEOUT, turn_no=state.turn_no)
             append_message(Message("user", f"[system: LLM call timed out ({llm_timeout}s). Retry or simplify.]"))
             continue
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -141,11 +167,14 @@ async def run(
                     started_at=tool_started_at, duration_ms=tool_duration_ms,
                     result_preview=result_text[:150],
                 )
+                emit_event(STREAM_TOOL_CALL, turn_no=state.turn_no,
+                           tool=tool_call.name, args=tool_call.args, result_preview=result_text[:150])
                 append_message(Message("tool", content=result_text, tool_call_id=tool_call.id))
             if after_turn is not None:
                 await await_if_awaitable(after_turn(agent))
         tracer.event(target, TURN_END, turn_no=state.turn_no,
                      input_tokens=response.input_tokens, output_tokens=response.output_tokens)
+        emit_event(STREAM_TURN_END, turn_no=state.turn_no)
 
         if state.status == "done" or not response.message.tool_calls:
             if before_finalize is not None:

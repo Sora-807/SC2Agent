@@ -54,15 +54,9 @@ describe("外壳固定一屏（G1 / 根因 B）", () => {
     expect(main).toContain("min-h-0");
   });
 
-  it("常驻页脚已移除，改为状态浮层", () => {
+  it("常驻页脚与 rev 徽章都已移除（2026-08-22 用户拍板：rev 提示没用）", () => {
     expect(app).not.toContain("<footer");
-    expect(app).toContain("StatusChip");
-  });
-
-  it("状态浮层读契约真值，不硬编码 rev", () => {
-    const chip = code("shell/StatusChip.tsx");
-    expect(chip).toContain("REV");
-    expect(chip).not.toMatch(/rev\s*=\s*1\b/);
+    expect(app).not.toContain("StatusChip");
   });
 
   it("全仓库没有任何地方再引入 min-h-screen", () => {
@@ -74,8 +68,9 @@ describe("外壳固定一屏（G1 / 根因 B）", () => {
 });
 
 describe("页面自己接管滚动（G1）", () => {
+  // 2026-08-22 起生产页升级为「三区固定 + 区内滚」（用户拍板），从 PAGE_SCROLL 名单移出
   const docPages = [
-    "pages/Overview.tsx", "pages/ProductionPage.tsx", "pages/FlowPage.tsx",
+    "pages/Overview.tsx", "pages/FlowPage.tsx",
     "pages/DebugPage.tsx", "panels/ProposalHost.tsx",
   ];
 
@@ -86,6 +81,13 @@ describe("页面自己接管滚动（G1）", () => {
     expect(cls).toContain("h-full");
     expect(cls).toContain("min-h-0");
     expect(cls).toContain("overflow-y-auto");
+  });
+
+  it("生产页：三区固定占据视口，页面根不滚、各区内部滚（2026-08-22 用户拍板）", () => {
+    const src = code("pages/ProductionPage.tsx");
+    expect(src).toMatch(/flex h-full flex-col gap-2 overflow-hidden/);
+    expect(src).not.toContain("PAGE_SCROLL");
+    expect(src).toContain("overflow-y-auto");          // 队列/经济/投影区内滚
   });
 
   for (const path of docPages) {
@@ -102,12 +104,21 @@ describe("页面自己接管滚动（G1）", () => {
     expect(src).toContain("overflow-y-auto");
   });
 
-  it("规划页（F16/P1）：根是分栏页不滚；生产/Flow tab 内部自己接管滚动", () => {
+  it("规划页（F16/P1/左抽屉轮）：根是分栏页不滚；生产/Flow tab 内部自己接管滚动", () => {
     const src = code("pages/PlanningPage.tsx");
     expect(src).toMatch(/return \(\s*\n\s*<div className="flex h-full min-h-0 flex-col gap-2">/);
     expect(src).toContain("PAGE_SCROLL");          // 生产/Flow tab 的文档页包裹
     expect(src).not.toContain("min-h-[420px]");   // 旧固定高画布已删（跟着容器高度走）
-    expect(src).toContain("h-64 space-y-1 overflow-auto");  // 列表卡固定高度内滚（点位/槽位常显堆叠）
+  });
+
+  it("规划工作台状态在模块级 store（抽屉与主区共享；导航/收起不丢）", () => {
+    const store = code("planning/map-plan-store.ts");
+    expect(store).toContain("applyDraft");
+    expect(store).toContain("baseSlotsOf");
+    const sidebar = code("panels/MapPlanSidebar.tsx");
+    expect(sidebar).toContain("点位与槽位");
+    expect(sidebar).toContain("保存到地图规划文件");
+    expect(sidebar).toContain("data-name=");
   });
 });
 
@@ -209,6 +220,28 @@ describe("地图渲染面的回归锁（2026-08-21 审查发现）", () => {
   });
 });
 
+describe("生产编辑器复用（2026-08-22 十八轮：规划是完整版，复盘是缩小版）", () => {
+  it("队列编辑表是共享组件：规划页与复盘生产页吃同一个 QueueTable", () => {
+    const table = code("planning/QueueTable.tsx");
+    expect(table).toContain("＋ 在此插入");
+    expect(table).toContain('"＋ 加一项"按钮'.replace('"＋ 加一项"按钮', "加一项"));
+    const plan = code("pages/PlanningPage.tsx");
+    expect(plan).toContain('<QueueTable items={st.items}');
+    const prod = code("pages/ProductionPage.tsx");
+    expect(prod).toContain("<QueueTable items={draft}");
+  });
+
+  it("复盘生产页：转为规划草稿 → 另存为规划文件（命令面仍走 writeGate，不越界）", () => {
+    const prod = code("pages/ProductionPage.tsx");
+    expect(prod).toContain("转为规划草稿");
+    expect(prod).toContain("draftFromSessionQueues");
+    expect(prod).toContain("另存为规划");
+    expect(prod).toContain("createPlan");
+    // 只读域的编辑不碰命令面（writeGate 不动；cmd.run 仍只在可写时渲染）
+    expect(prod).toContain("writeGate");
+  });
+});
+
 describe("写入面门禁不再绑在回放源（2026-08-21 审查发现）", () => {
   it("ProductionPage 不自算门禁，走 shell/mode 的 writeGate", () => {
     const page = code("pages/ProductionPage.tsx");
@@ -267,12 +300,12 @@ describe("Flow 图的两处交互修复（2026-08-21 审查发现）", () => {
 });
 
 describe("F14 切片 1：地图规划画布（2026-08-21）", () => {
-  it("规划页的地图 tab 是画布不是列表", () => {
+  it("规划页的地图 tab 是画布不是列表（草稿投影 2026-08-22 起在 map-plan-store）", () => {
     const page = code("pages/PlanningPage.tsx");
     expect(page).toContain("<MapCanvas");
     expect(page).toContain("marksOverride");
     expect(page).toContain("onBlankClick");
-    expect(page).toContain("applyDraft");
+    expect(code("planning/map-plan-store.ts")).toContain("applyDraft");
     // 回归：曾是三张只读列表、没有 canvas（用户最初问题 3 的"规划与地图错位"）
     expect(page).not.toContain('Card title="放置语法速查"');
   });
@@ -298,21 +331,23 @@ describe("F14 切片 2：槽位工具与提案通道（2026-08-21）", () => {
     expect(canvas).toContain("props.slotsOverride ?? map.build_slots");
   });
 
-  it("规划页有槽位放置工具与重叠即时校验", () => {
+  it("规划工作台有槽位放置工具与重叠即时校验（2026-08-22 起工具在抽屉、校验在主区）", () => {
     const page = code("pages/PlanningPage.tsx");
     // F16：吸附/重叠/placeable 校验收进 previewPlacement 纯函数（ghost 与落笔同一结果）
     expect(page).toContain("previewPlacement");
     expect(page).toContain("placeableAt");
-    expect(page).toContain('"＋ 槽位"');
+    const sidebar = code("panels/MapPlanSidebar.tsx");
+    expect(sidebar).toContain('"＋ 槽位"');
   });
 
   it("离线保存按钮真实可用（P2：不走提案，直接写地图规划文件）", () => {
-    const page = code("pages/PlanningPage.tsx");
-    expect(page).toContain("保存到地图规划文件");
-    expect(page).toContain("mapDraftToHunks");
-    expect(page).toContain("saveMapPlan");
-    // 回归：提案通道的按钮已从规划页退役（离线域直改文件，用户拍板）
-    expect(page).not.toContain("提为提案（map_plan）");
+    const sidebar = code("panels/MapPlanSidebar.tsx");
+    const store = code("planning/map-plan-store.ts");
+    expect(sidebar).toContain("保存到地图规划文件");
+    expect(store).toContain("mapDraftToHunks");
+    expect(store).toContain("saveMapPlan");
+    // 回归：提案通道的按钮已从规划工作台退役（离线域直改文件，用户拍板）
+    expect(sidebar).not.toContain("提为提案（map_plan）");
   });
 
   it("审批面板的 map_overlay 分支是叠加画布而非「不能应用」", () => {
@@ -361,5 +396,124 @@ describe("F16：规划编辑体验（2026-08-21 用户反馈）", () => {
     const md = code("planning/map-draft.ts");
     expect(md).toContain("export function previewPlacement");
     expect(md).toContain('reason: "overlap" | "reserved" | "unplaceable" | null');
+  });
+});
+describe("外壳重构（2026-08-22 十四/十五轮：顶栏极简 + 时间轴下沉 + 右侧固定工作面板）", () => {
+  const app = code("App.tsx");
+
+  it("顶栏只剩【指示灯】+ 三框：ModeBar 无标题无下拉，SessionBar/IconRail 退役", () => {
+    const bar = code("shell/ModeBar.tsx");
+    expect(bar).not.toContain("驾驶舱");
+    expect(bar).not.toContain("<select");
+    expect(bar).toContain("MODE_ORDER");
+    expect(app).not.toContain("SessionBar");
+    expect(app).not.toContain("IconRail");
+  });
+
+  it("模式命名与顺序：游戏 | 复盘 | 规划（id 不动，动显示名）", () => {
+    const mode = code("shell/mode.ts");
+    expect(mode).toContain('MODE_ORDER: Mode[] = ["drive", "replay", "offline"]');
+    expect(mode).toContain('label: "游戏"');
+    expect(mode).toContain('label: "复盘"');
+    expect(mode).toContain('label: "规划"');
+  });
+
+  it("时间轴下沉主列（I11）：App 不再直挂 Timeline，规划模式整条不渲染", () => {
+    const strip = code("shell/TimeStrip.tsx");
+    expect(strip).toContain("<Timeline />");
+    expect(app).toContain('mode !== "offline"');
+    expect(app).not.toMatch(/<Timeline\s*\/>/);
+    expect(app).toContain("<TimeStrip />");
+  });
+
+  it("游戏模式无活会话 → 主区是 StartCard（会话启动不再住在顶栏）", () => {
+    expect(app).toContain("driveIdle ? (");
+    expect(app).toContain("<StartCard />");
+    const card = code("shell/StartCard.tsx");
+    expect(card).toContain("启动真机（SC2）");
+  });
+
+  it("无边缘缝外壳（十五轮）：顶栏全宽贴顶，侧栏接在其下，列间浅边分割（无 gap/无 padding 缝）", () => {
+    expect(app).toMatch(/<div className="flex h-\[100dvh\] flex-col overflow-hidden text-body">/);
+    expect(app).not.toMatch(/className="flex h-\[100dvh\][^"]*p-\d/);   // 视口边不留缝
+    const bar = code("shell/ModeBar.tsx");
+    expect(bar).toMatch(/border-b border-chrome bg-panel/);             // 白顶栏↔下排的浅边（十六轮反转）
+    const rail = code("shell/SideRail.tsx");
+    expect(rail).toContain("w-[4.5rem]");
+    expect(rail).toMatch(/border-r border-chrome bg-panel/);            // 白侧栏贴左边、接顶栏
+  });
+
+  it("生产规划用复盘-生产的三区固定布局（十九轮用户拍板）", () => {
+    const plan = code("pages/PlanningPage.tsx");
+    expect(plan).toMatch(/flex h-full flex-col gap-2 overflow-hidden/);       // 页根不滚
+    expect(plan).toMatch(/xl:grid-cols-3 xl:h-\[38%\]/);                     // 上排固定高度
+    expect(plan).toContain("文件与试算");
+    expect(plan).toContain("试算投影");                                        // 下方投影占满
+  });
+
+  it("工作台融合成一整块白卡（十七轮用户拍板）：地图与工具栏同卡、内部 border-l 分割", () => {
+    const page = code("pages/PlanningPage.tsx");
+    expect(page).toMatch(/flex h-full overflow-hidden rounded-lg border border-l1 bg-panel shadow-sm/);
+    expect(page).toMatch(/w-72 shrink-0 flex-col border-l border-l1/);
+    expect(page).toContain("<MapPlanSidebar />");
+    expect(page).toContain("<QueueSidebar />");
+    expect(app).not.toContain("WorkPanel");       // 独立面板列退役
+  });
+
+  it("对话区（十七轮终形）：右/上/下贴边不留缝，只左缘留 8px 缝（main 的 p-2）", () => {
+    expect(app).toMatch(/<div className="flex shrink-0 flex-col">/);
+    expect(app).not.toMatch(/border-l border-chrome py-2/);
+    expect(app).toMatch(/overflow-hidden p-2"/);   // 工作卡四周的缝（也承担卡↔对话的左缝）
+    const dock = code("shell/ChatDock.tsx");
+    expect(dock).toMatch(/overflow-hidden bg-panel/);   // 贴边矩形（不再圆角浮卡）
+  });
+
+  it("选中态反转（十六轮）：外围白，选中的模式段/侧栏按钮变蓝（bg-select）", () => {
+    const bar = code("shell/ModeBar.tsx");
+    expect(bar).toMatch(/bg-select font-semibold text-strong/);
+    const rail = code("shell/SideRail.tsx");
+    expect(rail).toMatch(/bg-select font-semibold text-strong/);
+  });
+
+  it("复盘只读横幅退役（十六轮用户拍板）：写入控件仍走 writeGate 门控", () => {
+    const page = code("pages/ProductionPage.tsx");
+    expect(page).toContain("writeGate");
+    expect(page).not.toContain("只读：当前是离线帧源");
+    expect(page).not.toMatch(/!props\.writable && mode !== "offline"/);
+  });
+
+  it("会话轮询只有一份：session-store，ModeBar 与 StartCard 都吃它", () => {
+    const store = code("shell/session-store.ts");
+    expect(store).toContain("setWatch");
+    expect(store).toContain("pickMapPlan");
+    expect(app).toContain("useSessionStore.getState().setWatch");
+  });
+});
+
+describe("动态帧合并（2026-08-22 二十三轮：live 卡顿治理）", () => {
+  it("store 侧按 topic 合并动态帧（≤7 次 setState/秒），静态面直通", () => {
+    const src = code("store/frames.ts");
+    expect(src).toContain("FRAME_FLUSH_MS = 150");
+    expect(src).toContain('offer("world"');
+    expect(src).toMatch(/subscribe\("static\/map", \(e\) => set/);   // 静态面不走 offer
+  });
+
+  it("队列编辑表表头吸顶（滚动只有列表内容动）", () => {
+    expect(code("planning/QueueTable.tsx")).toContain('sticky top-0 z-10 bg-panel');
+  });
+});
+
+describe("回放的生产队列 = 整局操作序列（2026-08-22 二十四轮用户定义）", () => {
+  it("回放模式渲染 WholeOpsList：累积 hook + 已执行/待执行两段，拖时间轴不重排", () => {
+    const page = code("pages/ProductionPage.tsx");
+    expect(page).toContain("WholeOpsList");
+    expect(page).toContain("useAccumulatedProjection");
+    expect(page).toContain("待执行");
+    expect(page).toMatch(/mode === "replay" && projection/);
+  });
+
+  it("累积逻辑是共享 hook：投影板与队列卡同源", () => {
+    const board = code("charts/ProjectionBoard.tsx");
+    expect(board).toContain("useAccumulatedProjection(frame)");
   });
 });

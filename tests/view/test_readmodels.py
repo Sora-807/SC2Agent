@@ -11,7 +11,7 @@ from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
 from game import GameState, Grid, Operation, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementExact, QueueItem, QueueOp
 from production.runtime import ProductionRuntime
 
@@ -19,7 +19,7 @@ from view.adapt import flow_frame, group_of_from_flow, ops_frame, production_fra
 from view.encode import to_json
 from view.port import OpRing, RecordingPort
 
-CAT = load_terran()
+CAT = load_all()
 
 STRATEGY = """
 id: obs_probe

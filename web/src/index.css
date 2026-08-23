@@ -1,6 +1,66 @@
 @import "tailwindcss";
 
 /*
+ * ── 调色板（单主题：蓝底白卡，2026-08-22 十五轮定稿）──────────────────────────
+ * 全站颜色一律走语义 token（--bg-xxx / --border-xxx / --text-xxx / --accent-xxx 族）：
+ *  - 组件用 @utility 提供的类（bg-panel / border-l1 / text-dim …），禁止裸
+ *    bg-neutral-* / text-neutral-100 这类字面色（theme.test.ts 扫描锁死）；
+ *  - 色值只许出现在 :root，别处不许出现 hex；
+ *  - 外围（body/顶栏/侧栏）蓝，内容面板白卡；粉/黄只做小区域点缀，不滥用同一色。
+ *
+ * 档位语义：
+ *  bg-base   外围蓝（body、顶栏、侧栏的底）
+ *  bg-panel  白卡（内容面板）
+ *  bg-raised 白卡上的浮起块
+ *  bg-inset  粉点缀（凹陷面/输入内衬/小区域区分）
+ *  bg-active 选中态（同粉族）
+ *  border-l1 白卡描边   border-l2 强调描边   border-chrome 蓝面上的浅边
+ *  text-strong 主文字   text-dim 次级   text-faint 辅助   text-ghost 出处注释
+ *  accent 族 蓝/粉/黄，各三档（本色/soft 洗/fg 文字深度）
+ */
+:root {
+  color-scheme: light;
+  /* 蓝底白卡（2026-08-22 十五轮，用户定稿色板）：外围 #9CBCE3 蓝、内里卡片纯白，
+   * 粉 #E1DBE9 做小区域底色区分（inset/选中），黄 #F5C386 交叉点缀（warn/注意），
+   * 文字一律近黑 —— 层次靠字重与字号（轻/重/粗/细），不靠变灰。
+   * accent 族各三档：本色 / soft 洗 / fg 文字深度。 */
+  --bg-base: #9cbce3;
+  --on-base-text: #1c2733;
+  --bg-panel: #ffffff;
+  --bg-raised: #f6f3f9;
+  --bg-inset: #e1dbe9;
+  --bg-active: #e1dbe9;
+  /* 选中蓝：外围改白后（十六轮反转），选中态的背景变成蓝 */
+  --bg-select: #9cbce3;
+  --border-l1: #e6e2ec;
+  --border-l2: #c9c3d6;
+  /* 蓝外围上的分割「浅边」（顶栏↔侧栏、侧栏↔内容）与浮层描边 */
+  --border-on-base: #7ea3cd;
+  --text-strong: #14171c;
+  --text-dim: #2c3138;
+  --text-faint: #5a6069;
+  --text-ghost: #8a8f99;
+  --accent-blue: #3e6fa3;
+  --accent-blue-soft: #e8eff9;
+  --accent-blue-fg: #2f5d8a;
+  --accent-pink: #e1dbe9;
+  --accent-pink-soft: #f2eef7;
+  --accent-pink-fg: #7d679b;
+  --accent-yellow: #f5c386;
+  --accent-yellow-soft: #fbe8cf;
+  --accent-yellow-fg: #96691c;
+  --uplot-grid: #eceef3;
+  --uplot-cursor: #c3c9d4;
+  --ok-fg: #3d7d5c;
+  --ok-bg: rgba(61,125,92,.10);
+  --warn-fg: #96691c;
+  --warn-bg: rgba(245,195,134,.24);
+  --err-fg: #b04a4a;
+  --err-bg: rgba(176,74,74,.10);
+}
+
+
+/*
  * G6 字号/暗度 token（F13d）—— 全站只有这 6 个字号。
  * px 值与 canvas/theme.ts 的 FONT_PX 是同一套 token（theme.test.ts 锁死两边同步）；
  * DOM 侧类名由 tailwind v4 @utility 提供，页面里禁止再出现裸 text-[Npx]。
@@ -12,20 +72,109 @@
 @utility text-note { font-size: 11px; line-height: 1rem; }
 @utility text-mono { font-size: 11px; line-height: 1rem; font-family: ui-monospace, monospace; }
 
-/* 次级文字三档暗度：dim 能读 / faint 辅助说明 / ghost 出处与红线注释（不删但不能和数据同权重） */
-@utility text-dim { color: var(--color-neutral-400); }
-@utility text-faint { color: var(--color-neutral-500); }
-@utility text-ghost { color: var(--color-neutral-600); }
+/* 文字四档：strong 主文字 / dim 能读的次级 / faint 辅助说明 / ghost 出处与红线注释 */
+@utility text-strong { color: var(--text-strong); }
+@utility text-dim { color: var(--text-dim); }
+@utility text-faint { color: var(--text-faint); }
+@utility text-ghost { color: var(--text-ghost); }
 
-:root { color-scheme: dark; }
-body { margin: 0; background: #0b0d10; color: #d7dae0;
+/* 背景四档 + 边框两档 + accent 族（蓝底白卡主题，见顶部调色板） */
+@utility bg-base { background-color: var(--bg-base); }
+@utility bg-panel { background-color: var(--bg-panel); }
+@utility bg-raised { background-color: var(--bg-raised); }
+@utility bg-inset { background-color: var(--bg-inset); }
+@utility bg-active { background-color: var(--bg-active); }
+@utility bg-select { background-color: var(--bg-select); }
+@utility border-l1 { border-color: var(--border-l1); }
+@utility border-l2 { border-color: var(--border-l2); }
+@utility border-chrome { border-color: var(--border-on-base); }
+@utility bg-blue-soft { background-color: var(--accent-blue-soft); }
+@utility bg-pink-soft { background-color: var(--accent-pink-soft); }
+@utility bg-yellow-soft { background-color: var(--accent-yellow-soft); }
+@utility text-blue-fg { color: var(--accent-blue-fg); }
+@utility text-pink-fg { color: var(--accent-pink-fg); }
+@utility text-yellow-fg { color: var(--accent-yellow-fg); }
+@utility border-accent-blue { border-color: var(--accent-blue); }
+@utility border-accent-pink { border-color: var(--accent-pink-fg); }
+
+body { margin: 0; background: var(--bg-base); color: var(--text-strong);
   font-family: ui-sans-serif, system-ui, "Microsoft YaHei", sans-serif; }
 
-/* uPlot 暗色覆盖（uPlot 自带样式是浅色的） */
+/* 轮级加载扫光（设计参考 §4：shimmer 而非 spinner；prefers-reduced-motion 关闭） */
+@keyframes dsh-sweep-kf {
+  0% { background-position: -160px 0; }
+  100% { background-position: 320px 0; }
+}
+.dsh-sweep {
+  background-image: linear-gradient(90deg, transparent, rgb(148 163 184 / 0.25), transparent);
+  background-size: 160px 100%;
+  background-repeat: no-repeat;
+  animation: dsh-sweep-kf 2.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dsh-sweep { animation: none; }
+  .think-running svg { animation: none !important; }
+}
+
+/* 思考运行态：原子轨道慢转 + 呼吸（结束即停 —— 类只在运行中挂着） */
+@keyframes think-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.think-running svg { animation: think-orbit 2.4s linear infinite; transform-origin: center; }
+.think-running summary { animation: breathe-opacity 1.8s ease-in-out infinite; }
+@keyframes breathe-opacity { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* uPlot 覆盖（uPlot 自带样式是浅色的；颜色走主题变量） */
 .uplot { font-family: inherit; }
-.uplot .u-legend { font-size: 12px; color: #9ca3af; }
+.uplot .u-legend { font-size: 12px; color: var(--text-dim); }
 .uplot .u-legend .u-marker { border-width: 2px; }
 .uplot .u-legend th { font-weight: 500; }
-.uplot .u-legend .u-value { color: #e5e7eb; font-variant-numeric: tabular-nums; }
-.uplot .u-cursor-x, .uplot .u-cursor-y { border-color: #4b5563; }
-.uplot .u-select { background: rgba(56, 189, 248, 0.12); }
+.uplot .u-legend .u-value { color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.uplot .u-cursor-x, .uplot .u-cursor-y { border-color: var(--uplot-cursor); }
+
+
+/*
+ * 全局滚动条：细 + 半透明（2026-08-22 用户拍板「右侧滚动条太粗」）——
+ * 当作内置画布的一部分，不抢视线。WebKit 系（Chrome/Edge）生效。
+ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-l2); border-radius: 3px; opacity: 0.6;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-ghost); }
+* { scrollbar-width: thin; scrollbar-color: var(--border-l2) transparent; }
+
+/*
+ * ── 按钮体系（2026-08-22 按钮级打磨轮）─────────────────────────────────────
+ * 四变体一套态：ghost（默认）/ ok / warn / danger / active（选中段）。
+ * 态的约定：hover = 浅凹底或加深 tint；active(按下) = 轻下沉；disabled = 40% +
+ * not-allowed（G7 的理由仍走 title）；focus-visible = 描边环（键盘可达）。
+ * 放 components 层 —— 元素上再加工具类（如 text-red-400）仍可覆盖。
+ */
+@layer components {
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    border-radius: 0.375rem; border: 1px solid var(--border-l1);
+    padding: 0.2rem 0.55rem; font-size: 12px; line-height: 1rem;
+    transition: background-color .12s ease, color .12s ease, border-color .12s ease, transform .06s ease;
+    user-select: none; cursor: pointer; white-space: nowrap;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn:focus-visible { outline: 2px solid var(--border-l2); outline-offset: 1px; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+
+  .btn-ghost { color: var(--text-dim); background: transparent; }
+  .btn-ghost:hover:not(:disabled) { background: var(--bg-inset); color: var(--text-strong); }
+
+  .btn-active { background: var(--bg-active); color: var(--text-strong);
+    font-weight: 500; border-color: var(--border-l2); }
+
+  .btn-ok { color: var(--ok-fg); background: var(--ok-bg); border-color: var(--border-l2); }
+  .btn-ok:hover:not(:disabled) { background: color-mix(in srgb, var(--ok-fg) 22%, transparent); }
+  .btn-warn { color: var(--warn-fg); background: var(--warn-bg); border-color: var(--border-l2); }
+  .btn-warn:hover:not(:disabled) { background: color-mix(in srgb, var(--warn-fg) 22%, transparent); }
+  .btn-danger { color: var(--err-fg); background: var(--err-bg); border-color: var(--border-l2); }
+  .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err-fg) 22%, transparent); }
+}

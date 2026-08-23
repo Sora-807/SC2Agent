@@ -1,9 +1,9 @@
 """constraint 可行性校验：build/train 的门控项逐一断言（资源/供给/前置/放置）。"""
 from game import GameState, Grid, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from constraint.checks import check_assign_workers, check_build, check_resources, check_train
 
-CAT = load_terran()
+CAT = load_all()
 
 
 def _u(tag, type_name, owner=Owner.SELF, x=0.0, y=0.0, progress=1.0):
@@ -40,7 +40,7 @@ def test_check_build_blocked_by_occupied_cell():
 
 
 def test_check_build_unknown_type():
-    r = check_build(_gs([]), CAT, "terran/ghost", Point2(50, 50))
+    r = check_build(_gs([]), CAT, "terran/zzz_fake", Point2(50, 50))
     assert not r.ok and any("未知类型" in x for x in r.reasons)
 
 
@@ -61,7 +61,7 @@ def test_check_train_blocked_by_missing_producer():
 
 
 def test_check_train_unknown_type():
-    r = check_train(_gs([]), CAT, "terran/ghost")
+    r = check_train(_gs([]), CAT, "terran/zzz_fake")
     assert not r.ok and any("未知类型" in x for x in r.reasons)
 
 

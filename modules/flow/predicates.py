@@ -37,6 +37,7 @@ PREDICATE_SIGNATURES: dict[str, tuple[tuple[str, bool], ...]] = {
     "game_time": (),
     "strategy_elapsed": (),
     "step_elapsed": (),
+    "timer_elapsed": (("name", True),),   # T8/二十六轮落地：start_timer 起算的秒数（未跑 → None）
     # 空间 / 位置
     "arrived": (("group", True), ("target", True), ("radius", True)),
     "group_center": (("group", True),),
@@ -48,6 +49,8 @@ PREDICATE_SIGNATURES: dict[str, tuple[tuple[str, bool], ...]] = {
     # 状态
     "group_hp_ratio": (("group", True),),
     "has_building": (("type", True), ("region", False), ("ready", False)),
+    "engaged": (("group", True),),        # 二十六轮落地：组在交火（攻击命令或近敌入射程）
+    "under_attack": (("group", True),),   # 二十六轮落地：组近期掉血（引擎 hp 历史推导）
     # 值工具（消费方：when 的参数位 / 动作参数位）
     "point_toward": (("origin", True), ("toward", True), ("dist", True)),
 }
@@ -63,10 +66,7 @@ OPERATOR_ARITY: dict[str, tuple[int, int | None]] = {
 
 # spec-003 §4.1 中 V1 未实现的谓词 → 原因（编译期/求值期都明确拒绝，不静默）
 UNIMPLEMENTED_PREDICATE_OPS: dict[str, str] = {
-    "engaged": "需引擎从 orders/攻击射程/近期事件推导交火状态",
-    "under_attack": "需引擎从 hp 历史推导受击状态",
     "has_ready_base": "基地类型目录（三族 town hall）落 catalog 后实现",
-    "timer_elapsed": "计时器运行时（start_timer/stop_timer 的 deadline 存储）待建",
     "event_occurred": "引擎事件流（GameEvent 目录 D7）待建",
     "user_cancel": "用户接管/取消通道待建",
 }
@@ -107,6 +107,13 @@ class EvalCtx:
     definitions: dict | None = None  # {ref: name} 别名节（T2b；纯替换语义，无变量捕获）
     step_id: str = ""  # 当前 step（只用于诊断定位）
     diagnostics: dict | None = None  # (step, kind, detail) -> 次数；None = 不记录（单测直调）
+    # ---- 二十六轮（T8 落地）：locals / timers / 交火态由 FlowEngine 注入 ----
+    #: step 局部变量（set_local 写、{local: name} 读、换 step 清空）。None = 引擎外直调。
+    locals: dict | None = None
+    #: 定时器读接口：name -> 已耗时秒数 | None（未 start / 已 stop）。callable，由引擎闭包提供。
+    timers: object = None
+    #: 交火态读接口：engaged(slot) / under_attack(slot) -> bool（引擎从 orders/射程/hp 历史推导）。
+    combat: object = None
 
 
 def note_diagnostic(ctx: EvalCtx, kind: str, detail: str) -> None:
@@ -145,6 +152,16 @@ def eval_when(node, ctx: EvalCtx):
         return ctx.params.get(node["param"])
     if "var" in node:
         return ctx.variables.get(node["var"])
+    if "local" in node:
+        # step 局部变量（二十六轮 T8 落地）：set_local 写、换 step 清空。
+        # 未声明/未写 → None（比较路径有 None 诊断兜底，不静默也不崩）。
+        name = node["local"]
+        if ctx.locals is None:
+            note_diagnostic(ctx, "no_locals_ctx", f"{{local: {name!r}}}：求值上下文没有 locals（引擎外直调？）")
+            return None
+        if name not in ctx.locals:
+            note_diagnostic(ctx, "unset_local", f"{name!r} 未写入（进入本 step 后还没有 set_local）")
+        return ctx.locals.get(name)
     if "ref" in node:
         name = node["ref"]
         defs = ctx.definitions or {}
@@ -218,6 +235,8 @@ def _call_predicate(op: str, ctx: EvalCtx, kw: dict):
         return ctx.gs.game_time - ctx.strategy_start
     if op == "step_elapsed":
         return ctx.gs.game_time - ctx.step_entered
+    if op == "timer_elapsed":
+        return _p_timer_elapsed(ctx, kw["name"])
     if op == "arrived":
         return _p_arrived(ctx, kw["group"], kw["target"], kw["radius"])
     if op == "group_center":
@@ -228,6 +247,10 @@ def _call_predicate(op: str, ctx: EvalCtx, kw: dict):
         return _p_enemy_count_near(ctx, kw["anchor"], kw["radius"])
     if op == "group_hp_ratio":
         return _p_group_hp_ratio(ctx, kw["group"])
+    if op == "engaged":
+        return _p_combat(ctx, "engaged", kw["group"])
+    if op == "under_attack":
+        return _p_combat(ctx, "under_attack", kw["group"])
     if op == "region_center":
         return _p_region_center(ctx, kw["name"])
     if op == "group_center_in_region":
@@ -239,6 +262,29 @@ def _call_predicate(op: str, ctx: EvalCtx, kw: dict):
     if op == "point_toward":
         return point_toward(kw["origin"], kw["toward"], kw["dist"], ctx.region_layer)
     raise ValueError(f"unknown op {op!r}")
+
+
+def _p_timer_elapsed(ctx: EvalCtx, name):
+    """定时器已耗时（二十六轮 T8 落地）：start_timer 起算、stop_timer 冻结。
+
+    引擎外直调（timers 未注入）或未 start → None：比较路径走 None 诊断兜底
+    （`timer_elapsed(t) >= 30` 在没起表时是 False 且留痕，不静默也不崩）。
+    """
+    if ctx.timers is None:
+        note_diagnostic(ctx, "no_timer_ctx", f"timer_elapsed({name!r})：求值上下文没有计时器（引擎外直调？）")
+        return None
+    return ctx.timers(name)
+
+
+def _p_combat(ctx: EvalCtx, which: str, slot):
+    """engaged / under_attack（二十六轮落地）：交火态由引擎从 orders/射程/hp 历史推导。
+
+    引擎外直调（combat 未注入）→ False + 诊断（与 None 比较同款的不静默降级）。
+    """
+    if ctx.combat is None:
+        note_diagnostic(ctx, "no_combat_ctx", f"{which}({slot!r})：求值上下文没有交火态（引擎外直调？）")
+        return False
+    return bool(getattr(ctx.combat, which)(slot))
 
 
 def _group_count(ctx: EvalCtx, slot, type_name=None) -> int:

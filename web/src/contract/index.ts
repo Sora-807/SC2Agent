@@ -52,8 +52,11 @@ import { z } from "zod";
  * rev 1：初版（DSL v0.2 之前，签名表尚不存在，schema 降级为空参数表）。
  * rev 10：B12/B13 —— economy.nodes[] 增 base_tag；catalog 增 short_name_zh。
  * rev 11：B14 —— 提案 hunks.kind 增 map_plan 六操作；preview.map_overlay 增 changed_marks。
+ * rev 12：策略可读性（I1/I2/I4）—— schema 的 predicates/operators/actions 每项加 name_zh；
+ *   strategy 增 display_name_zh/description_zh（策略级与 step 级）、reasons、group_names。
+ *   新字段全部 `.default()` 容错：旧夹具/旧缓存帧缺字段时退回 identifier，不炸整页。
  */
-export const REV = 11 as const;
+export const REV = 12 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -212,6 +215,8 @@ export const zSchemaStatic = z.object({
   predicates: z.record(
     z.string(),
     z.object({
+      /** 中文名（rev 12，I1）：UI 条件 chip 与提示词共用，真相源在 flow.vocab */
+      name_zh: z.string().default(""),
       params: z.array(z.object({ name: z.string(), required: z.boolean() })),
       kind: z.enum(["value", "bool"]),
     }),
@@ -219,12 +224,17 @@ export const zSchemaStatic = z.object({
   /** 比较/逻辑运算符 arity；max_args=null 表示不限（and/or） */
   operators: z.record(
     z.string(),
-    z.object({ min_args: z.number().int(), max_args: z.number().int().nullable() }),
+    z.object({
+      name_zh: z.string().default(""),
+      min_args: z.number().int(),
+      max_args: z.number().int().nullable(),
+    }),
   ),
   /** group_action.action_atom 目录（= game.operation.OP_CATALOG，含 ParamType） */
   actions: z.record(
     z.string(),
     z.object({
+      name_zh: z.string().default(""),
       params: z.array(
         z.object({ name: z.string(), type: z.string(), required: z.boolean() }),
       ),
@@ -275,8 +285,11 @@ export const zTerrainFrame = z.object({
 export const zStrategyStatic = z.object({
   id: z.string(),
   version: z.number().int(),
+  /** 中文名与意图描述（rev 12，I2）："" = 没写，UI 退回 identifier */
+  display_name_zh: z.string().default(""),
+  description_zh: z.string().default(""),
   group_slots: z.array(z.string()),
-  /** 参数/变量的**声明**（type + default）；生效值在 frame/flow */
+  /** 参数/变量的**声明**（type + default + description_zh?）；生效值在 frame/flow */
   params: z.record(z.string(), z.record(z.string(), z.unknown())),
   variables: z.record(z.string(), z.record(z.string(), z.unknown())),
   definitions: z.record(z.string(), z.unknown()),
@@ -284,6 +297,8 @@ export const zStrategyStatic = z.object({
   steps: z.array(
     z.object({
       step_id: z.string(),
+      display_name_zh: z.string().default(""),
+      description_zh: z.string().default(""),
       /** 原样的值树：when 的 AST 与 do 的动作列表都不摊平（F9 的编辑器要用） */
       branches: z.array(z.record(z.string(), z.unknown())),
     }),
@@ -300,6 +315,10 @@ export const zStrategyStatic = z.object({
   loop_limits: z.record(z.string(), z.number().int()),
   /** slot → group_id：画图时标注每个 slot 落在哪个组 */
   bindings: z.record(z.string(), z.string()),
+  /** reason 标识符 → 中文（FORMED → 成型）：edges 切换原因与 exit 终局原因共用（rev 12） */
+  reasons: z.record(z.string(), z.string()).default({}),
+  /** group_id → 中文（G_INF → 步兵组），来自 assembly（rev 12） */
+  group_names: z.record(z.string(), z.string()).default({}),
 });
 
 export const zSessionFrame = z.object({

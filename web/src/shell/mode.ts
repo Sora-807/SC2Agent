@@ -14,35 +14,27 @@ export type Mode = "offline" | "drive" | "replay";
 
 export interface ModeMeta {
   label: string;
-  /** chrome 上的状态文字（离线/驾驶/复盘各自不可忽略的那句话） */
+  /** 控件上的悬停说明（G7：模式语义一句话） */
   tip: string;
-  /** 顶部色带与状态点的颜色族（tailwind 名，SessionBar 引用） */
-  band: string;
-  dot: string;
-  text: string;
 }
 
+/** 三段控件的排布顺序（用户 2026-08-22 拍板）：游戏 | 复盘 | 规划。
+ * id 不动（offline/drive/replay 全仓引用），动的只是显示名 ——
+ * 「离线编辑→规划、实时驾驶→游戏」是用户对三模式的最终命名。 */
+export const MODE_ORDER: Mode[] = ["drive", "replay", "offline"];
+
 export const MODE_META: Record<Mode, ModeMeta> = {
-  offline: {
-    label: "离线编辑",
-    tip: "离线草稿，不影响任何对局",
-    band: "bg-sky-700",
-    dot: "bg-sky-400",
-    text: "text-sky-300",
-  },
   drive: {
-    label: "实时驾驶",
-    tip: "跟随实时",
-    band: "bg-emerald-600",
-    dot: "bg-emerald-400 animate-pulse",
-    text: "text-emerald-300",
+    label: "游戏",
+    tip: "跟随实时：连接真实 SC2 对局",
   },
   replay: {
     label: "复盘",
-    tip: "只读回看",
-    band: "bg-amber-600",
-    dot: "bg-amber-400",
-    text: "text-amber-300",
+    tip: "只读回看：对局记录（自动录制）",
+  },
+  offline: {
+    label: "规划",
+    tip: "离线草稿，不影响任何对局",
   },
 };
 
@@ -102,10 +94,13 @@ export function bootHint(
   return "正在连接 SC2 并等待首帧（真机约需 1-2 分钟）—— 期间没有画面是正常的，数据到达后自动消失";
 }
 
-/** 每个模式的合法帧源（R5：live 中不创建/编辑模块与 Strategy → 驾驶态只有 live 源） */
+/** 每个模式的合法帧源。
+ *  二十七轮用户拍板：复盘入口收敛成**只看对局记录** —— 夹具/模拟 live/API 回放三个
+ *  一级选项全退役（分不清是什么）；夹具仍是规划模式的内部数据源（离线要画地图/目录），
+ *  mock-live/api 两种 SourceKind 保留在 store（测试与开发通道），UI 不再露出。 */
 export const MODE_SOURCES: Record<Mode, SourceKind[]> = {
   offline: ["fixture"],
-  replay: ["fixture", "mock-live", "api"],
+  replay: ["fixture"],
   drive: ["live"],
 };
 
@@ -128,8 +123,8 @@ export function allowedSources(mode: Mode, apiOk: boolean): SourceKind[] {
   return MODE_SOURCES[mode].filter((k) => (k === "api" || k === "live") ? apiOk : true);
 }
 
-/** 切模式时的默认落点（保持**仍然存在**的当前夹具优先，否则第一个夹具；live 源不需要夹具键）。
- * 「仍然存在」：drive 会话会把 fixtureKey 写成哨兵 "live" —— 切回离线时不能拿它当夹具名。 */
+/** 切模式时的默认落点（保持**仍然存在**的当前源优先，否则第一个可用源；live 源不需要夹具键）。
+ *  复盘只落**对局记录**（rec: 前缀）；没有记录 → null（页面显示引导文案，不偷偷挂夹具）。 */
 export function defaultSource(
   mode: Mode,
   fixtures: readonly { key: string }[],
@@ -144,11 +139,11 @@ export function defaultSource(
     case "offline":
       return fx ? { kind: "fixture", fixtureKey: fx } : null;
     case "replay": {
-      const allowed = allowedSources(mode, apiOk);
-      // 有夹具优先夹具（最常用）；没有夹具再退 api 回放；都没有 → null
-      if (fx) return { kind: "fixture", fixtureKey: fx };
-      if (allowed.includes("api")) return { kind: "api", fixtureKey: "" };
-      return null;
+      const rec = currentFixtureKey?.startsWith("rec:")
+        && fixtures.some((f) => f.key === currentFixtureKey)
+        ? currentFixtureKey
+        : fixtures.find((f) => f.key.startsWith("rec:"))?.key ?? null;
+      return rec ? { kind: "fixture", fixtureKey: rec } : null;
     }
     case "drive":
       return apiOk ? { kind: "live", fixtureKey: "live" } : null;

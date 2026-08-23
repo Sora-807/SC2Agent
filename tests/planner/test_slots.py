@@ -10,7 +10,7 @@
 import pytest
 
 from game import GameState, Grid, Order, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from planner.build_order import Train
 from planner.planner import Planner
 from planner.sim_state import derive_from
@@ -30,7 +30,7 @@ def _gs(units, resources=(), minerals=5000, vespene=500, supply_used=10, supply_
                      map_size=(176, 160), creep=g, visibility=g, resources=list(resources))
 
 
-CAT = load_terran()
+CAT = load_all()
 
 
 def test_tech_unit_classification():

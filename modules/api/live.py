@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ from api.sources import SourceInfo
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "tools" / "run_session.py"
 
-#: 内存里保留的帧数（够时间线回看最近一段；完整历史靠 ViewRecorder 落盘）
+#: 内存里保留的帧数（够时间线回看最近一段；完整历史落录制文件 —— 二十六轮起真落盘）
 FRAME_BUFFER = 6000
 #: 停止时等子进程自己退出的秒数，超时就 kill
 STOP_GRACE = 5.0
@@ -45,10 +46,12 @@ class LiveSession:
     id = "live"
 
     def __init__(self, *, driver: str = "sim", map_name: str = "LadderMap",
-                 seconds: float = 600.0, realtime: bool = False,
+                 seconds: float = 600.0, realtime: bool | None = None,
                  tick_seconds: float = 0.25,
                  label: str | None = None, python: str | None = None,
-                 map_plan: str | None = None) -> None:
+                 map_plan: str | None = None,
+                 strategy_path: str | None = None,
+                 record_dir: Path | None = None) -> None:
         self.driver = driver
         self.label = label or (f"真机会话（{map_name}）" if driver == "sc2"
                                else "子进程沙盒（假世界，验进程分离）")
@@ -66,16 +69,45 @@ class LiveSession:
         #: 投影往返：id → [Event, 结果]。双投影必须在**有 GameState 的**子进程侧算。
         self._pending: dict[int, list] = {}
         self._next_req = 0
+        # 真机默认实时配速（二十六轮用户反馈「实时游戏连接不是正常流速」）：
+        # realtime=False 时 burnysc2 的 step 不等墙钟，游戏时间飞跑。
+        # sim 不受影响（它本来就按 tick_seconds 睡）。
+        self._realtime = (driver == "sc2") if realtime is None else realtime
+        # 对局记录（二十六轮用户反馈「对局记录没保存」）：帧流同步落 JSONL，
+        # 结束后复盘模式的下拉里出现「📹 录像」。内存 FRAME_BUFFER 会截老帧，
+        # 文件才是完整历史。record_dir=None（测试默认）= 不录。
+        self._rec_fh = None
+        self._rec_meta_path: Path | None = None
+        self._rec_count = 0
+        if record_dir is not None:
+            try:
+                record_dir.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                rid = f"rec-{stamp}-{driver}"
+                rec_path = record_dir / f"{rid}.jsonl"
+                self._rec_fh = rec_path.open("w", encoding="utf-8", buffering=1)
+                self._rec_meta_path = record_dir / f"{rid}.meta.json"
+                self._rec_meta_path.write_text(json.dumps({
+                    "id": rid, "driver": driver, "map": map_name,
+                    "label": self.label, "map_plan": Path(map_plan).stem if map_plan else None,
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "state": "recording",
+                }, ensure_ascii=False), encoding="utf-8")
+                self._meta["recording"] = rid
+            except OSError:
+                self._rec_fh = None   # 录不了不拦对局：帧流照跑，只是没文件
 
         cmd = [
             python or sys.executable, "-X", "utf8", str(RUNNER),
             "--driver", driver, "--map", map_name, "--seconds", str(seconds),
             "--tick-seconds", str(tick_seconds),
         ]
-        if realtime:
+        if self._realtime:
             cmd.append("--realtime")
         if map_plan:
             cmd += ["--map-plan", str(map_plan)]
+        if strategy_path:
+            cmd += ["--strategy-file", str(strategy_path)]   # 二十七轮：开放写策略
         # 真机发现：`stdin=PIPE` 且保持打开会让 SC2 挂起（burnysc2 启动的 SC2 进程
         # 继承了打开的 stdin 管道句柄）。给 stdin 发 EOF（关闭写端）即可解除 ——
         # 但那样命令也写不进去了。所以：sim 用 PIPE（命令走 stdin），
@@ -119,6 +151,7 @@ class LiveSession:
                 self.state = "已结束" if code == 0 else "崩溃"
                 if code != 0 and not self.error:
                     self.error = f"子进程退出码 {code}"
+            self._close_recording("已结束" if code == 0 else "崩溃")
 
     def _pump_stderr(self) -> None:
         assert self.proc.stderr is not None
@@ -189,6 +222,48 @@ class LiveSession:
             self.game_time = max(self.game_time, float(frame.get("game_time", 0.0)))
             if self.state == "启动中":
                 self.state = "对局中"
+            # 录制：帧流同步落盘（buffering=1 行缓冲；写失败不拦帧流）
+            if self._rec_fh is not None:
+                try:
+                    self._rec_fh.write(json.dumps(frame, ensure_ascii=False) + "\n")
+                    self._rec_count += 1
+                except OSError:
+                    self._rec_fh = None
+
+    def _close_recording(self, final_state: str) -> None:
+        """收尾录制：关文件 + 把 meta 标成终态（时长/帧数写进去，清单端点就不用扫文件）。
+        调用方需持有 self._lock（与 _frame 同一把，写序一致）。"""
+        fh, self._rec_fh = self._rec_fh, None
+        if fh is not None:
+            try:
+                fh.flush()
+                fh.close()
+            except OSError:
+                pass
+        meta_path, self._rec_meta_path = self._rec_meta_path, None
+        if meta_path is None:
+            return
+        rid = meta_path.stem
+        my_zh, enemy_zh = _races_from_frames(self.frames)
+        try:
+            old: dict = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            old = {"id": rid, "driver": self.driver, "label": self.label}
+        old.update({
+            "state": final_state,
+            "ended_at": datetime.now().isoformat(timespec="seconds"),
+            "envelopes": self._rec_count,
+            "to": round(self.game_time, 3),       # 清单端点统一读 to（前端时长显示）
+            "to_time": round(self.game_time, 3),
+            "my_race_zh": my_zh,                   # 复盘清单的「人族 vs 神族」（二十七轮）
+            "enemy_race_zh": enemy_zh,
+        })
+        try:
+            meta_path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        self._meta.pop("recording", None)
+        self._meta["recorded"] = {"id": rid, "envelopes": self._rec_count}
 
     def _note_error(self, detail: str, *, fatal: bool = False) -> None:
         self.error = detail
@@ -392,6 +467,7 @@ class LiveSession:
         with self._lock:
             if self.state != "崩溃":
                 self.state = "已结束"
+            self._close_recording(self.state)
 
     def describe(self) -> dict[str, Any]:
         with self._lock:
@@ -404,6 +480,39 @@ class LiveSession:
                 "meta": {k: v for k, v in self._meta.items() if k != "stderr_tail"},
                 "queues": [],   # 队列由子进程持有；UI 从 frame/production 看（单一真相源）
             }
+
+
+#: 种族中文名（复盘清单「人族 vs 神族」用；C4：zh 文案来自后端）
+_RACE_ZH = {"terran": "人族", "protoss": "神族", "zerg": "虫族"}
+
+
+def _races_from_frames(frames: list[dict]) -> tuple[str | None, str | None]:
+    """从帧流推 (我方, 敌方) 族中文名。
+
+    优先读最后一帧 frame/session（run_session 从首个可见敌方单位推导后写进去）；
+    会话帧没有（比如一局没见过敌人）再退 frame/world 的敌方单位 stable id 前缀。
+    都推不出 = None（前端清单该段显示「—」）。
+    """
+    for f in reversed(frames):
+        if f.get("topic") == "frame/session":
+            p = f.get("payload") or {}
+            my = _RACE_ZH.get(p.get("my_race") or "")
+            enemy = _RACE_ZH.get(p.get("enemy_race") or "")
+            if my or enemy:
+                return (my or None, enemy or None)
+            break
+    enemy = None
+    for f in reversed(frames):
+        if f.get("topic") != "frame/world":
+            continue
+        for u in (f.get("payload") or {}).get("units") or []:
+            sid = str(u.get("stable_id") or "")
+            if sid.startswith(("terran/", "protoss/", "zerg/")) and u.get("owner") == "enemy":
+                enemy = _RACE_ZH.get(sid.split("/", 1)[0])
+                if enemy:
+                    return ("人族", enemy)
+        break
+    return ("人族" if any(f.get("topic") == "frame/world" for f in frames) else None, enemy)
 
 
 def _pid_has_children(pid: int) -> bool:

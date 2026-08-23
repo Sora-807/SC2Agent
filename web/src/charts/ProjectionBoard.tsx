@@ -1,10 +1,14 @@
 /**
  * 投影板（I5/F15/F17）—— 曲线 + 泳道共享**同一条时间轴**，一张图上下两带。
  *
- * F17 交互（用户三轮反馈打磨）：
- * - **历史累积**：投影帧只含 [based_on, +horizon]，拖顶层时间轴后左半视窗会空 ——
- *   显示层把走过的每秒累积（accumulateInto），数据像向左流走一样保留；
- * - **左键拖图 = 拖时间轴**：按住图横向拖，时间轴跟着走（可 seek 源才启用）；
+ * F17 交互（2026-08-22 二十轮重定义：拖动=平移视野，不再拖时间轴）：
+ * - **历史累积**：投影帧只含 [based_on, +horizon]，随回放/对局推进把走过的每秒
+ *   累积（accumulateInto），数据像向左流走一样保留；
+ * - **左键拖图 = 平移视野**：视窗横移、零点是最左边界（拖不过 0）—— 旧版
+ *   「拖图=seek」会在拖动中大幅回退时间 → 历史清空重累积 → 泳道突现突失、
+ *   曲线跳变（用户实测报的「跳跃性变化」根因），退役；
+ * - **跟随改为边缘触发**：时间位置贴近视窗边缘才平移滑窗（居中重定会整轴跳）；
+ *   滚轮调宽度 2026-08-22 退役 —— 宽度固定跟 horizon；
  * - **hover 线**：root 级统一几何换算（frac），拖时间轴后线不再滞后错位；
  *   uPlot 自带 legend 隐藏，hover 读数进 footer —— 线也就不会越过时间轴；
  * - **泳道**：bar 自带 zh 名（圆角矩形内文字），全局行打包（跨类型并行），
@@ -18,9 +22,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, ProjectionFrame } from "../contract";
 import { ProjectionChart, PROJECTION_GUTTER } from "./ProjectionChart";
 import {
-  accumulateInto, activeAt, anchorRange, centerRange, packBars, toStalls, zoomSpan,
+  activeAt, packBars, toStalls, zoomSpan,
   type TimeDomain,
 } from "./gantt-data";
+import { useAccumulatedProjection } from "./use-accumulated";
 import { fmtMMSS } from "./projection-data";
 import { T } from "../shell/tokens";
 import { useFrames } from "../store/frames";
@@ -28,8 +33,16 @@ import { useFrames } from "../store/frames";
 /** 泳道固定可见行数（用户拍板：7 行足够；超出滚动） */
 const LANES_VISIBLE = 7;
 const LANE_ROW_PX = 20;
-/** 左键拖图判定的位移容差（px）：超过它才算拖时间轴，不是点击 */
+/** 左键拖图判定的位移容差（px）：超过它才算拖动，不是点击 */
 const DRAG_SLOP = 4;
+/** 平移增益：1.0 = 内容与鼠标 1:1 跟手（二十四轮用户拍板「不跟手」——
+ *  0.5 的减半让视图永远追不上鼠标）；跨度大时的速度上限交给 PAN_SPAN_CAP */
+const PAN_GAIN = 1.0;
+/** 平移速度封顶（秒）：可视跨度大于它时整幅拖满也只有 PAN_SPAN_CAP（半幅 ≈8 分钟，
+ *  二十二轮用户拍板的灵敏度上限）；小跨度视图不受影响（仍 1:1 × 增益跟手） */
+const PAN_SPAN_CAP = 960;
+/** bar 文字的最小像素宽（二十六轮：密事件下窄条的字符糊成一团，宁可留白靠 title） */
+const BAR_LABEL_MIN_PX = 30;
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
@@ -50,46 +63,56 @@ export function ProjectionBoard(props: {
   catalog: CatalogStatic | null;
   zhOf: (id: string | null) => string;
   height?: number;
-  /** 初始视窗（缺省 = 围绕 based_on 居中）。规划试算 from=0 起轴，不出一半负时间 */
-  initialDomain?: TimeDomain;
 }) {
   const { frame } = props;
 
-  // ---- 历史累积（F17）：拖时间轴后左侧内容保留 ----
-  const histRef = useRef<{
-    points: Map<number, ProjectionFrame["points"][number]>;
-    events: Map<string, ProjectionFrame["events"][number]>;
-  }>({ points: new Map(), events: new Map() });
-  const lastBasedRef = useRef(Number.NEGATIVE_INFINITY);
-  const [merged, setMerged] = useState<ProjectionFrame>(frame);
-  useEffect(() => {
-    const h = histRef.current;
-    if (frame.based_on_game_time < lastBasedRef.current - 5) {
-      // 帧源大幅回退（向后拖时间轴 / 换源）→ 历史与新帧不再连续，重新累积
-      h.points.clear();
-      h.events.clear();
-    }
-    lastBasedRef.current = frame.based_on_game_time;
-    setMerged(accumulateInto(h, frame));
-  }, [frame]);
+  // ---- 历史累积（F17；二十四轮抽共享 hook，与复盘队列卡同源）----
+  const merged = useAccumulatedProjection(frame);
 
   const packed = useMemo(() => packBars(merged), [merged]);
   const stalls = useMemo(() => toStalls(merged), [merged]);
 
-  // ---- 视窗：宽度滚轮调、中心跟顶层时间轴（live 跟随帧的 based_on）----
+  // ---- 视窗（二十轮）：零点钉最左（from >= 0，拖不过去）；跟随 = 边缘触发滑窗 ----
   const position = useFrames((s) => s.position);
-  const seekable = useFrames((s) => s.caps.seek);
-  const center = position > 0 ? position : merged.based_on_game_time;
-  const [range, setRange] = useState<TimeDomain>(() =>
-    props.initialDomain ?? centerRange(center, zoomSpan(Math.max(1, frame.horizon), 1)));
+  // 数据末端（二十七轮用户拍板：右侧不许出现空白 —— 滚动范围钳在 [0, dataEnd]，
+  // 和左侧「零点钉最左」对称）。取累积曲线最后一个采样点；没数据时退 horizon。
+  const dataEnd = Math.max(
+    merged.points.length ? merged.points[merged.points.length - 1]!.t : 0,
+    merged.based_on_game_time,
+  );
+  const [range, setRange] = useState<TimeDomain>(() => {
+    // 初始窗口钳到 ZOOM_SPAN_MAX（二十七轮 5 分钟）：until_complete 后 horizon 可能是
+    // 整局 30-60 分钟，全塞一屏 = 拖一下十几分钟 + 事件密到不可读（二十六轮用户反馈）。
+    // 右端不超过数据末端（不留空白）。曲线数据仍是完整的 —— 拖动/边缘跟随走全程。
+    const to = Math.min(zoomSpan(Math.max(1, frame.horizon), 1), Math.max(1, dataEnd));
+    return { from: 0, to };
+  });
   const rangeRef = useRef(range);
   rangeRef.current = range;
-  const positionRef = useRef(position);
-  positionRef.current = position;
-  // 中心变化（拖顶层时间轴 / live 推进）→ 保持宽度只移中心
+  // dataEnd 的同步镜像（pan 处理器挂在 [] 依赖的 effect 里，闭包里的 dataEnd 会陈旧）
+  const dataEndRef = useRef(dataEnd);
+  dataEndRef.current = dataEnd;
+  const panningRef = useRef(false);
+  // 时间位置滑出视窗（回放 seek / live 推进到边缘）→ 平移滑窗把它带回来；
+  // 拖动中不动（拖动就是用户在定视窗）。居中重定已退役（整轴跳的另一半根因）。
   useEffect(() => {
-    setRange((r) => centerRange(center, r.to - r.from));
-  }, [center]);
+    if (panningRef.current) return;
+    setRange((r) => {
+      const span = r.to - r.from;
+      const margin = span * 0.08;
+      if (position <= r.from + margin) {
+        const from = Math.max(0, position - span * 0.2);
+        return { from, to: from + span };
+      }
+      if (position >= r.to - margin) {
+        // 右端钳数据末端：跟随可以贴到末尾，但不出空白（二十七轮）
+        const to = Math.min(position + span * 0.2, dataEnd);
+        const from = Math.max(0, to - span);
+        return { from, to: Math.max(from + 1, to) };
+      }
+      return r;
+    });
+  }, [position, dataEnd]);
   const span = Math.max(1e-9, range.to - range.from);
   const pct = (t: number): number => clamp(((t - range.from) / span) * 100, 0, 100);
 
@@ -99,10 +122,22 @@ export function ProjectionBoard(props: {
   const hoverT = hoverFrac !== null ? range.from + hoverFrac * span : null;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const scrub = useRef<{ startX: number; startPos: number; active: boolean; moved: boolean } | null>(null);
+  // 绘图区像素宽（泳道标签按宽度隐藏的判据）：ResizeObserver 跟随容器
+  const [trackW, setTrackW] = useState(0);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setTrackW(Math.max(0, rect.width - PROJECTION_GUTTER.left - PROJECTION_GUTTER.right));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const scrub = useRef<{ startX: number; active: boolean; moved: boolean } | null>(null);
   const lastScrubMoved = useRef(false);
-  const seekableRef = useRef(seekable);
-  seekableRef.current = seekable;
 
   useEffect(() => {
     const el = rootRef.current;
@@ -117,16 +152,34 @@ export function ProjectionBoard(props: {
     const onMove = (e: PointerEvent): void => {
       const s = scrub.current;
       if (s?.active) {
+        // 手势标记还活着但左键已经不在了（在元素外/别的窗口松手时 el 收不到
+        // pointerup）→ 就地收尾。不收的话陈旧的 startX 会把之后的**纯悬停**也当成
+        // 拖动：dx 恒对一个老锚点取号，只要鼠标还在锚点一侧，平移方向就永远不变
+        //（二十七轮用户实测的「方向锁死」）。
+        if ((e.buttons & 1) === 0) {
+          lastScrubMoved.current = s.moved;
+          scrub.current = null;
+          window.setTimeout(() => { panningRef.current = false; }, 400);
+          return;
+        }
         const dx = e.clientX - s.startX;
         if (!s.moved && Math.abs(dx) > DRAG_SLOP) s.moved = true;
-        if (s.moved && seekableRef.current) {
-          // 左键按住图横拖 = 拖时间轴：向左拖（dx<0）时间前进，内容跟手
+        if (s.moved) {
+          // 左键按住图横拖 = 平移视野：向左拖（dx<0）看未来，内容跟手；
+          // 零点是最左边界（from 钉 0，拖不过去 —— 二十轮用户拍板）
           const rect = el.getBoundingClientRect();
           const track = rect.width - PROJECTION_GUTTER.left - PROJECTION_GUTTER.right;
           if (track > 0) {
-            const dt = -(dx / track) * (rangeRef.current.to - rangeRef.current.from);
-            const st = useFrames.getState();
-            st.seek(clamp(s.startPos + dt, st.range.from, st.range.to));
+            const r = rangeRef.current;
+            const span = r.to - r.from;
+            const end = dataEndRef.current;
+            const dt = -(dx / track) * Math.min(span, PAN_SPAN_CAP) * PAN_GAIN;
+            setRange(() => {
+              // 双侧钳制（二十七轮）：from ≥ 0（零点钉最左）且 to ≤ 数据末端
+              //（右侧不出空白——和左侧对称，滚到头就是头）
+              const from = clamp(r.from + dt, 0, Math.max(0, end - span));
+              return { from, to: Math.max(from + 1, Math.min(from + span, Math.max(1, end))) };
+            });
           }
         }
         return;
@@ -137,13 +190,16 @@ export function ProjectionBoard(props: {
     const onDown = (e: PointerEvent): void => {
       if (e.button !== 0) return;
       if (fracFrom(e.clientX) === null) return;   // 只在绘图区才能拖
-      scrub.current = {
-        startX: e.clientX, startPos: positionRef.current, active: true, moved: false,
-      };
+      panningRef.current = true;
+      // 指针捕获：拖出元素外松手，pointerup 也回到 el（手势必然收尾，startX 不滞留）
+      el.setPointerCapture?.(e.pointerId);
+      scrub.current = { startX: e.clientX, active: true, moved: false };
     };
     const onUp = (): void => {
       lastScrubMoved.current = scrub.current?.moved ?? false;
       scrub.current = null;
+      // 松手后短暂冻结跟随，避免最后一次 position 帧把视窗拽回去
+      window.setTimeout(() => { panningRef.current = false; }, 400);
     };
     const onClick = (e: MouseEvent): void => {
       if (lastScrubMoved.current) return;   // 刚拖完时间轴，不是点击
@@ -164,26 +220,6 @@ export function ProjectionBoard(props: {
     };
   }, []);
 
-  // 滚轮缩放：围绕光标，native + passive:false（G3 —— React onWheel 的 preventDefault 是空操作）
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const handleWheel = (e: WheelEvent): void => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const track = rect.width - PROJECTION_GUTTER.left - PROJECTION_GUTTER.right;
-      if (track <= 0) return;
-      const frac = clamp(
-        (e.clientX - rect.left - PROJECTION_GUTTER.left) / track, 0, 1);
-      const cur = rangeRef.current;
-      const anchorT = cur.from + frac * (cur.to - cur.from);
-      const next = zoomSpan(cur.to - cur.from, e.deltaY > 0 ? 1.25 : 0.8);
-      setRange(anchorRange(anchorT, frac, next));
-    };
-    el.addEventListener("wheel", handleWheel, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheel);
-  }, []);
-
   const stallsInView = stalls.filter((s) => s.t >= range.from && s.t <= range.to);
 
   // ---- 检查面板（常驻：默认「现在」，点击切换） ----
@@ -202,10 +238,10 @@ export function ProjectionBoard(props: {
   const laneBodyH = Math.max(1, packed.rows) * LANE_ROW_PX;
 
   return (
-    <div className="flex flex-col gap-3 xl:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 xl:flex-row">
       {/* 左：图板（泳道在上、曲线在下） */}
-      <div className="min-w-0 flex-1">
-        <div ref={rootRef} className="relative cursor-crosshair">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={rootRef} className="relative flex min-h-0 flex-1 cursor-crosshair flex-col">
           {/* —— 上带：泳道（全局行打包 + bar 内名字 + 固定 7 行滚动） —— */}
           {packed.bars.length === 0 && stalls.length === 0 ? (
             <div className={"flex items-center " + T.note + " text-ghost"}
@@ -214,14 +250,32 @@ export function ProjectionBoard(props: {
             </div>
           ) : (
             <div
-              className="relative overflow-y-auto rounded bg-neutral-900/40"
-              style={{ height: Math.min(packed.rows, LANES_VISIBLE) * LANE_ROW_PX || LANE_ROW_PX }}
+              className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto rounded bg-panel"
+              style={{ minHeight: LANES_VISIBLE * LANE_ROW_PX }}
             >
               <div className="relative" style={{ height: laneBodyH }}>
-                {packed.bars.map((b) => {
+                {/* 行间灰色细虚线（二十三轮用户拍板：纯白泳道太素）—— 只铺绘图区宽度 */}
+                <div className="pointer-events-none absolute inset-y-0"
+                     style={{ left: PROJECTION_GUTTER.left, right: PROJECTION_GUTTER.right }}>
+                  {Array.from({ length: Math.max(0, packed.rows) }, (_, i) => (
+                    <div key={i} className="absolute w-full border-t border-dashed border-l1"
+                         style={{ top: (i + 1) * LANE_ROW_PX }} />
+                  ))}
+                </div>
+                {/* bar 在 gutter 内层定位（二十三轮修复：旧版按整箱百分比定位，
+                    泳道 0 点比曲线 0 点靠左 46px —— 「轴没对齐」就是这来的）。
+                    只渲染与视窗相交的 bar（until_complete 后整局几百条，全渲染是 DOM 浪费）；
+                    窄于 BAR_LABEL_MIN_PX 的 bar 隐藏文字（密事件下字比条还宽，读了也是糊的，
+                    title 悬停仍可看全名 —— 二十六轮用户反馈「事件太密看不见字」） */}
+                <div className="absolute inset-y-0"
+                     style={{ left: PROJECTION_GUTTER.left, right: PROJECTION_GUTTER.right }}>
+                {packed.bars
+                  .filter((b) => b.to >= range.from && b.from <= range.to)
+                  .map((b) => {
                   const l0 = pct(b.from);
                   const l1 = pct(b.to);
                   const label = props.zhOf(b.stableId);
+                  const wPx = ((l1 - l0) / 100) * trackW;
                   return (
                     <div
                       key={b.id}
@@ -233,8 +287,8 @@ export function ProjectionBoard(props: {
                         "absolute flex items-center overflow-hidden rounded px-1 "
                         + T.note + " "
                         + (b.done
-                          ? "bg-emerald-700/70 text-emerald-100"
-                          : "bg-amber-700/60 text-amber-100")
+                          ? "bg-[color:var(--ok-fg)] text-white"
+                          : "bg-[color:var(--warn-fg)] text-white")
                       }
                       style={{
                         left: l0 + "%",
@@ -243,31 +297,27 @@ export function ProjectionBoard(props: {
                         height: LANE_ROW_PX - 3,
                       }}
                     >
-                      <span className="truncate">{label}</span>
+                      {wPx >= BAR_LABEL_MIN_PX && <span className="truncate">{label}</span>}
                     </div>
                   );
                 })}
+                </div>
 
                 {/* 卡点竖线：卡点是时间点，对全部行生效（曲线里另有红色虚线 + 原因文字） */}
                 <div
                   className="pointer-events-none absolute inset-y-0"
                   style={{ left: PROJECTION_GUTTER.left, right: PROJECTION_GUTTER.right }}
                 >
-                  {stalls.map((s, i) => (
+                  {stallsInView.map((s, i) => (
                     <div
                       key={i}
-                      className="absolute inset-y-0 w-0.5 bg-red-500/70"
+                      className="absolute inset-y-0 w-0.5 bg-[color:var(--err-fg)]"
                       style={{ left: pct(s.t) + "%" }}
                       title={`${fmtMMSS(s.t)} 卡点：${props.zhOf(s.stableId)} ${s.reason ?? ""}`}
                     />
                   ))}
                 </div>
               </div>
-            </div>
-          )}
-          {packed.rows > LANES_VISIBLE && (
-            <div className={"mt-0.5 text-right " + T.note + " text-ghost"}>
-              {packed.rows} 行（区内滚动）
             </div>
           )}
 
@@ -277,7 +327,7 @@ export function ProjectionBoard(props: {
               className="pointer-events-none absolute inset-y-0 z-10"
               style={{ left: PROJECTION_GUTTER.left, right: PROJECTION_GUTTER.right }}
             >
-              <div className="absolute inset-y-0 w-px bg-slate-400/70" style={{ left: hoverFrac * 100 + "%" }} />
+              <div className="absolute inset-y-0 w-px bg-[color:var(--text-faint)]/70" style={{ left: hoverFrac * 100 + "%" }} />
             </div>
           )}
           {selectedT !== null && (
@@ -286,7 +336,7 @@ export function ProjectionBoard(props: {
               style={{ left: PROJECTION_GUTTER.left, right: PROJECTION_GUTTER.right }}
             >
               <div
-                className="absolute inset-y-0 w-px bg-sky-400"
+                className="absolute inset-y-0 w-px bg-[color:var(--accent-blue-fg)]"
                 style={{ left: pct(selectedT) + "%" }}
                 title={`选中 ${fmtMMSS(selectedT)}（右侧面板显示该秒状态）`}
               />
@@ -305,28 +355,15 @@ export function ProjectionBoard(props: {
 
         {/* 脚注：一行收底 + hover 读数（接管被隐藏的 uPlot legend） */}
         <div className={"mt-1 flex flex-wrap gap-x-4 gap-y-1 " + T.note + " text-faint"}>
-          <span>
-            视窗 {fmtMMSS(range.from)} → {fmtMMSS(range.to)}（宽 {Math.round(span)}s）
-          </span>
-          <span>
-            滚轮调宽度
-            {seekable ? " · 按住拖 = 拖时间轴" : ""}
-            {" "}· 中心跟随顶层时间轴 · 点击查看该秒状态
-          </span>
-          <span>
-            采样 {merged.points.length} 点/秒 · 基于 seq {merged.based_on_seq} · 来源{" "}
-            {merged.source.kind === "live_queue"
-              ? "当前队列 " + merged.source.queue_name
-              : "草稿 " + merged.source.plan_id}
-          </span>
+          <span>按住拖 = 平移视野 · 点击查看该秒状态</span>
           {hoverPt && (
-            <span className="text-neutral-300">
+            <span className="text-dim">
               {fmtMMSS(hoverPt.t)} · 矿 {Math.round(hoverPt.minerals)} · 气 {Math.round(hoverPt.gas)}
               {" "}· 供给 {hoverPt.supply_used}/{hoverPt.supply_cap}
             </span>
           )}
           {stallsInView.length > 0 && (
-            <span className="text-red-400">
+            <span className="text-[color:var(--err-fg)]">
               卡点 {stallsInView.length} 处（悬停红竖线看原因）
             </span>
           )}
@@ -335,9 +372,9 @@ export function ProjectionBoard(props: {
 
       {/* 右：检查面板（常驻固定；默认显示「现在」，点击任意时刻切换） */}
       {inspectPt && (
-        <div className={"w-72 shrink-0 space-y-2 " + T.note}>
+        <div className={"w-72 shrink-0 self-stretch space-y-2 overflow-y-auto pr-1 " + T.note}>
           <div className="flex items-baseline justify-between">
-            <b className="text-neutral-200">
+            <b className="text-strong">
               {fmtMMSS(inspectPt.t)}
               {selectedT === null && (
                 <span className="ml-1 text-note text-faint">（现在）</span>
@@ -345,7 +382,7 @@ export function ProjectionBoard(props: {
             </b>
             {selectedT !== null && (
               <button
-                className="text-faint hover:text-neutral-300"
+                className="text-faint hover:text-dim"
                 title="回到现在"
                 onClick={() => setSelectedT(null)}
               >× 回到现在</button>
@@ -397,10 +434,10 @@ export function ProjectionBoard(props: {
                       {producer && (
                         <span className="text-faint">（{props.zhOf(producer)}）</span>
                       )}
-                      <span className={b.done ? " text-faint" : " text-amber-400"}>
+                      <span className={b.done ? " text-faint" : " text-[color:var(--warn-fg)]"}>
                         {" "}剩 {Math.max(0, Math.round(b.to - inspectPt.t))}s
                       </span>
-                      {!b.done && <span className="text-amber-400">（未闭合）</span>}
+                      {!b.done && <span className="text-[color:var(--warn-fg)]">（未闭合）</span>}
                     </li>
                   );
                 })}
@@ -424,7 +461,7 @@ export function ProjectionBoard(props: {
                 .map((s) => (
                   <li key={s.producer} className="text-dim">
                     {props.zhOf(s.producer)} ×{s.buildings}
-                    <span className={s.active > 0 ? " text-emerald-400" : " text-faint"}>
+                    <span className={s.active > 0 ? " text-[color:var(--ok-fg)]" : " text-faint"}>
                       {" "}· 在产 {s.active}
                     </span>
                   </li>
@@ -435,7 +472,7 @@ export function ProjectionBoard(props: {
           {stallsInView.length > 0 && (
             <div>
               <div className="text-faint">视窗内卡点</div>
-              <ul className="space-y-0.5 text-red-400">
+              <ul className="space-y-0.5 text-[color:var(--err-fg)]">
                 {stallsInView.map((s, i) => (
                   <li key={i}>
                     {fmtMMSS(s.t)} {props.zhOf(s.stableId)} {s.reason ?? ""}

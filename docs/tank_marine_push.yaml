@@ -14,18 +14,30 @@
 strategy:
   id: tank_marine_push
   version: 1
+  display_name_zh: 步坦蛙跳推进
+  description_zh: 坦克掩护步兵的循环蛙跳：坦克前压架起 → 步兵跟进到坦克覆盖内 → 威胁清除后下一轮，直到逼近敌方主矿。
   group_slots: [inf, armor]
   params:
-    target: {type: point, default: [127.5, 119.5]}   # 敌方主矿
-    garrison_pos: {type: point, default: [60.0, 40.0]}  # 主矿入口驻扎点（runtime 按 CC+敌方方向算）
-    inf_hold_dist: {type: float, default: 12.0}       # R1：步兵脱队判定距离（> tank_cover，正常蛙跳不触发）
-    tank_cover: {type: float, default: 10.4}          # R2/R3：架起射程 13 × 80%
-    hold_secs: {type: float, default: 3.0}            # R1：步兵停顿时长
-    threat_radius: {type: float, default: 12.0}       # R4：威胁半径
-    threat_limit: {type: int, default: 3}            # R4：近敌 < 此值且血线健康才推进
-    min_inf: {type: int, default: 20}
-    min_tank: {type: int, default: 4}
+    target: {type: point, default: [127.5, 119.5], description_zh: 敌方主矿}   # 敌方主矿
+    garrison_pos: {type: point, default: [60.0, 40.0], description_zh: 主矿入口驻扎点（runtime 按 CC+敌方方向算）}  # 主矿入口驻扎点（runtime 按 CC+敌方方向算）
+    inf_hold_dist: {type: float, default: 12.0, description_zh: 步兵脱队判定距离（> tank_cover，正常蛙跳不触发）}       # R1：步兵脱队判定距离（> tank_cover，正常蛙跳不触发）
+    tank_cover: {type: float, default: 10.4, description_zh: 架起射程 13 × 80%（R2/R3）}          # R2/R3：架起射程 13 × 80%
+    hold_secs: {type: float, default: 3.0, description_zh: 脱队停顿时长}            # R1：步兵停顿时长
+    threat_radius: {type: float, default: 12.0, description_zh: 威胁半径}       # R4：威胁半径
+    threat_limit: {type: int, default: 3, description_zh: 近敌 < 此值且血线健康才推进}            # R4：近敌 < 此值且血线健康才推进
+    min_inf: {type: int, default: 20, description_zh: 出发所需枪兵数}
+    min_tank: {type: int, default: 4, description_zh: 出发所需坦克数}
   variables: {}
+  reasons:
+    READY: 集结就绪
+    FORMED: 集结完成
+    ARRIVED: 已抵达目标
+    IN_PLACE: 已就位
+    SIEGED: 已架起
+    SKIP: 跳过架起
+    STRAGGLED: 步兵脱队
+    RESUME: 恢复推进
+    CLEARED: 威胁清除
   definitions:
     # 前沿点：坦克覆盖内、朝敌方向。原来这个表达式在 when/动作参数里抄了 4 遍 ——
     # 改一处漏三处的经典来源，且校验器抓不到（D3 别名节）。
@@ -36,6 +48,8 @@ strategy:
   steps:
     # 驻扎主矿入口：枪兵每帧前往 garrison_pos 防守，凑齐 20+4 → formup
     - step_id: garrison
+      display_name_zh: 驻守入口
+      description_zh: 枪兵前往主矿入口驻扎防守；凑齐 20 枪兵 + 4 坦克后转集结
       branches:
         - when: {ref: formed}
           do: [{op: exit_step, kind: done, reason: READY}]
@@ -43,6 +57,8 @@ strategy:
             - {op: group_action, group_slot: inf, type: terran/marine, action_atom: attack_move_to, params: {position: {param: garrison_pos}}}
 
     - step_id: formup
+      display_name_zh: 集结
+      description_zh: 原地等待集结条件成立（与驻守共用 formed 别名）
       branches:
         - when: {ref: formed}
           do: [{op: exit_step, kind: done, reason: FORMED}]
@@ -50,6 +66,8 @@ strategy:
 
     # 坦克推进到步兵组心；到位（3 内）→ siege_gate
     - step_id: tank_hop
+      display_name_zh: 坦克前压
+      description_zh: 坦克推进到步兵组心 3 格内；步兵已近目标则整队抵达
       branches:
         - when: {op: arrived, group: inf, target: {param: target}, radius: 8.0}
           do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
@@ -60,6 +78,8 @@ strategy:
 
     # 距目标 ≤ tank_cover 才架起（T1 siege）；否则 SKIP 跳过（坦克未架起跟进）
     - step_id: siege_gate
+      display_name_zh: 架起判定
+      description_zh: 距目标 ≤ tank_cover 才架起；否则跳过、坦克收起跟进
       branches:
         - when: {op: arrived, group: armor, target: {param: target}, radius: {param: tank_cover}}
           do:
@@ -69,6 +89,8 @@ strategy:
 
     # 步兵推进到前沿点（坦克覆盖内、朝敌方向）；脱队→停等；到位→threat_gate
     - step_id: inf_hop
+      display_name_zh: 步兵跟进
+      description_zh: 步兵攻击移动到前沿点（坦克覆盖内、朝敌方向）；脱队则停等
       branches:
         - when: {op: arrived, group: inf, target: {param: target}, radius: 8.0}
           do: [{op: exit_strategy, kind: done, reason: ARRIVED}]
@@ -81,6 +103,8 @@ strategy:
 
     # 脱队停等：hold + step_elapsed ≥ hold_secs → RESUME
     - step_id: inf_wait
+      display_name_zh: 脱队停等
+      description_zh: 步兵原地驻守，等掉队者 hold_secs 秒后恢复
       branches:
         - when: {op: ">=", args: [{op: step_elapsed}, {param: hold_secs}]}
           do: [{op: exit_step, kind: done, reason: RESUME}]
@@ -89,6 +113,8 @@ strategy:
 
     # 威胁评估：前沿点近敌 < threat_limit 且血线 > 0.6 → CLEARED → 下一轮 tank_hop；否则继续清理
     - step_id: threat_gate
+      display_name_zh: 威胁评估
+      description_zh: 前沿近敌少且血线健康 → 下一轮前压；否则继续原地清理
       branches:
         - when: {op: and, args: [{op: "<", args: [{op: enemy_count_near, anchor: {ref: front_point}, radius: {param: threat_radius}}, {param: threat_limit}]}, {op: ">", args: [{op: group_hp_ratio, group: inf}, 0.6]}]}
           do: [{op: exit_step, kind: done, reason: CLEARED}]
@@ -111,9 +137,11 @@ assembly:
   id: tank_marine_assembly
   groups:
     - group_id: G_INF
+      display_name_zh: 步兵组
       composition:
         terran/marine: {min: 20, target: 20, max: 20}
     - group_id: G_TANK
+      display_name_zh: 装甲组
       composition:
         terran/siegetank: {min: 4, target: 4, max: 4}
   strategy_instances:

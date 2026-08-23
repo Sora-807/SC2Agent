@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -63,11 +64,85 @@ class ApiClient:
     def propose(self, body: dict) -> dict:
         return self._post("/api/proposals", body)
 
+    # ---- 规划域（P3）：离线规划文件直改 —— 用户 2026-08-21 拍板 codeagent 语义，
+    # 不走提案（diff/撤销兜底在文件层）。live 对局状态仍然只有 propose 一条路，
+    # 「不能直改」的边界收窄为「不能直改对局状态」，规划文件是 authoring 数据。
+
+    def plans_list(self) -> list[dict]:
+        return self._get("/api/plans")
+
+    def plan_get(self, pid: str) -> dict:
+        return self._get(f"/api/plans/{pid}")
+
+    def plan_create(self, body: dict) -> dict:
+        return self._post("/api/plans", body)
+
+    def plan_save(self, pid: str, body: dict) -> dict:
+        return self._put(f"/api/plans/{pid}", body)
+
+    def plans_simulate(self, body: dict) -> dict:
+        return self._post("/api/plans/simulate", body)
+
+    def map_plans_list(self) -> list[dict]:
+        return self._get("/api/map-plans")
+
+    def map_plan_payload(self, pid: str) -> dict:
+        return self._get(f"/api/map-plans/{pid}")
+
+    def map_plan_doc(self, pid: str) -> dict:
+        """地图规划的**文档形状**（id/title/spawn/build_slots/pos_marks）—— 文件视图的读写体。"""
+        return self._get(f"/api/map-plans/{pid}/doc")
+
+    def map_plan_save_payload(self, pid: str, doc: dict) -> dict:
+        """全量保存地图规划文档（服务端做重叠/压预留区校验）。"""
+        return self._put(f"/api/map-plans/{pid}/doc", doc)
+
+    def map_plan_create(self, body: dict) -> dict:
+        return self._post("/api/map-plans", body)
+
+    def map_plan_save(self, pid: str, hunks: list[dict]) -> dict:
+        return self._put(f"/api/map-plans/{pid}", {"hunks": hunks})
+
+    def session_start(self, *, driver: str = "sim", map_plan: str | None = None,
+                      strategy: str | None = None, autotick: bool = True) -> dict:
+        q = f"driver={driver}&autotick={'true' if autotick else 'false'}"
+        if map_plan:
+            q += f"&map_plan={urllib.parse.quote(map_plan)}"
+        if strategy:
+            q += f"&strategy={urllib.parse.quote(strategy)}"
+        return self._post(f"/api/session/start?{q}", {})
+
+    def strategies_list(self) -> list[dict]:
+        return self._get("/api/strategies")
+
+    def strategy_doc(self, sid: str) -> dict:
+        """策略文件的**文档形状**（strategy + assembly 两段）—— 文件视图的读写体。"""
+        return self._get(f"/api/strategies/{sid}/doc")
+
+    def strategy_save_payload(self, sid: str, doc: dict) -> dict:
+        """全量保存策略文档（服务端 parse/validate 全套编译期校验）。"""
+        return self._put(f"/api/strategies/{sid}/doc", doc)
+
+    def strategy_create(self, body: dict) -> dict:
+        return self._post("/api/strategies", body)
+
+    def notes_list(self) -> list[dict]:
+        return self._get("/api/agent/notes")
+
+    def note_save(self, text: str, title_zh: str | None = None) -> dict:
+        body: dict = {"text": text}
+        if title_zh:
+            body["title_zh"] = title_zh
+        return self._post("/api/agent/notes", body)
+
     def _get(self, path: str) -> Any:
         return self._call(path, None, "GET")
 
-    def _post(self, path: str, body: dict) -> Any:
+    def _post(self, path: str, body: dict) -> dict:
         return self._call(path, body, "POST")
+
+    def _put(self, path: str, body: dict) -> dict:
+        return self._call(path, body, "PUT")
 
     def _call(self, path: str, body: dict | None, method: str) -> Any:
         if self.transport is not None:

@@ -1,11 +1,11 @@
 """生产运行时：队首 constraint 门控 + drain + 放置解析 + 队列工具操作（P0 生产模块安排）。"""
 from game import GameState, Grid, Owner, Point2, QueueItem, QueueOp, Unit, WorkerTask
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementExact, PlacementInRegion
 from production.runtime import STALL_WARN_SECS, ProductionRuntime
 from tactical_map import load_region_layer
 
-CAT = load_terran()
+CAT = load_all()
 
 LAYER_YAML = """
 map_name: p

@@ -38,6 +38,204 @@
       "terran/barracks"
     ]
   },
+  "terran/reaper": {
+    "burnysc2_name": "REAPER",
+    "display_name_zh": "收割者",
+    "short_name_zh": "收割",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 50,
+      "supply": 1
+    },
+    "build_time": 34,
+    "produced_by": "terran/barracks",
+    "prerequisites": [
+      "terran/barracks"
+    ]
+  },
+  "terran/marauder": {
+    "burnysc2_name": "MARAUDER",
+    "display_name_zh": "劫掠者",
+    "short_name_zh": "劫掠",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 25,
+      "supply": 2
+    },
+    "build_time": 21,
+    "produced_by": "terran/barracks",
+    "prerequisites": [
+      "terran/techlab"
+    ]
+  },
+  "terran/ghost": {
+    "burnysc2_name": "GHOST",
+    "display_name_zh": "幽灵",
+    "short_name_zh": "幽灵",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 125,
+      "supply": 2
+    },
+    "build_time": 29,
+    "produced_by": "terran/barracks",
+    "prerequisites": [
+      "terran/ghostacademy"
+    ]
+  },
+  "terran/hellion": {
+    "burnysc2_name": "HELLION",
+    "display_name_zh": "恶火",
+    "short_name_zh": "恶火",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 2
+    },
+    "build_time": 21,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factory"
+    ],
+    "variants": [
+      "HELLIONTANK"
+    ]
+  },
+  "terran/widowmine": {
+    "burnysc2_name": "WIDOWMINE",
+    "display_name_zh": "寡妇雷",
+    "short_name_zh": "寡雷",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 75,
+      "vespene": 25,
+      "supply": 2
+    },
+    "build_time": 21,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factory"
+    ],
+    "variants": [
+      "WIDOWMINEBURROWED"
+    ]
+  },
+  "terran/cyclone": {
+    "burnysc2_name": "CYCLONE",
+    "display_name_zh": "旋风",
+    "short_name_zh": "旋风",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 3
+    },
+    "build_time": 32,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factorytechlab"
+    ]
+  },
+  "terran/siegetank": {
+    "burnysc2_name": "SIEGETANK",
+    "display_name_zh": "攻城坦克",
+    "short_name_zh": "坦克",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 125,
+      "supply": 3
+    },
+    "build_time": 32,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/factorytechlab"
+    ],
+    "variants": [
+      "SIEGETANKSIEGED"
+    ],
+    "attack_range": 5,
+    "siege_range": 13
+  },
+  "terran/thor": {
+    "burnysc2_name": "THOR",
+    "display_name_zh": "雷神",
+    "short_name_zh": "雷神",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 300,
+      "vespene": 200,
+      "supply": 6
+    },
+    "build_time": 43,
+    "produced_by": "terran/factory",
+    "prerequisites": [
+      "terran/armory"
+    ],
+    "variants": [
+      "THORAP"
+    ]
+  },
+  "terran/viking": {
+    "burnysc2_name": "VIKINGFIGHTER",
+    "display_name_zh": "维京战机",
+    "short_name_zh": "维京",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 125,
+      "vespene": 75,
+      "supply": 2
+    },
+    "build_time": 30,
+    "produced_by": "terran/starport",
+    "prerequisites": [
+      "terran/starport"
+    ],
+    "variants": [
+      "VIKINGASSAULT",
+      "VIKING"
+    ]
+  },
   "terran/medivac": {
     "burnysc2_name": "MEDIVAC",
     "display_name_zh": "医疗运输机",
@@ -59,6 +257,88 @@
       "terran/starport"
     ]
   },
+  "terran/liberator": {
+    "burnysc2_name": "LIBERATOR",
+    "display_name_zh": "解放者",
+    "short_name_zh": "解放",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 125,
+      "supply": 3
+    },
+    "build_time": 43,
+    "produced_by": "terran/starport",
+    "prerequisites": [
+      "terran/starport"
+    ],
+    "variants": [
+      "LIBERATORAG"
+    ]
+  },
+  "terran/raven": {
+    "burnysc2_name": "RAVEN",
+    "display_name_zh": "乌鸦",
+    "short_name_zh": "乌鸦",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 150,
+      "supply": 2
+    },
+    "build_time": 34,
+    "produced_by": "terran/starport",
+    "prerequisites": [
+      "terran/starporttechlab"
+    ]
+  },
+  "terran/banshee": {
+    "burnysc2_name": "BANSHEE",
+    "display_name_zh": "女妖",
+    "short_name_zh": "女妖",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 3
+    },
+    "build_time": 43,
+    "produced_by": "terran/starport",
+    "prerequisites": [
+      "terran/starporttechlab"
+    ]
+  },
+  "terran/battlecruiser": {
+    "burnysc2_name": "BATTLECRUISER",
+    "display_name_zh": "战列巡洋舰",
+    "short_name_zh": "战巡",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 400,
+      "vespene": 300,
+      "supply": 6
+    },
+    "build_time": 64,
+    "produced_by": "terran/starport",
+    "prerequisites": [
+      "terran/fusioncore"
+    ]
+  },
   "terran/commandcenter": {
     "burnysc2_name": "COMMANDCENTER",
     "display_name_zh": "指挥中心",
@@ -69,14 +349,60 @@
       "dropoff"
     ],
     "cost": {
-      "minerals": 400,
+      "minerals": 300,
       "vespene": 0,
       "supply": 0
     },
     "build_time": 71,
-    "size": 5,
     "produced_by": null,
-    "prerequisites": []
+    "prerequisites": [],
+    "size": 5,
+    "variants": [
+      "COMMANDCENTERFLYING"
+    ]
+  },
+  "terran/orbitalcommand": {
+    "burnysc2_name": "ORBITALCOMMAND",
+    "display_name_zh": "轨道指令",
+    "short_name_zh": "轨道",
+    "role": "building",
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 25,
+    "produced_by": "terran/commandcenter",
+    "prerequisites": [
+      "terran/barracks"
+    ],
+    "variants": [
+      "ORBITALCOMMANDFLYING"
+    ]
+  },
+  "terran/planetaryfortress": {
+    "burnysc2_name": "PLANETARYFORTRESS",
+    "display_name_zh": "行星要塞",
+    "short_name_zh": "要塞",
+    "role": "building",
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 250,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": "terran/commandcenter",
+    "prerequisites": [
+      "terran/engineeringbay"
+    ]
   },
   "terran/supplydepot": {
     "burnysc2_name": "SUPPLYDEPOT",
@@ -92,10 +418,13 @@
       "supply": 0
     },
     "build_time": 21,
-    "size": 2,
     "produced_by": null,
     "prerequisites": [
       "terran/commandcenter"
+    ],
+    "size": 2,
+    "variants": [
+      "SUPPLYDEPOTLOWERED"
     ]
   },
   "terran/barracks": {
@@ -112,11 +441,217 @@
       "supply": 0
     },
     "build_time": 46,
-    "size": 3,
     "produced_by": null,
     "prerequisites": [
       "terran/supplydepot"
+    ],
+    "size": 3,
+    "variants": [
+      "BARRACKSFLYING"
     ]
+  },
+  "terran/refinery": {
+    "burnysc2_name": "REFINERY",
+    "display_name_zh": "精炼厂",
+    "short_name_zh": "精炼",
+    "role": "building",
+    "capabilities": [
+      "gas"
+    ],
+    "cost": {
+      "minerals": 75,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 21,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/commandcenter"
+    ],
+    "size": 3,
+    "variants": [
+      "REFINERYRICH"
+    ]
+  },
+  "terran/engineeringbay": {
+    "burnysc2_name": "ENGINEERINGBAY",
+    "display_name_zh": "工程站",
+    "short_name_zh": "工站",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 125,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 25,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/commandcenter"
+    ],
+    "size": 3
+  },
+  "terran/armory": {
+    "burnysc2_name": "ARMORY",
+    "display_name_zh": "军械库",
+    "short_name_zh": "军械",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/factory"
+    ],
+    "size": 3
+  },
+  "terran/factory": {
+    "burnysc2_name": "FACTORY",
+    "display_name_zh": "工厂",
+    "short_name_zh": "工厂",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 43,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/barracks"
+    ],
+    "size": 3,
+    "variants": [
+      "FACTORYFLYING"
+    ]
+  },
+  "terran/starport": {
+    "burnysc2_name": "STARPORT",
+    "display_name_zh": "星轨",
+    "short_name_zh": "星轨",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/factory"
+    ],
+    "size": 3,
+    "variants": [
+      "STARPORTFLYING"
+    ]
+  },
+  "terran/bunker": {
+    "burnysc2_name": "BUNKER",
+    "display_name_zh": "地堡",
+    "short_name_zh": "地堡",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 29,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/barracks"
+    ],
+    "size": 3
+  },
+  "terran/missileturret": {
+    "burnysc2_name": "MISSILETURRET",
+    "display_name_zh": "防空炮",
+    "short_name_zh": "防空",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/engineeringbay"
+    ],
+    "size": 2
+  },
+  "terran/sensortower": {
+    "burnysc2_name": "SENSORTOWER",
+    "display_name_zh": "感应塔",
+    "short_name_zh": "感应",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/engineeringbay"
+    ],
+    "size": 1
+  },
+  "terran/ghostacademy": {
+    "burnysc2_name": "GHOSTACADEMY",
+    "display_name_zh": "幽灵军校",
+    "short_name_zh": "军校",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 29,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/barracks"
+    ],
+    "size": 3
+  },
+  "terran/fusioncore": {
+    "burnysc2_name": "FUSIONCORE",
+    "display_name_zh": "聚变芯",
+    "short_name_zh": "聚变",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "terran/starport"
+    ],
+    "size": 3
   },
   "terran/reactor": {
     "burnysc2_name": "BARRACKSREACTOR",
@@ -162,45 +697,27 @@
     "build_ability": "BUILD_TECHLAB",
     "build_order_name": "Techlab"
   },
-  "terran/refinery": {
-    "burnysc2_name": "REFINERY",
-    "display_name_zh": "精炼厂",
-    "short_name_zh": "精炼",
+  "terran/factoryreactor": {
+    "burnysc2_name": "FACTORYREACTOR",
+    "display_name_zh": "双倍",
+    "short_name_zh": "双倍",
     "role": "building",
     "capabilities": [
-      "gas"
+      "addon"
     ],
     "cost": {
-      "minerals": 75,
-      "vespene": 0,
+      "minerals": 50,
+      "vespene": 50,
       "supply": 0
     },
-    "build_time": 21,
-    "produced_by": null,
+    "build_time": 36,
+    "produced_by": "terran/factory",
     "prerequisites": [
-      "terran/commandcenter"
+      "terran/factory"
     ],
-    "size": 3
-  },
-  "terran/factory": {
-    "burnysc2_name": "FACTORY",
-    "display_name_zh": "工厂",
-    "short_name_zh": "工厂",
-    "role": "building",
-    "capabilities": [
-      "train"
-    ],
-    "cost": {
-      "minerals": 150,
-      "vespene": 100,
-      "supply": 0
-    },
-    "build_time": 43,
-    "size": 3,
-    "produced_by": null,
-    "prerequisites": [
-      "terran/barracks"
-    ]
+    "size": 2,
+    "build_ability": "BUILD_REACTOR",
+    "build_order_name": "Reactor"
   },
   "terran/factorytechlab": {
     "burnysc2_name": "FACTORYTECHLAB",
@@ -224,73 +741,8 @@
     "build_ability": "BUILD_TECHLAB",
     "build_order_name": "Techlab"
   },
-  "terran/siegetank": {
-    "burnysc2_name": "SIEGETANK",
-    "display_name_zh": "攻城坦克",
-    "short_name_zh": "坦克",
-    "role": "combat",
-    "capabilities": [
-      "attack",
-      "move"
-    ],
-    "cost": {
-      "minerals": 150,
-      "vespene": 125,
-      "supply": 2
-    },
-    "build_time": 32,
-    "produced_by": "terran/factory",
-    "prerequisites": [
-      "terran/factorytechlab"
-    ],
-    "attack_range": 5,
-    "siege_range": 13,
-    "variants": [
-      "SIEGETANKSIEGED"
-    ]
-  },
-  "terran/engineeringbay": {
-    "burnysc2_name": "ENGINEERINGBAY",
-    "display_name_zh": "工程站",
-    "short_name_zh": "工站",
-    "role": "building",
-    "capabilities": [
-      "research"
-    ],
-    "cost": {
-      "minerals": 125,
-      "vespene": 0,
-      "supply": 0
-    },
-    "build_time": 35,
-    "size": 3,
-    "produced_by": null,
-    "prerequisites": [
-      "terran/commandcenter"
-    ]
-  },
-  "terran/armory": {
-    "burnysc2_name": "ARMORY",
-    "display_name_zh": "军械库",
-    "short_name_zh": "军械",
-    "role": "building",
-    "capabilities": [
-      "research"
-    ],
-    "cost": {
-      "minerals": 150,
-      "vespene": 100,
-      "supply": 0
-    },
-    "build_time": 43,
-    "size": 3,
-    "produced_by": null,
-    "prerequisites": [
-      "terran/factory"
-    ]
-  },
-  "terran/factoryreactor": {
-    "burnysc2_name": "FACTORYREACTOR",
+  "terran/starportreactor": {
+    "burnysc2_name": "STARPORTREACTOR",
     "display_name_zh": "双倍",
     "short_name_zh": "双倍",
     "role": "building",
@@ -303,13 +755,132 @@
       "supply": 0
     },
     "build_time": 36,
-    "produced_by": "terran/factory",
+    "produced_by": "terran/starport",
     "prerequisites": [
-      "terran/factory"
+      "terran/starport"
     ],
     "size": 2,
     "build_ability": "BUILD_REACTOR",
     "build_order_name": "Reactor"
+  },
+  "terran/starporttechlab": {
+    "burnysc2_name": "STARPORTTECHLAB",
+    "display_name_zh": "科技",
+    "short_name_zh": "科技",
+    "role": "building",
+    "capabilities": [
+      "addon"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 25,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": "terran/starport",
+    "prerequisites": [
+      "terran/starport"
+    ],
+    "size": 2,
+    "build_ability": "BUILD_TECHLAB",
+    "build_order_name": "Techlab"
+  },
+  "terran/mule": {
+    "burnysc2_name": "MULE",
+    "display_name_zh": "矿骡",
+    "short_name_zh": "矿骡",
+    "role": "worker",
+    "capabilities": [
+      "gather"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "terran/autoturret": {
+    "burnysc2_name": "AUTOTURRET",
+    "display_name_zh": "自动炮塔",
+    "short_name_zh": "炮塔",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 1,
+    "produced_by": null,
+    "prerequisites": [],
+    "size": 2
+  },
+  "terran/pointdefensedrone": {
+    "burnysc2_name": "POINTDEFENSEDRONE",
+    "display_name_zh": "防御无人机",
+    "short_name_zh": "防机",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "terran/ravendrone": {
+    "burnysc2_name": "RAVENREPAIRDRONE",
+    "display_name_zh": "维修无人机",
+    "short_name_zh": "维修",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "terran/nuke": {
+    "burnysc2_name": "NUKE",
+    "display_name_zh": "核弹",
+    "short_name_zh": "核弹",
+    "role": "combat",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "terran/kd8charge": {
+    "burnysc2_name": "KD8CHARGE",
+    "display_name_zh": "KD8炸药",
+    "short_name_zh": "炸药",
+    "role": "combat",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
   },
   "terran/infantryweapons1": {
     "burnysc2_name": "INFANTRYWEAPONSLEVEL1",
@@ -322,10 +893,46 @@
       "vespene": 100,
       "supply": 0
     },
-    "build_time": 79,
+    "build_time": 114,
     "produced_by": "terran/engineeringbay",
     "prerequisites": [
       "terran/engineeringbay"
+    ]
+  },
+  "terran/infantryweapons2": {
+    "burnysc2_name": "INFANTRYWEAPONSLEVEL2",
+    "display_name_zh": "步兵武器 2 级",
+    "short_name_zh": "步武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay",
+      "terran/infantryweapons1"
+    ]
+  },
+  "terran/infantryweapons3": {
+    "burnysc2_name": "INFANTRYWEAPONSLEVEL3",
+    "display_name_zh": "步兵武器 3 级",
+    "short_name_zh": "步武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay",
+      "terran/infantryweapons2"
     ]
   },
   "terran/infantryarmor1": {
@@ -339,7 +946,166 @@
       "vespene": 100,
       "supply": 0
     },
-    "build_time": 79,
+    "build_time": 114,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay"
+    ]
+  },
+  "terran/infantryarmor2": {
+    "burnysc2_name": "INFANTRYARMORLEVEL2",
+    "display_name_zh": "步兵装甲 2 级",
+    "short_name_zh": "步甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay",
+      "terran/infantryarmor1"
+    ]
+  },
+  "terran/infantryarmor3": {
+    "burnysc2_name": "INFANTRYARMORLEVEL3",
+    "display_name_zh": "步兵装甲 3 级",
+    "short_name_zh": "步甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "terran/engineeringbay",
+    "prerequisites": [
+      "terran/engineeringbay",
+      "terran/infantryarmor2"
+    ]
+  },
+  "terran/vehicleshipweapons1": {
+    "burnysc2_name": "VEHICLEANDSHIPWEAPONSLEVEL1",
+    "display_name_zh": "载具舰船武器 1 级",
+    "short_name_zh": "车武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "terran/armory",
+    "prerequisites": [
+      "terran/armory"
+    ]
+  },
+  "terran/vehicleshipweapons2": {
+    "burnysc2_name": "VEHICLEANDSHIPWEAPONSLEVEL2",
+    "display_name_zh": "载具舰船武器 2 级",
+    "short_name_zh": "车武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 175,
+      "vespene": 175,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "terran/armory",
+    "prerequisites": [
+      "terran/armory",
+      "terran/vehicleshipweapons1"
+    ]
+  },
+  "terran/vehicleshipweapons3": {
+    "burnysc2_name": "VEHICLEANDSHIPWEAPONSLEVEL3",
+    "display_name_zh": "载具舰船武器 3 级",
+    "short_name_zh": "车武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "terran/armory",
+    "prerequisites": [
+      "terran/armory",
+      "terran/vehicleshipweapons2"
+    ]
+  },
+  "terran/vehicleshiparmor1": {
+    "burnysc2_name": "VEHICLEANDSHIPARMORSLEVEL1",
+    "display_name_zh": "载具舰船装甲 1 级",
+    "short_name_zh": "车甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "terran/armory",
+    "prerequisites": [
+      "terran/armory"
+    ]
+  },
+  "terran/vehicleshiparmor2": {
+    "burnysc2_name": "VEHICLEANDSHIPARMORSLEVEL2",
+    "display_name_zh": "载具舰船装甲 2 级",
+    "short_name_zh": "车甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 175,
+      "vespene": 175,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "terran/armory",
+    "prerequisites": [
+      "terran/armory",
+      "terran/vehicleshiparmor1"
+    ]
+  },
+  "terran/vehicleshiparmor3": {
+    "burnysc2_name": "VEHICLEANDSHIPARMORSLEVEL3",
+    "display_name_zh": "载具舰船装甲 3 级",
+    "short_name_zh": "车甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "terran/armory",
+    "prerequisites": [
+      "terran/armory",
+      "terran/vehicleshiparmor2"
+    ]
+  },
+  "terran/buildingarmor": {
+    "burnysc2_name": "TERRANBUILDINGARMOR",
+    "display_name_zh": "建筑装甲",
+    "short_name_zh": "建甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 100,
     "produced_by": "terran/engineeringbay",
     "prerequisites": [
       "terran/engineeringbay"

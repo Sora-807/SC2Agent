@@ -3,7 +3,7 @@ import base64
 
 import pytest
 
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.geometry import Grid, Point2
 from game.state import GameState, Order, Owner, Unit
 from planner.build_order import ProductionModuleInstance
@@ -38,7 +38,7 @@ def _state(units, resources=(), **kw) -> GameState:
     return GameState(units=list(units), resources=list(resources), **base)
 
 
-CAT = load_terran()
+CAT = load_all()
 
 
 # ---------------- 类型翻译 ----------------
@@ -62,9 +62,9 @@ def test_unregistered_type_is_marked_unknown_never_burnysc2_name():
     红线 C1 禁止动态帧出现 burnysc2 名；而且这样 UI 能显示"后端没登记这个类型"，
     是可发现的缺口而不是静默污染。
     """
-    f = world_frame(_state([_unit(3, "XELNAGATOWER", 5, 5, owner=Owner.NEUTRAL)]), CAT)
-    assert f.units[0].stable_id == "unknown/xelnagatower"
-    assert "XELNAGA" not in to_json(f)["units"][0]["stable_id"]
+    f = world_frame(_state([_unit(3, "ZZZ_FAKE", 5, 5, owner=Owner.NEUTRAL)]), CAT)
+    assert f.units[0].stable_id == "unknown/zzz_fake"
+    assert "ZZZ" not in to_json(f)["units"][0]["stable_id"]
 
 
 # ---------------- footprint（ADR-0027） ----------------

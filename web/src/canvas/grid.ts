@@ -156,16 +156,28 @@ export function rampMask(
   return out;
 }
 
-/** slate 阶梯：level 索引 → 有序深→浅台地色。 */
-function levelColor(level: number, count: number): [number, number, number] {
-  const stops: Array<[number, number, number]> = [
+/** slate 阶梯：level 索引 → 有序台地色（双主题批次：暗=深→浅，亮=#E3E3E3 一档浅→更浅）。 */
+const LEVEL_STOPS: Record<"dark" | "light", Array<[number, number, number]>> = {
+  dark: [
     [23, 33, 47], // slate-900 附近（最低台地最暗）
     [38, 52, 68], // slate-800
     [56, 74, 92], // slate-700
     [82, 100, 117], // slate-600
     [120, 136, 152], // slate-500
     [168, 180, 194], // slate-400（最高台地最亮）
-  ];
+  ],
+  light: [
+    [203, 210, 219], // 最低台地：比 #E3E4E6 再压一档的浅灰
+    [215, 221, 228],
+    [226, 231, 237],
+    [236, 240, 244],
+    [244, 246, 249],
+    [251, 252, 254], // 最高台地：接近纸白
+  ],
+};
+
+function levelColor(level: number, count: number, light: boolean): [number, number, number] {
+  const stops = light ? LEVEL_STOPS.light : LEVEL_STOPS.light; // 白色主题：默认浅色阶梯
   if (count <= 1) return stops[1]!;
   const t = (level / (count - 1)) * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(t));
@@ -192,6 +204,7 @@ function levelColor(level: number, count: number): [number, number, number] {
 export function bakeTerrain(
   height: DecodedGrid | null,
   pathable: DecodedGrid | null,
+  light = false,
 ): ImageData | null {
   if (!height) return null;
   const { levels, count } = quantizeLevels(height);
@@ -204,7 +217,7 @@ export function bakeTerrain(
     const srcRow = h - 1 - y; // 世界 y 向上、canvas y 向下：翻转一次（与 bakeGrid 同约定）
     for (let x = 0; x < w; x += 1) {
       const src = srcRow * w + x;
-      let [r, g, b] = levelColor(levels[src]!, count);
+      let [r, g, b] = levelColor(levels[src]!, count, light);
       // 不可走不再压暗（用户拍板「全都没有深色」：压暗分布随地形天然不对称，
       // 被误读成"矿的阴影"；悬崖信息由硬描边承担，可走性由悬浮窗按格给）
       if (ramps[src]) {
@@ -219,10 +232,11 @@ export function bakeTerrain(
           b = Math.round(b * 0.75 + 60 * 0.25);
         }
       } else if (cliffs[src]) {
-        // 悬崖：硬暗描边
-        r = Math.round(r * 0.3);
-        g = Math.round(g * 0.3);
-        b = Math.round(b * 0.32);
+        // 悬崖：硬描边（浅色阶梯上压向深灰，保持可见）
+        const k = light ? 0.55 : 0.3;
+        r = Math.round(r * k);
+        g = Math.round(g * k);
+        b = Math.round(b * k);
       }
       const i = (y * w + x) * 4;
       img.data[i] = r;

@@ -45,6 +45,30 @@ export function draftFromJson(
   }));
 }
 
+/**
+ * 复盘/游戏的会话队列 → 规划草稿（2026-08-22 十八轮：复盘生产页复用规划编辑器）。
+ * 会话是多队列（main/gas…）而规划是单序列；items[].index 是后端分配的**全局序**，
+ * 按 index 摊平即还原规划顺序。`cancel` 是会话运行期的撤销产物，不属于规划，跳过；
+ * placement 在会话里已被解析成具体槽位/区域 —— 原样带回去（规划本就吃这个形态）。
+ */
+export function draftFromSessionQueues(
+  queues: readonly {
+    items: readonly {
+      index: number; op: string; stable_id: string | null; count: number;
+      placement?: unknown; task?: string | null;
+    }[];
+  }[],
+): DraftItem[] {
+  const rows = queues
+    .flatMap((q) => q.items)
+    .filter((it) => it.op !== "cancel")
+    .sort((a, b) => a.index - b.index);
+  return draftFromJson(rows.map((it) => ({
+    op: it.op, type: it.stable_id, count: it.count,
+    placement: it.placement ?? null, task: it.task ?? null,
+  })));
+}
+
 /** 成本小计（只来自 catalog；catalog 没有的项标出来，不假装免费） */
 export function draftCost(
   items: DraftItem[],
@@ -96,12 +120,29 @@ export function describeItem(it: DraftItem): string {
   return it.op + " " + (it.type ?? "（选类型）") + " ×" + it.count + place;
 }
 
-/** 地图上所有可选的放置标记（槽位 + 点位 + 区域） */
-export function placementOptions(map: MapStatic | null): { label: string; value: string }[] {
+/** 地图规划 payload 多带的预留区（REST 层附加，不在 ViewFrame 契约闭集内） */
+export type PlacementMap = MapStatic & {
+  reserved?: { name?: string | null; label_zh?: string }[] | null;
+};
+
+/**
+ * 地图上所有可选的放置标记：槽位 + 点位（可选限定「规划id/名」，I8）+
+ * 预设固定建造点（全局名，不带前缀）+ 区域。
+ * qualifyId 给了就把槽位/点位值写成 `规划id/名` —— 会话装的不是这份规划时
+ * 后端会拒（跨规划引用），编辑期就避免写出悬空引用。
+ */
+export function placementOptions(
+  map: PlacementMap | null,
+  qualifyId?: string | null,
+): { label: string; value: string }[] {
   if (!map) return [];
+  const q = (name: string): string => (qualifyId ? qualifyId + "/" + name : name);
   return [
-    ...map.build_slots.map((s) => ({ label: "槽位 " + s.name + "（" + s.kind + "）", value: "slot:" + s.name })),
-    ...map.pos_marks.map((m) => ({ label: "点位 " + m.name, value: "mark:" + m.name })),
+    ...map.build_slots.map((s) => ({ label: "槽位 " + s.name + "（" + s.kind + "）", value: "slot:" + q(s.name) })),
+    ...map.pos_marks.map((m) => ({ label: "点位 " + m.name, value: "mark:" + q(m.name) })),
+    ...(map.reserved ?? [])
+      .filter((r) => r.name)
+      .map((r) => ({ label: "预设 " + r.name + "（" + (r.label_zh ?? "") + "）", value: "mark:" + r.name })),
     ...map.regions.leaf.map((r) => ({ label: "区域 " + r.display_name_zh, value: "region:" + r.stable_id })),
   ];
 }

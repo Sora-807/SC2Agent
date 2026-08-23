@@ -7,7 +7,7 @@
 """
 import pytest
 
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.geometry import Grid, Point2
 from game.production import PlacementExact, QueueItem, QueueOp, WorkerTask
 from game.state import GameState, Order, Owner, Unit
@@ -16,7 +16,7 @@ from planner.planner import Planner
 
 from view.projection import project_queue, queue_to_ops
 
-CAT = load_terran()
+CAT = load_all()
 
 
 def _unit(tag, name, ready=True, orders=()) -> Unit:

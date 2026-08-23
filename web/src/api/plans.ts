@@ -60,6 +60,21 @@ export const createPlan = (body: {
 }): Promise<Plan> =>
   call("/api/plans", jsonInit("POST", body));
 
+/** 参考模块（I12-B3）：内置战术库 —— 从模板一键落地成规划文件的模板源 */
+export interface ModuleMeta {
+  id: string;
+  title_zh: string;
+  items: number;
+}
+
+export const listModules = (): Promise<ModuleMeta[]> => call("/api/modules");
+
+/** 从模板新建：模块是唯一真相源，落地成 plans/<id>.yaml（不再手抄队列） */
+export const createPlanFromModule = (body: {
+  module: string; params?: Record<string, unknown>; id?: string; title_zh?: string;
+}): Promise<Plan> =>
+  call("/api/plans/from-module", jsonInit("POST", body));
+
 /** 保存整份规划（队列是全量替换，不做 hunk —— 文件是真相源，diff 留给 git） */
 export const savePlan = (
   id: string,

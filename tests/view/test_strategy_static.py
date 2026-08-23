@@ -114,3 +114,30 @@ def test_unvisited_steps_are_visible():
 def test_json_serializable():
     d = to_json(_static())
     assert set(d) >= {"id", "version", "steps", "edges", "initial_step", "bindings"}
+
+
+def test_readability_fields_forwarded():
+    """rev 12（I2/I4）：display_name_zh/description_zh/reasons/group_names 原样转发，
+    没写的地方是空串/空表 —— 前端 default("") 容错，退回 identifier 不炸。"""
+    zh_strategy = STRATEGY.replace(
+        "id: graph_probe",
+        "id: graph_probe\ndisplay_name_zh: 探针策略\ndescription_zh: 验证转发", 1,
+    ).replace(
+        "  - step_id: a\n", "  - step_id: a\n    display_name_zh: 甲\n", 1,
+    ).replace(
+        "loop_limits: {max_step_transitions: 30}",
+        "loop_limits: {max_step_transitions: 30}\nreasons: {READY: 就绪, LOOP: 回环, DONE: 完成}", 1,
+    )
+    zh_assembly = ASSEMBLY.replace(
+        "  - group_id: G1\n", "  - group_id: G1\n    display_name_zh: 步兵组\n", 1)
+    s = strategy_static(parse_strategy(zh_strategy), parse_assembly(zh_assembly))
+    assert s.display_name_zh == "探针策略"
+    assert s.description_zh == "验证转发"
+    assert s.reasons == {"READY": "就绪", "LOOP": "回环", "DONE": "完成"}
+    assert s.group_names == {"G1": "步兵组"}
+    assert s.steps[0].display_name_zh == "甲"
+    assert s.steps[1].display_name_zh == ""  # 没写 = 空串，不是 KeyError
+    d = to_json(s)
+    assert d["display_name_zh"] == "探针策略" and d["reasons"]["READY"] == "就绪"
+    assert d["group_names"] == {"G1": "步兵组"}
+    assert d["steps"][0]["display_name_zh"] == "甲"

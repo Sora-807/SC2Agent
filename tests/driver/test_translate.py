@@ -143,10 +143,10 @@ def test_siege_multi_unit_and_noop():
 def test_addon_build_uses_generic_build_ability():
     """挂件：直接发通用 BUILD_REACTOR 能力（真机锁定：creation_ability 为 None，build() 静默失败；
     per-parent 拼名 BUILD_REACTOR_BARRACKS 被接受却无实体产出）。"""
-    from game.catalog import load_terran
+    from game.catalog import load_all
     from sc2.ids.ability_id import AbilityId
     cmds = translate_op(_op("build", unit_tags=[1], type="terran/reactor", position=None),
-                        _find([FakeUnit(1)]), catalog=load_terran())
+                        _find([FakeUnit(1)]), catalog=load_all())
     assert cmds == [("call", 1, AbilityId.BUILD_REACTOR)]
 
 
@@ -172,10 +172,10 @@ def test_build_train_research():
 
 def test_train_with_stable_id_via_catalog():
     """catalog 场景：stable ID（terran/scv）→ burnysc2 名 → 枚举。"""
-    from game.catalog import load_terran
+    from game.catalog import load_all
     from sc2.ids.unit_typeid import UnitTypeId
     fu = _find([FakeUnit(1)])
-    cmds = translate_op(_op("train", type="terran/scv"), fu, catalog=load_terran())
+    cmds = translate_op(_op("train", type="terran/scv"), fu, catalog=load_all())
     assert cmds == [("train", 1, UnitTypeId.SCV)]
 
 

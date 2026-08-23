@@ -58,7 +58,7 @@ export function MapPage() {
             map={map}
             world={world}
             extra={(
-              <label className="mt-1 flex items-center gap-2 border-t border-neutral-800 pt-1">
+              <label className="mt-1 flex items-center gap-2 border-t border-l1 pt-1">
                 <input type="checkbox" checked={smooth} onChange={(e) => setSmooth(e.target.checked)} />
                 <span>位置插值</span>
               </label>
@@ -70,11 +70,11 @@ export function MapPage() {
 
 
           <Card title="地图">
-            <ul className="space-y-0.5 text-neutral-300">
+            <ul className="space-y-0.5 text-dim">
               <li>{map.map_name} · {map.size[0]}×{map.size[1]} · 出生 {map.spawn}</li>
               <li>大区 {map.regions.big.length} / 叶区 {map.regions.leaf.length}</li>
               <li>槽位 {map.build_slots.length} · 标记 {map.pos_marks.length} · 资源 {map.resource_nodes.length}</li>
-              <li className={map.terrain ? "" : "text-amber-400"}>
+              <li className={map.terrain ? "" : "text-[color:var(--warn-fg)]"}>
                 地形 {map.terrain ? "已下发" : "null（需后端 B4；现在是纯色底，不伪造）"}
               </li>
             </ul>
@@ -82,7 +82,7 @@ export function MapPage() {
 
           <Card title="选中">
             {selected ? (
-              <ul className="space-y-0.5 text-neutral-300">
+              <ul className="space-y-0.5 text-dim">
                 <li className="font-medium">{zhOf(selected.stable_id)}{selected.form ? `（${selected.form}）` : ""}</li>
                 <li className="text-faint">{selected.stable_id} · tag {selected.tag}</li>
                 <li>归属 {selected.owner}{selected.group_id ? ` · 组 ${selected.group_id}` : ""}</li>
@@ -90,7 +90,7 @@ export function MapPage() {
                 <li>HP {Math.round(selected.hp)}/{Math.round(selected.hp_max)}
                   {selected.shield > 0 ? ` · 护盾 ${Math.round(selected.shield)}` : ""}</li>
                 {selected.build_progress < 1 && (
-                  <li className="text-amber-400">在建 {(selected.build_progress * 100).toFixed(0)}%</li>
+                  <li className="text-[color:var(--warn-fg)]">在建 {(selected.build_progress * 100).toFixed(0)}%</li>
                 )}
                 {selected.footprint && (
                   <li className="text-faint">
@@ -123,7 +123,7 @@ export function MapPage() {
                 {flow.groups.map((g) => (
                   <li key={g.group_id}>
                     <span className="font-medium">{g.group_id}</span>
-                    <span className="ml-2 rounded bg-neutral-800 px-1.5 text-note">{g.refill_state}</span>
+                    <span className="ml-2 rounded bg-raised px-1.5 text-note">{g.refill_state}</span>
                     <div className="text-dim">
                       {Object.entries(g.composition).map(([id, c]) => (
                         <span key={id} className="mr-2">
@@ -143,7 +143,7 @@ export function MapPage() {
 
           {production && production.in_flight.length > 0 && (
             <Card title="在途建造">
-              <ul className="space-y-1 text-neutral-300">
+              <ul className="space-y-1 text-dim">
                 {production.in_flight.map((f, i) => (
                   <li key={i}>
                     {zhOf(f.stable_id)}

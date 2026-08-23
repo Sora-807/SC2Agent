@@ -8,23 +8,27 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseEnvelopeLine, type FlowFrame, type StrategyStatic } from "../src/contract";
-import { branchExit, matchExitBranch, renderBranches, renderValue, storageKey } from "../src/graph/ast";
+import { parseEnvelopeLine, type FlowFrame, type SchemaStatic, type StrategyStatic } from "../src/contract";
+import {
+  branchExit, matchExitBranch, renderBranches, renderValue, storageKey, vocabOf,
+} from "../src/graph/ast";
 import { layout } from "../src/graph/layout";
 
 const FIX_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", "fixtures");
 
-function read(file: string): { graph: StrategyStatic; flows: FlowFrame[] } {
+function read(file: string): { graph: StrategyStatic; flows: FlowFrame[]; schema: SchemaStatic | null } {
   let graph: StrategyStatic | null = null;
+  let schema: SchemaStatic | null = null;
   const flows: FlowFrame[] = [];
   for (const line of readFileSync(resolve(FIX_DIR, file), "utf8").split("\n")) {
     if (line.trim() === "") continue;
     const env = parseEnvelopeLine(line);
     if (env.topic === "static/strategy") graph = env.payload;
+    if (env.topic === "static/schema") schema = env.payload;
     if (env.topic === "frame/flow") flows.push(env.payload);
   }
   if (!graph) throw new Error("夹具里没有 static/strategy");
-  return { graph, flows };
+  return { graph, flows, schema };
 }
 
 /** 转成新布局的输入形状（与 FlowPage 同款） */
@@ -93,12 +97,12 @@ describe("static/strategy", () => {
 });
 
 describe("AST 渲染", () => {
-  it("运算符用中缀、谓词用命名参数、引用节点标中文", () => {
+  it("无 schema 时退回 identifier（词表没到也不瞎编），前缀用空格不加点", () => {
     expect(renderValue({ op: ">=", args: [{ op: "group_count", group: "inf" }, { param: "min_inf" }] }))
-      .toBe("group_count(group=inf) >= 参数.min_inf");
+      .toBe("group_count(group=inf) >= 参数 min_inf");
     expect(renderValue({ op: "and", args: [{ op: "a" }, { op: "b" }] })).toBe("a() 且 b()");
-    expect(renderValue({ ref: "front" })).toBe("别名.front");
-    expect(renderValue({ var: "checkpoint" })).toBe("变量.checkpoint");
+    expect(renderValue({ ref: "front" })).toBe("别名 front");
+    expect(renderValue({ var: "checkpoint" })).toBe("变量 checkpoint");
   });
 
   it("嵌套逻辑加括号，避免读错优先级", () => {
@@ -106,13 +110,46 @@ describe("AST 渲染", () => {
     expect(s).toBe("(1 或 2) 且 3");
   });
 
-  it("真夹具的分支能渲染出条件与动作", () => {
+  it("I1：有 schema 时谓词/运算符用后端 name_zh（rev 12，单一真相源在后端）", () => {
+    const { schema } = read("leapfrog.jsonl");
+    const vocab = vocabOf(schema);
+    expect(vocab.pred["group_count"]).toBe("组内数量");
+    expect(vocab.ops[">="]).toBe("≥");
+    expect(
+      renderValue({ op: ">=", args: [{ op: "group_count", group: "inf" }, { param: "min_inf" }] }, 0, vocab),
+    ).toBe("组内数量(group=inf) ≥ 参数 min_inf");
+    expect(
+      renderValue({ op: "arrived", group: "armor", target: { ref: "front" }, radius: 3.5 }, 0, vocab),
+    ).toBe("已抵达(group=armor, target=别名 front, radius=3.5)");
+    expect(vocab.acts["attack_move_to"]).toBe("攻击移动");
+  });
+
+  it("I2：夹具的 static/strategy 带可读名 —— 策略名、step 名、reason 与组名都有 zh", () => {
     const { graph } = read("leapfrog.jsonl");
-    const step = graph.steps.find((s) => s.branches.length > 1)!;
-    const rows = renderBranches(step.branches, null);
-    expect(rows.length).toBe(step.branches.length);
-    expect(rows.some((r) => r.when === null), "应有一个 else 分支").toBe(true);
-    expect(rows.some((r) => r.actions.length > 0)).toBe(true);
+    expect(graph.display_name_zh).toBe("装甲蛙跳推进");
+    expect(graph.description_zh.length).toBeGreaterThan(0);
+    const garrison = graph.steps.find((s) => s.step_id === "garrison")!;
+    expect(garrison.display_name_zh).toBe("驻守集结");
+    expect(graph.reasons?.["READY"]).toBe("集结就绪");
+    expect(graph.group_names?.["G_TANK"]).toBe("装甲组");
+    // 没写 zh 的 step 退回 identifier（契约 default("")，不炸）
+    expect(graph.steps.every((s) => (s.display_name_zh || s.step_id) === s.display_name_zh
+      || s.display_name_zh === "")).toBe(true);
+  });
+
+  it("真夹具的分支能渲染出条件与动作（zh 词表生效）", () => {
+    const { graph, schema } = read("leapfrog.jsonl");
+    // garrison 的条件带 group_count（组内数量）；armor_hop 的动作带 attack_move_to（攻击移动）
+    const garrison = renderBranches(graph.steps.find((s) => s.step_id === "garrison")!.branches, schema);
+    const hop = renderBranches(graph.steps.find(
+      (s) => s.branches.some((b) =>
+        (b["do"] as Record<string, unknown>[] | undefined)?.some((a) => a["op"] === "group_action")))!
+      .branches, schema);
+    expect(garrison.some((r) => r.when !== null && r.when.includes("组内数量"))).toBe(true);
+    expect(garrison.some((r) => r.when === null), "应有一个 else 分支").toBe(true);
+    expect(hop.some((r) => r.actions.some((a) => a.text.includes("攻击移动")))).toBe(true);
+    // I1 的端到端验收：别名真的流到了渲染层，条件里不再出现裸谓词名
+    expect(garrison.some((r) => r.when !== null && r.when.includes("group_count"))).toBe(false);
   });
 
   it("被后端标为不可用的 do op 带上原因", () => {

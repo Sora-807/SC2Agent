@@ -186,12 +186,27 @@ def _unit_view(u: Unit, catalog: Catalog, group_id: str | None) -> UnitView:
 
 
 def _unknown_stable_id(raw: str) -> str:
-    """catalog 里没登记的类型（如中性装饰物）。
+    """catalog 里没登记的类型。
 
-    显式打上 `unknown/` 前缀而不是塞 burnysc2 名 —— 前端红线 C1 禁止动态帧出现 burnysc2 名，
-    而且这样 UI 能明确显示"这个类型后端没登记"，是可发现的缺口而非静默污染。
+    可识别的中立类型（矿脉/气井/瞭望塔/可破坏障碍物）归一到已知 stable_id，
+    前端从 catalog.entries 查到中文名而非显示"未知"。
+    真正无法识别的类型才打 `unknown/` 前缀（红线 C1：动态帧不出现 burnysc2 名）。
     """
-    return "unknown/" + raw.lower()
+    name = raw.lower()
+    # 中立资源/建筑（按名称模式归一，覆盖 catalog 变体表没穷举的子类型）
+    if "mineral" in name:
+        return "neutral/mineralfield"
+    if "geyser" in name:
+        return "neutral/vespenegeyser"
+    if "xelnagatower" in name:
+        return "neutral/xelnagatower"
+    # 可破坏障碍物（岩石/残骸/斜坡/墙/门/冰/可崩塌塔子类型 → 通用"障碍物"）
+    if any(kw in name for kw in (
+        "destructible", "debris", "ramp", "collapsible",
+        "blocker", "barrier", "unbuildable", "sandbag", "rockcover",
+    )):
+        return "neutral/destructible"
+    return "unknown/" + name
 
 
 def _form_of(raw: str, main: str) -> str | None:

@@ -16,8 +16,8 @@ import type { Topic } from "../contract";
 const ORIGINS = ["flow", "production", "worker", "user", "agent"] as const;
 
 export function DebugPage() {
-  const { ops, production, flow, world, session, alerts, catalog, economy, range, position } =
-    useFrames();
+  const { ops, production, flow, world, session, alerts, catalog, economy, range, position,
+          mode, fixtures, fixtureKey, attach } = useFrames();
   const [originFilter, setOriginFilter] = useState<string>("");
   const [actionFilter, setActionFilter] = useState<string>("");
   const [inspect, setInspect] = useState<Topic>("frame/world");
@@ -47,7 +47,7 @@ export function DebugPage() {
       <Card title="会话" right={<span className="text-note text-faint">
         游标 {fmtTime(position)} / 范围 {fmtTime(range.from)}–{fmtTime(range.to)}
       </span>}>
-        <div className="flex flex-wrap gap-4 text-neutral-300">
+        <div className="flex flex-wrap gap-4 text-dim">
           <span>帧源 <b>{session?.frame_source ?? "—"}</b></span>
           <span>状态 <b>{session?.state ?? "—"}</b></span>
           <span>单位 {world?.units.length ?? 0}</span>
@@ -55,18 +55,32 @@ export function DebugPage() {
           <span>警报 {alerts?.alerts.length ?? 0}</span>
           <span>经济差量 {economy?.emitted_count ?? "—"}</span>
         </div>
+        {mode === "offline" && (
+          <label className="mt-2 flex items-center gap-2 border-t border-l1 pt-2 text-note text-faint">
+            背景数据（离线规划的静态面：catalog/地图/地形来自这份夹具）
+            <select
+              className="rounded border border-l2 bg-panel px-1"
+              value={fixtureKey ?? ""}
+              onChange={(e) => void attach("fixture", e.target.value)}
+            >
+              {fixtures.map((f) => (
+                <option key={f.key} value={f.key}>{f.label}</option>
+              ))}
+            </select>
+          </label>
+        )}
       </Card>
 
       <Card
         title="命令流水"
         right={
           <div className="flex gap-2 text-note">
-            <select className="rounded border border-neutral-700 bg-neutral-900 px-1"
+            <select className="rounded border border-l2 bg-panel px-1"
                     value={originFilter} onChange={(e) => setOriginFilter(e.target.value)}>
               <option value="">全部来源</option>
               {ORIGINS.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
-            <select className="rounded border border-neutral-700 bg-neutral-900 px-1"
+            <select className="rounded border border-l2 bg-panel px-1"
                     value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
               <option value="">全部动作</option>
               {actions.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -79,7 +93,7 @@ export function DebugPage() {
         ) : (
           <div className="max-h-72 overflow-auto">
             <table className="w-full text-left">
-              <thead className="sticky top-0 bg-neutral-900 text-faint">
+              <thead className="sticky top-0 bg-panel text-faint">
                 <tr>
                   <th className="w-12">op</th><th className="w-14">seq</th><th className="w-14">时间</th>
                   <th className="w-20">来源</th><th className="w-32">动作</th>
@@ -89,12 +103,12 @@ export function DebugPage() {
               </thead>
               <tbody>
                 {rows.map((o) => (
-                  <tr key={o.op_id + "-" + o.seq} className="border-t border-neutral-900">
+                  <tr key={o.op_id + "-" + o.seq} className="border-t border-l1">
                     <td>{o.op_id}</td>
                     <td>{o.seq}</td>
                     <td>{fmtTime(o.at)}</td>
                     <td>
-                      <span className="rounded bg-neutral-800 px-1 text-note">{o.origin}</span>
+                      <span className="rounded bg-raised px-1 text-note">{o.origin}</span>
                     </td>
                     <td>{o.action}</td>
                     <td className="text-dim" title={o.unit_tags.join(", ")}>
@@ -107,11 +121,11 @@ export function DebugPage() {
                       {o.apply === null ? (
                         <span className="text-ghost" title="后端没有回报">未知</span>
                       ) : o.apply.failed ? (
-                        <span className="text-red-400" title={o.apply.detail ?? ""}>失败</span>
+                        <span className="text-[color:var(--err-fg)]" title={o.apply.detail ?? ""}>失败</span>
                       ) : o.apply.ok === null ? (
-                        <span className="text-sky-400" title="异步应用未回（下一 step 生效）">待裁决</span>
+                        <span className="text-blue-fg" title="异步应用未回（下一 step 生效）">待裁决</span>
                       ) : (
-                        <span className="text-emerald-400">已接受</span>
+                        <span className="text-[color:var(--ok-fg)]">已接受</span>
                       )}
                     </td>
                     <td>
@@ -163,7 +177,7 @@ export function DebugPage() {
             <ul className="space-y-1">
               {production.dropped.map((d, i) => (
                 <li key={i}>
-                  <span className="text-red-400">{d.op}</span> {zhOf(d.stable_id)}
+                  <span className="text-[color:var(--err-fg)]">{d.op}</span> {zhOf(d.stable_id)}
                   <div className="text-dim">{d.reason}</div>
                 </li>
               ))}
@@ -195,7 +209,7 @@ export function DebugPage() {
       <Card
         title="原始帧检查器"
         right={
-          <select className="rounded border border-neutral-700 bg-neutral-900 px-1 text-note"
+          <select className="rounded border border-l2 bg-panel px-1 text-note"
                   value={inspect} onChange={(e) => setInspect(e.target.value as Topic)}>
             {(["frame/world", "frame/flow", "frame/production", "frame/economy",
                "frame/projection", "frame/ops", "frame/alerts", "frame/session"] as Topic[])
@@ -226,7 +240,7 @@ function RawInspector(props: { topic: Topic }) {
   if (!payload) return <Empty text="该 topic 本帧没有数据" />;
   const text = JSON.stringify(payload, null, 1);
   return (
-    <pre className="max-h-72 overflow-auto rounded bg-neutral-950 p-2 text-note text-neutral-300">
+    <pre className="max-h-72 overflow-auto rounded bg-inset p-2 text-note text-dim">
       {text.length > 40000 ? text.slice(0, 40000) + "\n…（已截断）" : text}
     </pre>
   );

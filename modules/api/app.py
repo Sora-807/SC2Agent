@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
-from game.catalog import load_terran
+from game.catalog import load_all
 
 from view.encode import envelope, to_json
 from view.schema import REV, STATIC_TOPICS, TOPICS
@@ -36,7 +37,7 @@ from planner.planner import Planner
 
 from api.commands import CommandResult, QueueCommand, WorkerCommand
 from api.live import LiveSession
-from api.session import OfflineSession, StaleObservation
+from api.session import DEFAULT_ASSEMBLY, OfflineSession, StaleObservation, parse_assembly
 from api.sources import SourceRegistry, SourceInfo
 
 #: WS 的推送节拍（真实秒）。0.2s 一次 × rate 决定推进多少游戏秒。
@@ -55,12 +56,19 @@ DEFAULT_PROPOSAL_LOG = Path("runtime/proposals.jsonl")
 DEFAULT_PLANS_DIR = Path("runtime/plans")
 #: 地图规划文件的**建议**落点（同上）
 DEFAULT_MAP_PLANS_DIR = Path("runtime/map-plans")
+#: 对局记录的**建议**落点（二十六轮：复盘要有真数据源 —— live 帧流同步落 JSONL）。
+#: 同样是 runtime 数据：测试不传路径就不录，serve_api 显式传 runtime/recordings。
+DEFAULT_RECORDINGS_DIR = Path("runtime/recordings")
 
 
 def create_app(frame_dir: Path | str | None = None,
                proposal_log: Path | str | None = None,
                plans_dir: Path | str | None = None,
-               map_plans_dir: Path | str | None = None) -> FastAPI:
+               map_plans_dir: Path | str | None = None,
+               recordings_dir: Path | str | None = None,
+               strategies_dir: Path | str | None = None,
+               agent_talk: "object | None" = None,
+               agent_base: str | None = None) -> FastAPI:
     registry = SourceRegistry(Path(frame_dir) if frame_dir else DEFAULT_FRAME_DIR)
     registry.load_labels_from_index()
 
@@ -88,14 +96,39 @@ def create_app(frame_dir: Path | str | None = None,
     # 默认 path=None = 只在内存里（进程结束就没了）。持久化必须显式要求 ——
     # 默认持久化到共享文件会让测试互相污染，而且"哪些提案属于这次运行"变得说不清。
     app.state.proposals = ProposalStore(
-        load_terran(), path=Path(proposal_log) if proposal_log else None)
+        load_all(), path=Path(proposal_log) if proposal_log else None)
     #: 规划存储（P0）：一个规划一个 YAML 文件；默认内存态，serve_api 显式传 runtime/plans。
-    from view.plans import PlanStore
-    app.state.plans = PlanStore(load_terran(), Path(plans_dir) if plans_dir else None)
+    from view.plans import PlanStore, resolve_placement_refs
+    app.state.plans = PlanStore(load_all(), Path(plans_dir) if plans_dir else None)
     #: 地图规划文件（P2）：默认地图锁定 + 复制新建；默认内存态。
     from view.map_plans import MapPlanStore
     app.state.map_plans = MapPlanStore(
-        Path(map_plans_dir) if map_plans_dir else None, catalog=load_terran())
+        Path(map_plans_dir) if map_plans_dir else None, catalog=load_all())
+    #: 对局记录目录（二十六轮）：None = 不录（测试默认；录了测试之间会互相污染）。
+    app.state.recordings_dir = Path(recordings_dir) if recordings_dir else None
+    #: 策略文件存储（二十七轮「开放写策略，免审」）：default 从内置常量播种（锁定）。
+    from api.session import DEFAULT_ASSEMBLY as _SEED_ASM
+    from api.session import DEFAULT_STRATEGY as _SEED_ST
+    from view.strategies import StrategyStore
+    app.state.strategies = StrategyStore(
+        Path(strategies_dir) if strategies_dir else None, seed=(_SEED_ST, _SEED_ASM))
+    #: 对话式顾问（P3 切片 A）。两条装配路径：测试注入现成实例（FakeLLM 脚本 +
+    #: transport client）；serve_api 传 agent_base（自己回环访问 REST —— 工具面与
+    #: UI 同一入口 U7，不走 store 直连）。None = 端点报「未启用」。
+    app.state.agent_talk = agent_talk
+    if app.state.agent_talk is None and agent_base:
+        from agent.client import ApiClient
+        from agent.talk import AgentTalk, openai_from_env
+
+        app.state.agent_talk = AgentTalk(
+            ApiClient(base=agent_base), llm_factory=openai_from_env,
+            trace_root=Path("runtime/agent-talk/traces"),
+            workspace_root=Path("runtime/agent-talk/workspace"),
+            history_path=Path("runtime/agent-talk/history.json"))
+    #: agent 记忆笔记（append-only jsonl）。默认挂在与对话同一棵 runtime 下。
+    app.state.agent_notes_path = Path(
+        "runtime/agent-talk/notes.jsonl"
+        if agent_talk is not None or agent_base else "runtime/agent-notes.jsonl")
 
     def _session() -> OfflineSession | None:
         """当前会话（可能为 None）。**不惰性创建**：以前 source=live 无人访问不建、
@@ -173,11 +206,14 @@ def create_app(frame_dir: Path | str | None = None,
     @app.post("/api/session/start")
     async def session_start(autotick: bool = Query(True),
                             driver: str = Query("offline"),
-                            map_plan: str | None = Query(None)) -> dict:
+                            map_plan: str | None = Query(None),
+                            strategy: str | None = Query(None)) -> dict:
         """建会话。`driver`：`offline`（进程内假世界）/ `sim`（子进程假世界，验进程分离）/
         `sc2`（子进程真机）。`autotick=false` 时不自动推进（测试与单步调试用）。
         `map_plan`：地图规划 id —— 会话装配用它（进入游戏加载哪一份地图规划），
         缺省 = 手写出厂模板。
+        `strategy`：策略文件 id（二十七轮「开放写策略」）—— 缺省 = 内置常量；
+        热改不存在：正在跑的策略不受影响，换策略 = 用新 id 起新会话。
 
         必须是 `async def`：`asyncio.create_task` 需要运行中的事件循环，
         而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
@@ -195,24 +231,42 @@ def create_app(frame_dir: Path | str | None = None,
                     status_code=400,
                     detail=f"地图规划 {map_plan!r} 不存在或没有落盘文件"
                            "（子进程会话需要真文件；检查 --map-plans 目录）")
+        strategy_path: str | None = None
+        if strategy:
+            strategy_path = app.state.strategies.file_path(strategy)
+            if strategy_path is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"策略 {strategy!r} 不存在或没有落盘文件"
+                           "（会话装配要真文件；检查 --strategies 目录）")
         old = app.state.session
         if old is not None and hasattr(old, "proc"):
             alive = old.describe().get("alive")
             same_driver = getattr(old, "driver", None) == driver
             same_plan = getattr(old, "map_plan_path", None) == plan_path
-            if alive and same_driver and same_plan:
+            same_strategy = getattr(old, "strategy_path", None) == strategy_path
+            if alive and same_driver and same_plan and same_strategy:
                 return old.describe()   # 已在同一种会话上：幂等返回，不多开
             old.stop()                 # 换驱动/换规划（或旧会话已死）：先收尾（树杀，防孤儿 SC2）
             app.state.session = None
         if driver in ("sim", "sc2"):
-            sess = LiveSession(driver=driver, map_plan=plan_path)
+            sess = LiveSession(driver=driver, map_plan=plan_path,
+                               strategy_path=strategy_path,
+                               # 真机实时配速 + 对局记录（二十六轮两个用户 issue 的修点）
+                               realtime=(driver == "sc2"),
+                               record_dir=app.state.recordings_dir)
             sess.map_plan_path = plan_path   # noqa: B010 —— 幂等守卫要读
+            sess.map_plan_id = map_plan      # noqa: B010 —— I8：限定引用「规划名/点位」要对着它核
+            sess.strategy_path = strategy_path  # noqa: B010
             app.state.session = sess
             app.state.proposals.session = app.state.session
             return app.state.session.describe()
-        sess = OfflineSession(load_terran(), map_plan=plan_path)
+        sess = OfflineSession(load_all(), map_plan=plan_path,
+                              strategy_path=strategy_path)
         app.state.session = sess
         sess.map_plan_path = plan_path      # noqa: B010
+        sess.map_plan_id = map_plan         # noqa: B010 —— 同上
+        sess.strategy_path = strategy_path  # noqa: B010
         # 提案要能算双投影、要能 apply → 必须认识会话；
         # 反过来会话的帧生产器要认识提案 → 提案变化时会发 `proposals` 帧
         app.state.proposals.session = sess
@@ -270,7 +324,16 @@ def create_app(frame_dir: Path | str | None = None,
         sess = _live()
         _guard(sess, body.based_on_seq)
         try:
-            detail = sess.queue_op(op, body.name, items=body.to_items(),
+            parsed = body.to_items()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        items, ref_err = resolve_placement_refs(
+            parsed, getattr(sess, "map_plan_id", None))
+        if ref_err is not None:
+            # I8 限定引用（「规划名/点位名」）解析失败 = 请求写错了，400 带结构化理由
+            raise HTTPException(status_code=400, detail=ref_err)
+        try:
+            detail = sess.queue_op(op, body.name, items=items,
                                    index=body.index, order=body.order)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -312,7 +375,7 @@ def create_app(frame_dir: Path | str | None = None,
         info = src.info()
         frames = frames_by_topic(src.latest_at(info.to_time))
         prev = app.state.last_observation_seq
-        packet = observation_packet(frames, catalog=load_terran(), supersedes=prev)
+        packet = observation_packet(frames, catalog=load_all(), supersedes=prev)
         app.state.last_observation_seq = packet.seq
         body = {
             "seq": packet.seq, "game_time": packet.game_time,
@@ -322,6 +385,94 @@ def create_app(frame_dir: Path | str | None = None,
         if text:
             body["text"] = packet.render()
         return body
+
+    # ---- agent 对话（P3 切片 A：离线商量回路） ----
+
+    @app.get("/api/agent/chat")
+    def agent_chat_history() -> dict:
+        talk = app.state.agent_talk
+        if talk is None:
+            return {"enabled": False, "reason": "未启用（serve_api --agent-base）",
+                    "messages": []}
+        talk.refresh_running_steps()   # 流式动效的燃料（本轮进行中步骤）
+        out = talk.describe()
+        out["enabled"] = True
+        out["error"] = getattr(talk, "_engine_error", None)
+        return out
+
+    @app.post("/api/agent/chat")
+    async def agent_chat_say(body: dict) -> dict:
+        talk = app.state.agent_talk
+        if talk is None:
+            raise HTTPException(status_code=503,
+                                detail="对话服务未启用（serve_api --agent-base）")
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="要说点什么（空消息）")
+        out = await talk.say(text)
+        if out.get("error"):
+            # 503：不是请求写错，是对话后端没就绪（G7：理由必须显形）
+            raise HTTPException(status_code=503, detail=out["error"])
+        return out
+
+    @app.post("/api/agent/chat/stream")
+    async def agent_chat_say_stream(body: dict):
+        """SSE 流式对话（2026-08-22 十五轮：接 BaseAgent start_stream）。
+
+        事件流：delta（思考/正文/工具参数分片，从第一个 token 起就有）→
+        tool_call（工具完成，带结果摘要）→ run_end → round（终态：回复/改动/历史）。
+        引擎跑在 agent-talk 专属循环线程，事件经跨线程队列递过来 —— 这里只做搬运。
+        """
+        talk = app.state.agent_talk
+        if talk is None:
+            raise HTTPException(status_code=503,
+                                detail="对话服务未启用（serve_api --agent-base）")
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="要说点什么（空消息）")
+        handle = talk.start_round(text)
+
+        async def gen():
+            while True:
+                # 工具执行可能长时间无事件（试算/真机启动），超时给足而不是掐流
+                ev = await asyncio.to_thread(handle.events.get, True, 300)
+                if ev is None:
+                    break
+                yield "data: " + json.dumps(ev, ensure_ascii=False) + "\n\n"
+
+        return StreamingResponse(
+            gen(), media_type="text/event-stream",
+            headers={"cache-control": "no-store", "x-accel-buffering": "no"},
+        )
+
+    # ---- agent 记忆（P3 切片 A 收尾）：跨会话笔记，人与 agent 同一入口 ----
+
+    @app.get("/api/agent/notes")
+    def agent_notes_list() -> list[dict]:
+        path: Path = app.state.agent_notes_path
+        if not path.exists():
+            return []
+        out = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue    # 坏行跳过：记忆不该因为一行坏数据整个读不出
+        return out
+
+    @app.post("/api/agent/notes")
+    def agent_note_save(body: dict) -> dict:
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="笔记内容不能为空")
+        note = {"title_zh": str(body.get("title_zh") or text[:24]),
+                "text": text, "at": time.time()}
+        path: Path = app.state.agent_notes_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(note, ensure_ascii=False) + "\n")
+        return note
 
     @app.get("/api/agent/tools")
     def agent_tools() -> dict:
@@ -352,7 +503,8 @@ def create_app(frame_dir: Path | str | None = None,
             ],
             "rules": [
                 "所有命令必带 based_on_seq；落后超过阈值会返 409 并回报当前 seq —— 重取观察再试（R8）",
-                "live 中不能创建/编辑模块与 Strategy（R5）",
+                "策略是文件（strategies/<id>.yaml，可写，保存即编译校验）—— 会话启动时装配，"
+                "不能热改正在跑的会话（2026-08-23 放开写策略后的边界）",
                 "flow 提交必须 validate + compile（R6）；生产队列 op 不需要",
                 "不支持的东西会返 400 并带原因，别重试同一个动作",
             ],
@@ -376,11 +528,22 @@ def create_app(frame_dir: Path | str | None = None,
 
     @app.post("/api/proposals")
     def proposals_create(body: dict) -> dict:
-        """新建提案。**校验不通过也存**（§6 P2：不可接受，但必须可见 —— agent 要学、用户要诊断）。"""
+        """新建提案。**校验不通过也存**（§6 P2：不可接受，但必须可见 —— agent 要学、用户要诊断）。
+
+        审批已停用（2026-08-22 用户拍板）：校验通过的提案**创建后立即自动应用**，
+        decision.auto=True 留审计。accept/reject 端点与 ProposalStore 的审批能力
+        原样保留（休眠代码）—— 想恢复人工审批，删掉下面这段自动应用即可。
+        """
         try:
-            return app.state.proposals.create(body).to_json()
+            p = app.state.proposals.create(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+        if (p.validation or {}).get("ok"):
+            try:
+                p = app.state.proposals.accept(p.id, auto=True)
+            except ValueError:
+                pass  # 应用失败（如 offline 无会话）：留在待审批，提案本身已落盘可见
+        return p.to_json()
 
     @app.get("/api/proposals/{pid}/preview")
     def proposals_preview(pid: str, horizon: float = Query(120.0, gt=0, le=600)) -> dict:
@@ -467,16 +630,175 @@ def create_app(frame_dir: Path | str | None = None,
             items = [parse_item(x) for x in (body.get("items") or [])]
         except (ValueError, TypeError, AttributeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
-        catalog = load_terran()
+        catalog = load_all()
         translated = queue_to_ops(items, catalog)
+        # 二十三轮用户拍板：跑到队列完成 —— 曲线不再在生产中途截断（死局有封顶）；
+        # 二十七轮：尾部再多留 30 秒（最后事件完成后看得到经济余势，右缘钳制有自然末端）
         curve = Planner(catalog).project(
-            opening_game_state(catalog), list(translated.ops), horizon)
+            opening_game_state(catalog), list(translated.ops), horizon,
+            until_complete=True, tail=30.0)
+        sim_end = curve.points[-1].t if curve.points else horizon
         frame = projection_frame(
-            curve, based_on_seq=0, based_on_game_time=0.0, horizon=horizon,
+            curve, based_on_seq=0, based_on_game_time=0.0, horizon=sim_end,
             plan_id=str(body.get("plan_id") or "draft"), skipped=translated.skipped)
         # 前瞻警报与实时警报同一数据模型（AlertView）、同一渲染组件 —— 干跑无冷却
-        alerts = AlertService(catalog).from_curve(curve)
+        svc = AlertService(catalog)
+        # I12-B2：装配 target ↔ 规划总产出对账 —— 会话装配是规划的验收方
+        # （V1 恒为 DEFAULT_ASSEMBLY；装配可配置后跟着走）。缺口显形，不再靠肉眼对照。
+        assembly = parse_assembly(DEFAULT_ASSEMBLY)
+        alerts = svc.from_curve(curve) + svc.assembly_gaps(curve, assembly)
         return {**to_json(frame), "alerts": to_json(alerts)}
+
+    # ---- 模块模板（I12-B3 最小版）：参考模块一键落地成规划文件 ----
+
+    @app.get("/api/modules")
+    def modules_list() -> list[dict]:
+        """内置生产模块（参考战术库）。B3 的模板源：MODULE_REGISTRY 此前只有 agent 只读，
+        现在能落地成 plans/<id>.yaml —— 消除「模块与规划两份独立副本各自漂移」。"""
+        import planner  # noqa: F401  触发内置模块注册
+        from planner.build_order import MODULE_REGISTRY
+        from view.plans import ops_to_items
+
+        out = []
+        for ref, fn in sorted(MODULE_REGISTRY.items()):
+            doc = (fn.__doc__ or "").strip().splitlines()[0] if fn.__doc__ else ""
+            out.append({"id": ref, "title_zh": doc, "items": len(ops_to_items(fn({})))})
+        return out
+
+    @app.post("/api/plans/from-module")
+    def plans_from_module(body: dict) -> dict:
+        """从参考模块新建规划：`{module, params?, id?, title_zh?}`。
+
+        默认规划就是这么来的（bio_tank_opening 导出）；现在 UI/agent 都能走同一条路
+        —— 模块改了重新落地一份，比手抄队列靠谱（模板是唯一真相源）。
+        """
+        import uuid as _uuid
+
+        import planner  # noqa: F401  触发内置模块注册
+        from planner.build_order import MODULE_REGISTRY
+        from view.plans import ops_to_items
+        from view.proposals import item_to_json
+
+        ref = str(body.get("module") or "")
+        fn = MODULE_REGISTRY.get(ref)
+        if fn is None:
+            raise HTTPException(status_code=400,
+                                detail=f"没有模块 {ref!r}（GET /api/modules 看有哪些）")
+        params = body.get("params") or {}
+        if not isinstance(params, dict):
+            raise HTTPException(status_code=400, detail="params 必须是对象")
+        try:
+            items = ops_to_items(fn(params))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"模块参数不合法：{exc}") from None
+        try:
+            return app.state.plans.create({
+                "id": body.get("id") or f"{ref}-{_uuid.uuid4().hex[:4]}",
+                "title_zh": str(body.get("title_zh") or f"{ref}（模板落地）"),
+                "queue": [item_to_json(i) for i in items],
+            })
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    # ---- 对局记录（二十六轮）：live 帧流的落盘 + 复盘数据源 ----
+
+    @app.get("/api/recordings")
+    def recordings_list() -> list[dict]:
+        """已落盘的对局记录（新→旧）。录制中的也列出（state=recording）。
+
+        复盘从此有真数据源：夹具是手搓场景，录像是真开过的一局。
+        meta 由 LiveSession 在开录/收尾时写；收尾带 envelopes/to_time，
+        录制中的（或进程被杀没写终态的）扫文件流补 —— 文件是唯一真相源。
+        """
+        dirp = app.state.recordings_dir
+        if dirp is None or not dirp.is_dir():
+            return []
+        out: list[dict] = []
+        for meta_path in sorted(dirp.glob("rec-*.meta.json"), reverse=True):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if meta.get("state") == "recording" or "envelopes" not in meta:
+                # 命名是 <rid>.meta.json / <rid>.jsonl —— 不能用 with_suffix
+                # （它只剥最后一个后缀，会得到 <rid>.meta.jsonl 这种不存在的文件）
+                meta.update(_scan_recording(
+                    meta_path.with_name(meta_path.name.replace(".meta.json", ".jsonl"))))
+                meta["to"] = meta.get("to", meta.get("to_time", 0.0))
+            meta.setdefault("id", meta_path.stem)
+            out.append(meta)
+        return out
+
+    def _scan_recording(path: Path) -> dict:
+        """流扫一份录制文件补 envelopes/from/to（录制中或异常终止时 meta 没有终态）。"""
+        envelopes = 0
+        to_time = 0.0
+        if path.is_file():
+            with path.open(encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    envelopes += 1
+                    try:
+                        gt = float(json.loads(line).get("game_time", 0) or 0)
+                    except ValueError:
+                        continue
+                    to_time = max(to_time, gt)
+        return {"envelopes": envelopes, "from": 0.0, "to": to_time}
+
+    @app.get("/api/recordings/{rid}/jsonl", response_class=PlainTextResponse)
+    def recording_jsonl(rid: str) -> str:
+        """一份记录的帧流（与夹具同格式：前端 JsonlFrameSource 直接吃）。"""
+        import re as _re
+
+        if not _re.fullmatch(r"[\w.-]+", rid):
+            raise HTTPException(status_code=400, detail="记录 id 不合法")
+        dirp = app.state.recordings_dir
+        path = dirp / f"{rid}.jsonl" if dirp is not None else None
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail=f"没有对局记录 {rid!r}")
+        return path.read_text(encoding="utf-8")
+
+    # ---- 策略文件（二十七轮「开放写策略，免审」）----
+
+    @app.get("/api/strategies")
+    def strategies_list() -> list[dict]:
+        return app.state.strategies.list()
+
+    @app.get("/api/strategies/{sid}/doc")
+    def strategies_doc(sid: str) -> dict:
+        """文档形状（strategy + assembly 两段；agent 文件工作区读写的载体）。"""
+        try:
+            return app.state.strategies.doc(sid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有策略 {sid!r}") from None
+
+    @app.post("/api/strategies")
+    def strategies_create(body: dict) -> dict:
+        try:
+            return app.state.strategies.create(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/strategies/{sid}/doc")
+    def strategies_save_doc(sid: str, body: dict) -> dict:
+        """全量保存 + 编译期校验（parse/validate 全套，错误带 step 定位返回）。"""
+        try:
+            return app.state.strategies.save_doc(sid, body or {})
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有策略 {sid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.delete("/api/strategies/{sid}")
+    def strategies_delete(sid: str) -> dict:
+        try:
+            app.state.strategies.remove(sid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有策略 {sid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"ok": True}
 
     # ---- 地图规划文件（P2 切片 1）：默认地图锁定 + 复制新建 + 出生点读取 ----
 
@@ -493,6 +815,27 @@ def create_app(frame_dir: Path | str | None = None,
             raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/map-plans/{pid}/doc")
+    def map_plans_doc(pid: str) -> dict:
+        """文档形状（agent 文件工作区把地图规划当 YAML 文件读写的载体）。"""
+        try:
+            return app.state.map_plans.doc(pid)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
+
+    @app.put("/api/map-plans/{pid}/doc")
+    def map_plans_save_doc(pid: str, body: dict) -> dict:
+        """全量保存文档（agent 文件工作区的写路径；校验口径与 hunks 保存一致）。"""
+        try:
+            out = app.state.map_plans.save_payload(pid, body)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if not out.get("ok"):
+            raise HTTPException(status_code=400, detail=out)   # 结构化 errors 给 agent
+        return out
 
     @app.post("/api/map-plans")
     def map_plans_create(body: dict) -> dict:

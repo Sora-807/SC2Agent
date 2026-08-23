@@ -87,7 +87,10 @@ describe("时间线标记", () => {
     const alerts = ms.filter((m) => m.kind === "alert");
     expect(alerts.length).toBeGreaterThan(0);
     expect(alerts.some((m) => m.text.includes("队首阻塞"))).toBe(true);
-    expect(alerts.some((m) => m.severity === "error")).toBe(true);
+    // 二十一轮语义：缺矿/缺气是顺序执行的等待（info），不是红色阻塞。
+    // 本夹具的阻塞原因是「高能瓦斯不足」→ 恒 info；结构性阻塞（前置/供给/放置）才会升 error。
+    expect(alerts.filter((m) => m.text.includes("队首阻塞"))
+      .every((m) => m.severity === "info")).toBe(true);
   });
 });
 

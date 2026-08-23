@@ -64,8 +64,15 @@ class AlertService:
             waited = round(gs.game_time - blocked["since"], 1)
             head = q["items"][0] if q["items"] else None
             what = _zh(self.catalog, head.get("stable_id") if head else None)
-            # warned = 后端判定已超 STALL_WARN_SECS → 升级为 error（阈值判断在后端，不在前端）
-            severity = "error" if blocked["warned"] else "warn"
+            reason = blocked["reason"] or ""
+            # 顺序执行的资源等待（攒矿/攒气）是队列的常态，不是事件（用户拍板
+            # 2026-08-22：不标红）。只有结构性卡死（前置永不来/供给/放置）才按
+            # warned 阈值升级 error —— 那才是真警报。
+            if _is_resource_wait(reason):
+                severity = "info"
+            else:
+                # warned = 后端判定已超 STALL_WARN_SECS → 升级为 error（阈值判断在后端，不在前端）
+                severity = "error" if blocked["warned"] else "warn"
             out.append(AlertView(
                 id=f"queue_blocked/{q['name']}",
                 kind="queue_blocked",
@@ -156,6 +163,43 @@ class AlertService:
             ))
         return out
 
+    def assembly_gaps(self, curve, assembly, *, now: float = 0.0) -> list[AlertView]:
+        """I12-B2：装配 target ↔ 规划总产出交叉校验（干跑终态对账）。
+
+        装配说「步兵组要 10 个机枪兵」，规划却只造 4 个就转去造坦克 —— 两者
+        之间此前没有任何约束，缺口只能靠肉眼两边对照。这里在**跑完的**规划曲线
+        （until_complete，队列与在途都清空）终态上对账：终局数量 < target
+        就发前瞻警报。只对完整曲线有意义 —— live 的窗口投影会在队列中途截断，
+        终态数字不代表规划总产出，不参与此对账。
+        """
+        if curve is None or assembly is None or not curve.points:
+            return []
+        final = curve.points[-1]
+        out: list[AlertView] = []
+        for g in assembly.groups:
+            for sid, spec in (g.composition or {}).items():
+                target = (spec or {}).get("target") if isinstance(spec, dict) else None
+                if not target:
+                    continue
+                have = final.units.get(sid, 0) + final.buildings.get(sid, 0)
+                if have >= target:
+                    continue
+                gid_zh = (f"{g.display_name_zh}（{g.group_id}）"
+                          if getattr(g, "display_name_zh", "") else g.group_id)
+                out.append(AlertView(
+                    id=f"assembly_gap/{g.group_id}/{sid}",
+                    kind="assembly_gap",
+                    severity="warn",
+                    at=now, eta=None,
+                    text_zh=(f"装配缺口：{gid_zh}要 "
+                             f"{_zh(self.catalog, sid).strip()} ×{target}，"
+                             f"规划终局只有 {have} —— 队列跑完也凑不齐"),
+                    source="projection",
+                    payload={"group": g.group_id, "stable_id": sid,
+                             "target": target, "final": have},
+                ))
+        return out
+
     # ---- 经济 / 产线 ----
 
     def _economy_alerts(self, gs: GameState) -> list[AlertView]:
@@ -209,6 +253,15 @@ class AlertService:
             return False
         self._last[a.id] = now
         return True
+
+
+#: 资源等待类阻塞原因（constraint/checks.py 的文案前缀）：攒矿/攒气是顺序执行的
+#: 常态，不是警报 —— 不升级 error（用户拍板 2026-08-22「缺矿不应标红」）。
+RESOURCE_WAIT_MARKS = ("晶体矿不足", "高能瓦斯不足", "缺矿", "缺气")
+
+
+def _is_resource_wait(reason: str) -> bool:
+    return any(mark in reason for mark in RESOURCE_WAIT_MARKS)
 
 
 def _zh(catalog: Catalog, stable_id: str | None) -> str:

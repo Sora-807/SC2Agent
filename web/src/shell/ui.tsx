@@ -1,5 +1,6 @@
 /** 通用小件（面板/徽标/空态）—— 纯展示，无业务 */
 import type { ReactNode } from "react";
+import { T } from "./tokens";
 
 /**
  * 页面滚动区（红线 G1 / 决策 U13）。
@@ -14,14 +15,26 @@ export const PAGE_SCROLL = "h-full min-h-0 overflow-y-auto pb-6";
 
 export function Card(props: {
   title: string;
+  /** 标题旁的 ？ 帮助（I4）：hover 看本面板怎么读（title 文案来自后端或本页语境） */
+  help?: string;
   className?: string;
   right?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section className={"rounded border border-neutral-800 bg-neutral-900/40 p-3 " + (props.className ?? "")}>
+    <section className={"rounded-lg border border-l1 bg-panel p-3 shadow-sm " + (props.className ?? "")}>
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h2 className="font-semibold text-neutral-200">{props.title}</h2>
+        <h2 className="flex items-center gap-1.5 font-semibold text-strong">
+          {props.title}
+          {props.help && (
+            <span
+              title={props.help}
+              className={"inline-flex h-4 w-4 cursor-help items-center justify-center "
+                + "rounded-full border border-l2 font-normal leading-none text-faint "
+                + "hover:bg-inset hover:text-dim " + T.note}
+            >?</span>
+          )}
+        </h2>
         {props.right}
       </div>
       {props.children}
@@ -29,28 +42,12 @@ export function Card(props: {
   );
 }
 
-export const Pill = (p: { label: string; value: string; tone?: "normal" | "warn" | "live" }) => (
-  <span
-    className={
-      "rounded px-2 py-0.5 text-xs " +
-      (p.tone === "warn"
-        ? "bg-amber-900/50 text-amber-300"
-        : p.tone === "live"
-          ? "bg-emerald-900/50 text-emerald-300"
-          : "bg-neutral-800")
-    }
-  >
-    <span className="text-faint">{p.label} </span>
-    {p.value}
-  </span>
-);
-
 export const Empty = (p: { text?: string }) => (
   <div className="text-ghost">{p.text ?? "该时刻无此帧"}</div>
 );
 
 export const sevClass = (s: "info" | "warn" | "error"): string =>
-  s === "error" ? "text-red-400" : s === "warn" ? "text-amber-400" : "text-sky-400";
+  s === "error" ? "text-[color:var(--err-fg)]" : s === "warn" ? "text-[color:var(--warn-fg)]" : "text-blue-fg";
 
 export function fmtTime(t: number): string {
   const s = Math.max(0, Math.round(t));
@@ -61,9 +58,9 @@ export function fmtTime(t: number): string {
 export function Stub(props: { stage: string; title: string; will: string[]; children?: ReactNode }) {
   return (
     <div className="space-y-3">
-      <Card title={props.title} right={<span className="text-xs text-faint">{props.stage} 实现</span>}>
+      <Card title={props.title} right={<span className="text-label text-faint">{props.stage} 实现</span>}>
         <div className="text-dim">该页在 {props.stage} 落地，将包含：</div>
-        <ul className="mt-1 list-inside list-disc text-neutral-300">
+        <ul className="mt-1 list-inside list-disc text-dim">
           {props.will.map((w) => <li key={w}>{w}</li>)}
         </ul>
       </Card>

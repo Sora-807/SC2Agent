@@ -5,7 +5,7 @@
 """
 import pytest
 
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.geometry import Grid, Point2
 from game.ports import ApplyResult
 from game.state import GameState, Order, Owner, Unit
@@ -14,7 +14,7 @@ from production.economy import EconomyKeeper, EconomyPolicy
 from view.adapt import economy_frame
 from view.encode import to_json
 
-CAT = load_terran()
+CAT = load_all()
 
 
 class _Sink:

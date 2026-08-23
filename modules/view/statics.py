@@ -204,10 +204,9 @@ def ladder_resource_nodes() -> list[ResourceNodeView] | None:
 
 
 def _ladder_map_data() -> dict | None:
-    try:
-        return json.loads(LADDER_TERRAIN_JSON.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    from tactical_map.reserved import ladder_map_data
+
+    return ladder_map_data()
 
 
 def schema_static() -> SchemaStatic:
@@ -254,9 +253,13 @@ def strategy_static(manifest, assembly) -> StrategyStatic:
 
     纯转发：steps 的 `branches` 值树原样带出（F9 的 AST 编辑器需要完整结构），
     edges 的 `from` 因为是 Python 保留字，在 schema 里叫 `from_step`、编码时改名。
+    rev 12：display_name_zh/description_zh/reasons（strategy 级与 step 级）、
+    group_names（assembly 组名中文）一并转发 —— 可读性字段的真相源在 manifest/assembly。
     """
     steps = [
-        StepView(step_id=step_id, branches=list(step.get("branches", [])))
+        StepView(step_id=step_id, branches=list(step.get("branches", [])),
+                 display_name_zh=step.get("display_name_zh", "") or "",
+                 description_zh=step.get("description_zh", "") or "")
         for step_id, step in manifest.steps.items()
     ]
     edges = [
@@ -276,4 +279,9 @@ def strategy_static(manifest, assembly) -> StrategyStatic:
         edges=edges,
         loop_limits=dict(manifest.loop_limits),
         bindings=dict(instance.bindings),
+        display_name_zh=manifest.display_name_zh,
+        description_zh=manifest.description_zh,
+        reasons=dict(manifest.reasons or {}),
+        group_names={g.group_id: g.display_name_zh
+                     for g in assembly.groups if g.display_name_zh},
     )

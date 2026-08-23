@@ -52,7 +52,14 @@ from typing import Any
 #: rev 10：B12/B13 —— frame/economy.nodes[] 增 base_tag；static/catalog 增 short_name_zh。
 #: rev 11：B14 —— 提案 hunks.kind 枚举增 map_plan 的六种操作（add_mark/move_mark/
 #:   rename_mark/del_mark/add_slot/del_slot）；preview.map_overlay 增 changed_marks。
-REV = 11
+#: rev 12：策略可读性（I1/I2/I4 一轮）：
+#:   ① `static/schema` 的 predicates/operators/actions 每项**值内**加 `name_zh`
+#:     （rev 5 先例：值内加键也走 REV+1 —— 前端 zod 逐字段校验，不认的键会被静默 strip）；
+#:   ② `static/strategy` 增 `display_name_zh`/`description_zh`（策略级）、
+#:     `steps[].display_name_zh`/`description_zh`（step 级）、`reasons`（reason 标识符→中文，
+#:     edges 切换原因与 exit 终局原因共用）、`group_names`（group_id→中文，来自 assembly）。
+#:     目的：`formup/advance/G_INF` 这类裸标识符读不出意图（用户原话），zh 单一真相源在后端（C4）。
+REV = 12
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -233,9 +240,9 @@ class SchemaStatic:
     "UI 画得出、编译不过"重新变成可能。
     """
 
-    predicates: dict[str, dict]       # name -> {params:[{name,required}], kind:"value"|"bool"}
-    operators: dict[str, dict]        # name -> {min_args, max_args|None}
-    actions: dict[str, dict]          # name -> {params:[{name,type,required}]}
+    predicates: dict[str, dict]       # name -> {name_zh, params:[{name,required}], kind:"value"|"bool"}
+    operators: dict[str, dict]        # name -> {name_zh, min_args, max_args|None}
+    actions: dict[str, dict]          # name -> {name_zh, params:[{name,type,required}]}
     do_ops: list[str]
     #: 开放分组表：`{组名: {op: 原因}}`。**不枚举组名** —— 后端新增一组（如
     #: composite_actions / step_keys）时自动流通，不需要改契约。
@@ -256,10 +263,13 @@ class StepView:
     `branches` **原样带值树**（`when` 的 AST、`do` 的动作列表都不摊平）：
     F4 的状态图只用到 step_id 与出口，但 F9 的 AST 编辑器需要完整结构 ——
     摊平一次就得再补一条通道，而且两条通道迟早不一致。
+    `display_name_zh`/`description_zh`（rev 12，I2）："" = 没写，UI 退回 step_id。
     """
 
     step_id: str
     branches: list[dict]
+    display_name_zh: str = ""
+    description_zh: str = ""
     # 不带 `locals`：step 局部变量在编译期被拒（UNIMPLEMENTED_STEP_KEYS，与 set_local 对称），
     # 所以那会是个恒空的死字段。T8 放回 timer/local 时一并加。
 
@@ -301,6 +311,13 @@ class StrategyStatic:
     loop_limits: dict[str, int]
     #: assembly 侧：实例绑定（slot → group_id），画图时标注每个 slot 落在哪个组
     bindings: dict[str, str]
+    #: rev 12（I2/I4）：可读名与 reason 中文创 —— 全部 "" / 空 = 没写，UI 退回 identifier
+    display_name_zh: str = ""
+    description_zh: str = ""
+    #: reason 标识符 → 中文（FORMED → 成型）；edges 的切换原因与 exit 的终局原因共用
+    reasons: dict[str, str] = field(default_factory=dict)
+    #: group_id → 中文（G_INF → 步兵组），来自 assembly 的 GroupSpec.display_name_zh
+    group_names: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------- frame/session ----------------

@@ -224,7 +224,7 @@ class ProposalStore:
         return p
 
     def accept(self, pid: str, hunk_ids: list[str] | None = None,
-               comment: str | None = None) -> Proposal:
+               comment: str | None = None, *, auto: bool = False) -> Proposal:
         p = self._require(pid)
         if p.status == STATUS_STALE:
             raise ValueError("提案已失效（它基于的世界已经不在了）—— 请让 agent 基于当前状态重提（§6 P5）")
@@ -239,7 +239,7 @@ class ProposalStore:
         self._apply(p, chosen)
         p.status = STATUS_ACCEPTED if len(chosen) == len(p.hunks) else STATUS_PARTIAL
         p.decision = {"at": self._now(), "accepted_hunks": [h.id for h in chosen],
-                      "comment_zh": comment}
+                      "comment_zh": comment, **({"auto": True} if auto else {})}
         self._append(p)
         return p
 

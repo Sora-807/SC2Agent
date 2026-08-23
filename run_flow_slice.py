@@ -15,7 +15,7 @@ from loguru import logger
 
 from driver.sc2_adapter import SC2GamePort
 from flow.engine import FlowEngine
-from game.catalog import load_terran
+from game.catalog import load_all
 from flow.manifest import parse_assembly, parse_strategy
 from game import Owner
 from sc2.data import Difficulty, Race
@@ -108,7 +108,7 @@ def main() -> None:
         sink=None, game_time_limit=25,
     )
     engine = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port,
-                        catalog=load_terran())
+                        catalog=load_all())
     port.set_sink(LoopSink(engine))
     port.start("slice-1")
     log("=== flow slice done ===")

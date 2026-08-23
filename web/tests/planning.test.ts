@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  describeItem, draftCost, draftFromJson, draftToHunks, emptyItem, itemToJson,
+  describeItem, draftCost, draftFromJson, draftFromSessionQueues, draftToHunks, emptyItem, itemToJson,
   placementOptions,
   type DraftItem,
 } from "../src/planning/queue-draft";
@@ -133,6 +133,19 @@ describe("placementOptions", () => {
   it("没地图时给空列表", () => {
     expect(placementOptions(null)).toEqual([]);
   });
+
+  it("I8：给了 qualifyId 就把槽位/点位限定成「规划id/名」，预设名不带前缀", () => {
+    const withReserved = { ...MAP, reserved: [
+      { name: "蓝方主矿气井1", label_zh: "气井" },
+      { name: null, label_zh: "矿脉" },          // 矿脉不命名 → 不进选项
+    ] };
+    const opts = placementOptions(withReserved, "agent-m1");
+    expect(opts.map((o) => o.value)).toEqual([
+      "slot:agent-m1/rax_1", "mark:agent-m1/ramp",
+      "mark:蓝方主矿气井1",                      // 预设固定建造点 = 全局命名空间
+      "region:main_build",
+    ]);
+  });
 });
 
 describe("describeItem", () => {
@@ -141,5 +154,48 @@ describe("describeItem", () => {
     expect(describeItem(item({ op: "assign_workers", task: "gas", type: null, count: 3 })))
       .toBe("维持 gas 3 人");
     expect(describeItem(item({ type: null }))).toContain("（选类型）");
+  });
+});
+
+// ---------------- 复盘队列 → 规划草稿（十八轮：复盘生产页复用规划编辑器） ----------------
+
+describe("draftFromSessionQueues", () => {
+  const item = (index: number, op: string, type: string | null, extra: Record<string, unknown> = {}) => ({
+    index, op, stable_id: type, count: 1, status: "未处理", ...extra,
+  });
+
+  it("多队列按全局 index 摊平成单序列（还原规划顺序）", () => {
+    const draft = draftFromSessionQueues([
+      { items: [item(1, "train", "scv"), item(3, "build", "barracks")] },
+      { items: [item(0, "build", "depot"), item(2, "train", "scv")] },
+    ]);
+    expect(draft.map((d) => d.type)).toEqual(["depot", "scv", "scv", "barracks"]);
+  });
+
+  it("cancel 是会话运行期产物，不进规划草稿", () => {
+    const draft = draftFromSessionQueues([
+      { items: [item(0, "build", "depot"), item(1, "cancel", null)] },
+    ]);
+    expect(draft.map((d) => d.type)).toEqual(["depot"]);
+  });
+
+  it("placement/task 原样带回（会话里已解析成具体槽位/区域）", () => {
+    const draft = draftFromSessionQueues([{
+      items: [
+        item(0, "build", "refinery", {
+          placement: { kind: "exact", mark: "蓝方主矿气井1" },
+        }),
+        item(1, "assign_workers", null, { task: "gas", count: 3 }),
+      ],
+    }]);
+    expect(draft[0]!.placement).toEqual({ kind: "exact", mark: "蓝方主矿气井1" });
+    expect(draft[1]!.op).toBe("assign_workers");
+    expect(draft[1]!.task).toBe("gas");
+    expect(draft[1]!.count).toBe(3);
+  });
+
+  it("空队列 → 空草稿", () => {
+    expect(draftFromSessionQueues([{ items: [] }, { items: [] }])).toEqual([]);
+    expect(draftFromSessionQueues([])).toEqual([]);
   });
 });

@@ -14,11 +14,11 @@ from pathlib import Path
 from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
-from game.catalog import load_terran
+from game.catalog import load_all
 from production.runtime import ProductionRuntime
 
 ROOT = Path(__file__).resolve().parents[2]
-CAT = load_terran()
+CAT = load_all()
 
 
 class _NullPort:

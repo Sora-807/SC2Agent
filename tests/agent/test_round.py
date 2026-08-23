@@ -76,29 +76,53 @@ async def _run(api_client: TestClient, llm: FakeLLMClient, tmp_path: Path) -> ob
     return await engine.start("advisor#1", "找出最值得修的一件生产问题并提案")
 
 
-# ---------------- 授权边界（§6 P1） ----------------
+# ---------------- 授权边界（§6 P1，P3 起边界收窄为「对局状态」） ----------------
+
+#: 完整工具面（2026-08-22 文件工作区改造）：文件契约 + 对局域 + 语义动作。
+#: 改这个集合 = 改授权边界，必须连着 WORKLOG 的决策记录一起改。
+EXPECTED_TOOLS = {
+    "done",
+    # 文件契约（规划文件读写；存储后端 = agent.workspace.ApiWorkspace）
+    "ls", "read", "glob", "grep", "write", "append", "edit", "insert", "delete", "stat",
+    # 对局域（提案制，提交即自动应用）
+    "observe", "write_surface", "propose",
+    # 语义动作（文件表达不了的：干跑/会话/战术素材）
+    "simulate_plan", "start_session",
+    "list_modules", "read_module", "read_current_strategy",
+}
+
 
 def test_agent_has_no_direct_command_tools():
-    """**最重要的一条**：agent 只能提案，拿不到改状态的工具。
+    """**最重要的一条**：agent 拿不到直改**对局状态**的工具。
 
     §6 P1 靠"不给那个工具"保证，不靠提示词自觉。这条测试就是那道锁。
+    文件工作区改造（2026-08-22）把边界收窄为「对局状态」：离线规划文件经
+    文件契约直改（写时校验）；但 queue_op / set_worker_quota 这类对局内命令
+    **仍然不存在** —— live 改动依旧只有 propose 一条路。
     """
     names = AdvisorSpec(ApiClient()).tools().names()
-    assert set(names) == {"done", "observe", "write_surface", "propose"}
+    assert set(names) == EXPECTED_TOOLS
     for forbidden in ("queue_op", "set_worker_quota", "submit_queue", "commands"):
         assert forbidden not in names
 
 
-def test_agent_has_no_file_tools_either():
-    """也不给读写文件的工具：这个 agent 的职责是看帧、提提案，少给一个工具少一个误用面。"""
-    names = AdvisorSpec(ApiClient()).tools().names()
-    for file_tool in ("write", "edit", "read", "ls", "glob", "grep", "delete"):
-        assert file_tool not in names
+def test_agent_has_the_file_contract_tools():
+    """文件契约必须在场：规划文件的读写全走它（CRUD 包装层已删，2026-08-22）。"""
+    names = set(AdvisorSpec(ApiClient()).tools().names())
+    for file_tool in ("write", "edit", "read", "ls", "glob", "grep", "insert", "delete",
+                      "append", "stat"):
+        assert file_tool in names
+    # CRUD 包装层不该回来 —— 它们是文件契约的重复面
+    for gone in ("list_plans", "read_plan", "create_plan", "write_plan",
+                 "list_map_plans", "read_map_plan", "create_map_plan", "write_map_plan",
+                 "list_notes", "save_note"):
+        assert gone not in names
 
 
 # ---------------- 一个完整回合 ----------------
 
-def test_round_produces_a_pending_proposal(api: TestClient, tmp_path: Path):
+def test_round_auto_applies_a_valid_proposal(api: TestClient, tmp_path: Path):
+    """审批停用（2026-08-22）：校验通过的提案创建后**立即自动应用**，decision.auto 留审计。"""
     llm = _script(
         ToolCall("c1", "observe", {}),
         ToolCall("c2", "propose", PROPOSAL_ARGS),
@@ -110,11 +134,15 @@ def test_round_produces_a_pending_proposal(api: TestClient, tmp_path: Path):
     assert len(rows) == 1
     p = rows[0]
     assert p["author"] == "agent"
-    assert p["status"] == "待审批"
+    assert p["status"] == "已接受"
+    assert p["decision"]["auto"] is True
     assert p["validation"]["ok"] is True
     assert p["preview"]["kind"] == "projection_pair"
     # anchor 基于会话的当前 seq —— 这是 P5 失效判断的依据
     assert p["anchor"]["seq"] == api.app.state.session.seq
+    # 应用真的落了地：队首现在是精炼厂（走的是与 agent 相同的命令路径，P4）
+    items = api.app.state.session.queue_items("main")
+    assert items[0].type == "terran/refinery"
 
 
 def test_observe_gives_the_agent_the_seq_to_use(api: TestClient):
@@ -166,14 +194,15 @@ def test_invalid_proposal_comes_back_with_the_reason_not_silence(api: TestClient
         "hunks": [{"id": "h1", "kind": "delete", "text_zh": "删第 9 项",
                    "payload": {"index": 9}}]}))
     assert "校验未通过" in out and "越界" in out
-    assert "仍然可见" in out
+    assert "对历史可见" in out
     assert api.get("/api/proposals").json()[0]["validation"]["ok"] is False
 
 
 def test_rejection_reason_flows_back_into_the_observation(api: TestClient, tmp_path: Path):
     """**§6 P3 的另一半**：用户拒绝时写的理由必须回到 agent 面前。
 
-    否则它会一遍遍推同一个被拒的提案，而且每次都觉得自己是第一次想到。
+    审批停用后这是**预留的人工通道**（reject 端点保留）：用户手动否掉一条
+    已自动应用的提案时，理由照样回流 —— 否则它会一遍遍推同一个被拒的提案。
     """
     llm = _script(
         ToolCall("c1", "observe", {}),
@@ -192,8 +221,9 @@ def test_rejection_reason_flows_back_into_the_observation(api: TestClient, tmp_p
     assert "被拒过的方向不要原样再提" in text
 
 
-def test_pending_proposals_are_flagged_so_it_does_not_double_propose(api: TestClient,
-                                                                    tmp_path: Path):
+def test_applied_proposals_show_in_history_so_it_does_not_double_propose(api: TestClient,
+                                                                          tmp_path: Path):
+    """自动应用后没有"待审批"了，防重复提的依据变成提案历史里的 [已接受] 行。"""
     llm = _script(
         ToolCall("c1", "observe", {}),
         ToolCall("c2", "propose", PROPOSAL_ARGS),
@@ -203,8 +233,9 @@ def test_pending_proposals_are_flagged_so_it_does_not_double_propose(api: TestCl
     api.app.state.session.tick()
     tools_ = {t.name: t for t in make_tools(_client_for(api))}
     text = asyncio.run(tools_["observe"].function({}))
-    assert "还有 1 条在等审批" in text
-    assert "别重复提同一件事" in text
+    assert "提案历史" in text
+    assert "[已接受]" in text
+    assert PROPOSAL_ARGS["title_zh"] in text
 
 
 def test_api_error_classifies_stale_observation():

@@ -19,12 +19,12 @@ export function BootHint(props: { className?: string }) {
   return (
     <div
       className={
-        "flex items-center gap-2 rounded border border-sky-800 bg-sky-950/40 px-2 py-1 " +
+        "flex items-center gap-2 rounded border border-accent-blue bg-blue-soft px-2 py-1 " +
         (props.className ?? "")
       }
     >
-      <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-400" />
-      <span className={"text-sky-300 " + T.label}>{hint}</span>
+      <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[color:var(--accent-blue-fg)]" />
+      <span className={"text-blue-fg " + T.label}>{hint}</span>
     </div>
   );
 }

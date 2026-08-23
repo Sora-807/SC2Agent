@@ -4,7 +4,7 @@ import time
 import pytest
 
 from game import GameState, Grid, Order, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from production.economy import (
     RETASK_COOLDOWN_FRAMES,
     EconomyKeeper,
@@ -12,7 +12,7 @@ from production.economy import (
     WorkerReservations,
 )
 
-CAT = load_terran()
+CAT = load_all()
 
 
 class _Port:

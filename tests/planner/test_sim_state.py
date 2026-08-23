@@ -1,6 +1,6 @@
 """planner.sim_state：derive_from 从 GameState 快照派生 SimState（稳定 ID 索引）。"""
 from game import GameState, Grid, Order, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from planner.sim_state import derive_from
 
 
@@ -22,7 +22,7 @@ def _gs(units, resources=(), minerals=200, vespene=50, supply_used=10, supply_ca
 
 
 def test_derive_from_state_fields():
-    cat = load_terran()
+    cat = load_all()
     gs = _gs([_unit(1, "COMMANDCENTER"), _unit(2, "MARINE")])
     st = derive_from(gs, cat)
     assert st.t == 100.0 and st.minerals == 200.0 and st.gas == 50.0
@@ -30,7 +30,7 @@ def test_derive_from_state_fields():
 
 
 def test_derive_from_workers_minerals_gas_idle_other():
-    cat = load_terran()
+    cat = load_all()
     mineral_patch = _unit(900, "MINERALFIELD", owner=Owner.NEUTRAL)
     refinery = _unit(800, "REFINERY", build_progress=1.0)
     scv_min = [_unit(100 + i, "SCV", orders=[_gather(900)]) for i in range(3)]
@@ -47,7 +47,7 @@ def test_derive_from_workers_minerals_gas_idle_other():
 
 def test_derive_from_gas_targets_refinery_not_geyser():
     """采气 order 目标是精炼厂 tag（不是气井）——修正 live 检测里'气工=0'的同类坑。"""
-    cat = load_terran()
+    cat = load_all()
     geyser = _unit(950, "GEYSER", owner=Owner.NEUTRAL)
     refinery = _unit(810, "REFINERY", build_progress=1.0)
     scv_gas = _unit(201, "SCV", orders=[_gather(810)])
@@ -59,7 +59,7 @@ def test_derive_from_gas_targets_refinery_not_geyser():
 
 
 def test_derive_from_buildings_units_inflight_stable_ids():
-    cat = load_terran()
+    cat = load_all()
     cc = _unit(1, "COMMANDCENTER")
     rax = _unit(2, "BARRACKS")
     refinery = _unit(3, "REFINERY", build_progress=1.0)
@@ -80,7 +80,7 @@ def test_derive_from_buildings_units_inflight_stable_ids():
 
 
 def test_to_point_snapshot():
-    cat = load_terran()
+    cat = load_all()
     gs = _gs([_unit(1, "COMMANDCENTER"), _unit(2, "MARINE")])
     st = derive_from(gs, cat)
     pt = st.to_point()

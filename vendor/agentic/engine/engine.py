@@ -12,6 +12,7 @@ dispatch 后台派子 agent,status 非阻塞感知,wait 挂起汇合。
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from ..config import Config
 from ..contract import WorkContract
@@ -23,7 +24,7 @@ from ..trace import Tracer
 from ..trace.events import RUN_START
 from ..tools import make_dispatch_tool, make_done_tool, make_status_tool, make_wait_tool
 from ..tools.toolset import ToolRegistry
-from ..types import AgentInstance, Message, TaskStatus
+from ..types import STREAM_RUN_END, AgentInstance, Message, StreamEvent, TaskStatus
 from ..workspace import MemoryWorkspace, ScopedWorkspace, Workspace
 from ..workspace.tools import make_workspace_tools
 
@@ -52,6 +53,8 @@ class Engine:
         self._tasks: dict[str, asyncio.Task] = {}
         self._status: dict[str, TaskStatus] = {}
         self._tool_registry = ToolRegistry()
+        # 流式事件 sink(start_stream 期间非 None):runner/_run 经它把事件推进队列
+        self._sink = None
         self._seed_tools()
 
     def _seed_tools(self) -> None:
@@ -102,6 +105,10 @@ class Engine:
     @property
     def guard(self) -> Guard:
         return self._guard
+
+    @property
+    def tracer(self) -> Tracer:
+        return self._tracer
 
     def register(self, type_key: str, spec, *, entry: bool = False, hidden: bool = False) -> None:
         """注册一种 agent 类型。entry=True 标记入口;hidden=True 让子区域外不可见。"""
@@ -207,43 +214,92 @@ class Engine:
             outcome = await run(
                 agent, self._llm, self._tracer,
                 max_turns=self._max_turns, semaphore=self._semaphore, llm_timeout=self._llm_timeout,
+                emit=self._sink,
             )
-            self._status[agent.target] = TaskStatus(
+            status = TaskStatus(
                 agent.target, type_key, outcome.outcome, workdir=workdir, result=outcome.result,
                 summary=None if outcome.outcome == "done" else outcome.reason,
             )
+            self._status[agent.target] = status
         except Exception as error:  # noqa: BLE001
-            self._status[agent.target] = TaskStatus(
+            status = TaskStatus(
                 agent.target, type_key, "error", workdir=workdir, summary=str(error),
             )
+            self._status[agent.target] = status
         finally:
             self._guard.release(agent.target)
+        if self._sink is not None:
+            self._sink(StreamEvent(
+                agent.target, STREAM_RUN_END, outcome=status.state,
+                result=status.result, summary=status.summary,
+            ))
 
     async def start(self, target: str, task: str, *, version: str = "", contract: WorkContract | None = None) -> TaskStatus:
-        """启动入口 agent,同步跑到完成。contract 提供文件契约模板。"""
+        """启动入口 agent,同步跑到完成,返回最终 TaskStatus。流式见 start_stream。"""
+        return await self._start(target, task, version=version, contract=contract, sink=None)
+
+    async def start_stream(self, target: str, task: str, *, version: str = "", contract: WorkContract | None = None):
+        """流式启动入口 agent:async for 逐事件产出 StreamEvent,最后一条 run_end 带终态。
+
+        事件含入口 agent 的文本增量 / 工具调用 / 轮次,以及 dispatch 出去的子 agent
+        的同类事件 + 各自 run_end(内存通道,不落 trace —— 见 ADR-0007)。
+        消费方提前 break 会取消入口 run(已派出的子 agent 任务不取消)。
+        """
         if self._entry is None:
             raise RuntimeError("no entry agent registered (register(..., entry=True))")
-        self._guard.set_main(target)
-        if self._store is not None:
-            data = await self._store.load()
-            for path, content in data.items():
-                self._shared.add_document(path, content)
-        # 保存初始工作区快照,配合 tool_call 事件可回放复原整个执行过程
-        self._tracer.save_workspace_snapshot("initial", self._shared.snapshot())
-        master = await self.create_or_get(self._entry, target, version, caller=None)
-        if contract is not None:
-            master.contract = contract
-            self._apply_contract(master)
-        master.state.inbox.append(Message("user", content=task))
-        outcome = await run(
-            master, self._llm, self._tracer,
-            max_turns=self._max_turns, semaphore=self._semaphore, llm_timeout=self._llm_timeout,
+        queue: asyncio.Queue = asyncio.Queue()
+        runner_task = asyncio.create_task(
+            self._start(target, task, version=version, contract=contract, sink=queue.put_nowait)
         )
-        final_files = self._shared.snapshot()
-        self._tracer.save_workspace_snapshot("final", final_files)
-        if self._store is not None:
-            await self._store.save(final_files)
-        return TaskStatus(
-            target, self._entry, outcome.outcome, result=outcome.result,
-            summary=None if outcome.outcome == "done" else outcome.reason,
+        runner_task.add_done_callback(lambda _: queue.put_nowait(None))  # sentinel:run 结束(含异常)
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            if not runner_task.done():
+                runner_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await runner_task
+        status = await runner_task  # 异常在此向消费方重放
+        yield StreamEvent(
+            target, STREAM_RUN_END, outcome=status.state, result=status.result, summary=status.summary,
         )
+
+    async def _start(
+        self, target: str, task: str, *, version: str, contract: WorkContract | None, sink,
+    ) -> TaskStatus:
+        """start/start_stream 共用主体:跑入口 agent 到完成,收尾快照/落盘,返回 TaskStatus。"""
+        if self._entry is None:
+            raise RuntimeError("no entry agent registered (register(..., entry=True))")
+        self._sink = sink
+        try:
+            self._guard.set_main(target)
+            if self._store is not None:
+                data = await self._store.load()
+                for path, content in data.items():
+                    self._shared.add_document(path, content)
+            # 保存初始工作区快照,配合 tool_call 事件可回放复原整个执行过程
+            self._tracer.save_workspace_snapshot("initial", self._shared.snapshot())
+            master = await self.create_or_get(self._entry, target, version, caller=None)
+            if contract is not None:
+                master.contract = contract
+                self._apply_contract(master)
+            master.state.inbox.append(Message("user", content=task))
+            outcome = await run(
+                master, self._llm, self._tracer,
+                max_turns=self._max_turns, semaphore=self._semaphore, llm_timeout=self._llm_timeout,
+                emit=sink,
+            )
+            final_files = self._shared.snapshot()
+            self._tracer.save_workspace_snapshot("final", final_files)
+            if self._store is not None:
+                await self._store.save(final_files)
+            return TaskStatus(
+                target, self._entry, outcome.outcome, result=outcome.result,
+                summary=None if outcome.outcome == "done" else outcome.reason,
+            )
+        finally:
+            self._sink = None

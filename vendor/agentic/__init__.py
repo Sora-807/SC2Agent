@@ -18,9 +18,11 @@ from .tools.toolset import ToolFactory, ToolRegistry, ToolSet, assemble
 from .types import (
     AgentInstance,
     AgentState,
+    LLMDelta,
     LLMResponse,
     Message,
     RunOutcome,
+    StreamEvent,
     TaskStatus,
     Tool,
     ToolCall,
@@ -30,8 +32,8 @@ from .workspace.tools import make_workspace_tools
 
 __all__ = [
     # types
-    "ToolCall", "Message", "Tool", "LLMResponse", "RunOutcome",
-    "AgentState", "AgentInstance", "TaskStatus",
+    "ToolCall", "Message", "Tool", "LLMDelta", "LLMResponse", "RunOutcome",
+    "AgentState", "AgentInstance", "TaskStatus", "StreamEvent",
     # config + llm
     "Config", "LLMClient", "OpenAIClient", "FakeLLMClient",
     "to_openai_messages", "to_openai_tools", "parse_assistant",

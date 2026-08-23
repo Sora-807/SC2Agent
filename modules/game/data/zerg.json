@@ -1,0 +1,1163 @@
+{
+  "zerg/drone": {
+    "burnysc2_name": "DRONE",
+    "display_name_zh": "工蜂",
+    "short_name_zh": "工蜂",
+    "role": "worker",
+    "capabilities": [
+      "gather",
+      "build"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 0,
+      "supply": 1
+    },
+    "build_time": 12,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [],
+    "variants": [
+      "DRONEBURROWED"
+    ]
+  },
+  "zerg/zergling": {
+    "burnysc2_name": "ZERGLING",
+    "display_name_zh": "跳虫",
+    "short_name_zh": "虫",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 0,
+      "supply": 1
+    },
+    "build_time": 17,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/spawningpool"
+    ],
+    "variants": [
+      "ZERGLINGBURROWED"
+    ]
+  },
+  "zerg/overlord": {
+    "burnysc2_name": "OVERLORD",
+    "display_name_zh": "王虫",
+    "short_name_zh": "王虫",
+    "role": "combat",
+    "capabilities": [
+      "move",
+      "supply"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [],
+    "variants": [
+      "OVERLORDCOCOON",
+      "TRANSPORTOVERLORDCOCOON"
+    ]
+  },
+  "zerg/roach": {
+    "burnysc2_name": "ROACH",
+    "display_name_zh": "蟑螂",
+    "short_name_zh": "蟑螂",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 75,
+      "vespene": 25,
+      "supply": 2
+    },
+    "build_time": 19,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/roachwarren"
+    ],
+    "variants": [
+      "ROACHBURROWED"
+    ]
+  },
+  "zerg/hydralisk": {
+    "burnysc2_name": "HYDRALISK",
+    "display_name_zh": "刺蛇",
+    "short_name_zh": "刺蛇",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 50,
+      "supply": 2
+    },
+    "build_time": 24,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/hydraliskden"
+    ],
+    "variants": [
+      "HYDRALISKBURROWED"
+    ]
+  },
+  "zerg/mutalisk": {
+    "burnysc2_name": "MUTALISK",
+    "display_name_zh": "飞龙",
+    "short_name_zh": "飞龙",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 2
+    },
+    "build_time": 24,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/spire"
+    ]
+  },
+  "zerg/corruptor": {
+    "burnysc2_name": "CORRUPTOR",
+    "display_name_zh": "腐化者",
+    "short_name_zh": "腐化",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 2
+    },
+    "build_time": 29,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/spire"
+    ]
+  },
+  "zerg/infestor": {
+    "burnysc2_name": "INFESTOR",
+    "display_name_zh": "感染者",
+    "short_name_zh": "感染",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 150,
+      "supply": 2
+    },
+    "build_time": 36,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/infestationpit"
+    ],
+    "variants": [
+      "INFESTORBURROWED"
+    ]
+  },
+  "zerg/swarmhost": {
+    "burnysc2_name": "SWARMHOSTMP",
+    "display_name_zh": "虫群宿主",
+    "short_name_zh": "虫宿",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 75,
+      "supply": 3
+    },
+    "build_time": 29,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/infestationpit"
+    ],
+    "variants": [
+      "SWARMHOSTBURROWEDMP"
+    ]
+  },
+  "zerg/ultralisk": {
+    "burnysc2_name": "ULTRALISK",
+    "display_name_zh": "雷兽",
+    "short_name_zh": "雷兽",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 275,
+      "vespene": 200,
+      "supply": 6
+    },
+    "build_time": 39,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/ultraliskcavern"
+    ],
+    "variants": [
+      "ULTRALISKBURROWED"
+    ]
+  },
+  "zerg/viper": {
+    "burnysc2_name": "VIPER",
+    "display_name_zh": "蝰蛇",
+    "short_name_zh": "蝰蛇",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 200,
+      "supply": 3
+    },
+    "build_time": 29,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/hive"
+    ]
+  },
+  "zerg/queen": {
+    "burnysc2_name": "QUEEN",
+    "display_name_zh": "虫后",
+    "short_name_zh": "虫后",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 175,
+      "vespene": 0,
+      "supply": 2
+    },
+    "build_time": 36,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/spawningpool"
+    ],
+    "variants": [
+      "QUEENBURROWED"
+    ]
+  },
+  "zerg/baneling": {
+    "burnysc2_name": "BANELING",
+    "display_name_zh": "爆虫",
+    "short_name_zh": "爆虫",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 25,
+      "vespene": 25,
+      "supply": 0
+    },
+    "build_time": 14,
+    "produced_by": "zerg/zergling",
+    "prerequisites": [
+      "zerg/banelingnest"
+    ],
+    "variants": [
+      "BANELINGBURROWED",
+      "BANELINGCOCOON"
+    ]
+  },
+  "zerg/ravager": {
+    "burnysc2_name": "RAVAGER",
+    "display_name_zh": "破坏者",
+    "short_name_zh": "破坏",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 25,
+      "vespene": 75,
+      "supply": 3
+    },
+    "build_time": 12,
+    "produced_by": "zerg/roach",
+    "prerequisites": [
+      "zerg/roachwarren"
+    ],
+    "variants": [
+      "RAVAGERBURROWED",
+      "RAVAGERCOCOON"
+    ]
+  },
+  "zerg/overseer": {
+    "burnysc2_name": "OVERSEER",
+    "display_name_zh": "眼虫",
+    "short_name_zh": "眼虫",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 12,
+    "produced_by": "zerg/overlord",
+    "prerequisites": [
+      "zerg/lair"
+    ],
+    "variants": [
+      "OVERSEERSIEGEMODE"
+    ]
+  },
+  "zerg/lurker": {
+    "burnysc2_name": "LURKERMP",
+    "display_name_zh": "潜伏者",
+    "short_name_zh": "潜伏",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 100,
+      "supply": 3
+    },
+    "build_time": 25,
+    "produced_by": "zerg/hydralisk",
+    "prerequisites": [
+      "zerg/lurkerden"
+    ],
+    "variants": [
+      "LURKERMPBURROWED",
+      "LURKERMPEGG"
+    ]
+  },
+  "zerg/broodlord": {
+    "burnysc2_name": "BROODLORD",
+    "display_name_zh": "巢虫领主",
+    "short_name_zh": "巢虫",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 4
+    },
+    "build_time": 24,
+    "produced_by": "zerg/corruptor",
+    "prerequisites": [
+      "zerg/greaterspire"
+    ],
+    "variants": [
+      "BROODLORDCOCOON"
+    ]
+  },
+  "zerg/overlordtransport": {
+    "burnysc2_name": "OVERLORDTRANSPORT",
+    "display_name_zh": "运输王虫",
+    "short_name_zh": "运输",
+    "role": "combat",
+    "capabilities": [
+      "transport",
+      "move",
+      "supply"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 15,
+    "produced_by": "zerg/overlord",
+    "prerequisites": [
+      "zerg/lair"
+    ]
+  },
+  "zerg/hatchery": {
+    "burnysc2_name": "HATCHERY",
+    "display_name_zh": "孵化场",
+    "short_name_zh": "孵化",
+    "role": "building",
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 300,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 71,
+    "produced_by": null,
+    "prerequisites": [],
+    "size": 5
+  },
+  "zerg/lair": {
+    "burnysc2_name": "LAIR",
+    "display_name_zh": "虫穴",
+    "short_name_zh": "虫穴",
+    "role": "building",
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 57,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": [
+      "zerg/spawningpool"
+    ]
+  },
+  "zerg/hive": {
+    "burnysc2_name": "HIVE",
+    "display_name_zh": "蜂巢",
+    "short_name_zh": "蜂巢",
+    "role": "building",
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 200,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 71,
+    "produced_by": "zerg/lair",
+    "prerequisites": [
+      "zerg/infestationpit"
+    ]
+  },
+  "zerg/extractor": {
+    "burnysc2_name": "EXTRACTOR",
+    "display_name_zh": "萃取器",
+    "short_name_zh": "萃取",
+    "role": "building",
+    "capabilities": [
+      "gas"
+    ],
+    "cost": {
+      "minerals": 25,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 21,
+    "produced_by": null,
+    "prerequisites": [],
+    "size": 3,
+    "variants": [
+      "EXTRACTORRICH"
+    ]
+  },
+  "zerg/spawningpool": {
+    "burnysc2_name": "SPAWNINGPOOL",
+    "display_name_zh": "孵化池",
+    "short_name_zh": "水池",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 200,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/hatchery"
+    ],
+    "size": 3
+  },
+  "zerg/evolutionchamber": {
+    "burnysc2_name": "EVOLUTIONCHAMBER",
+    "display_name_zh": "进化腔",
+    "short_name_zh": "进化",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 75,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 25,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/hatchery"
+    ],
+    "size": 3
+  },
+  "zerg/banelingnest": {
+    "burnysc2_name": "BANELINGNEST",
+    "display_name_zh": "爆虫巢",
+    "short_name_zh": "爆巢",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 50,
+      "supply": 0
+    },
+    "build_time": 43,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/spawningpool"
+    ],
+    "size": 3
+  },
+  "zerg/roachwarren": {
+    "burnysc2_name": "ROACHWARREN",
+    "display_name_zh": "蟑螂穴",
+    "short_name_zh": "蟑穴",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 39,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/spawningpool"
+    ],
+    "size": 3
+  },
+  "zerg/hydraliskden": {
+    "burnysc2_name": "HYDRALISKDEN",
+    "display_name_zh": "刺蛇穴",
+    "short_name_zh": "刺穴",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 29,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/lair"
+    ],
+    "size": 3
+  },
+  "zerg/infestationpit": {
+    "burnysc2_name": "INFESTATIONPIT",
+    "display_name_zh": "感染坑",
+    "short_name_zh": "感坑",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/lair"
+    ],
+    "size": 3
+  },
+  "zerg/spire": {
+    "burnysc2_name": "SPIRE",
+    "display_name_zh": "尖塔",
+    "short_name_zh": "尖塔",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 66,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/lair"
+    ],
+    "size": 2
+  },
+  "zerg/greaterspire": {
+    "burnysc2_name": "GREATERSPIRE",
+    "display_name_zh": "大尖塔",
+    "short_name_zh": "大塔",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 71,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/hive"
+    ]
+  },
+  "zerg/nydusnetwork": {
+    "burnysc2_name": "NYDUSNETWORK",
+    "display_name_zh": "虫道网络",
+    "short_name_zh": "虫道",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/lair"
+    ],
+    "size": 3
+  },
+  "zerg/nyduscanal": {
+    "burnysc2_name": "NYDUSCANAL",
+    "display_name_zh": "虫道运河",
+    "short_name_zh": "运河",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 75,
+      "vespene": 75,
+      "supply": 0
+    },
+    "build_time": 14,
+    "produced_by": "zerg/nydusnetwork",
+    "prerequisites": [
+      "zerg/nydusnetwork"
+    ],
+    "size": 3
+  },
+  "zerg/ultraliskcavern": {
+    "burnysc2_name": "ULTRALISKCAVERN",
+    "display_name_zh": "雷兽穴",
+    "short_name_zh": "雷穴",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/hive"
+    ],
+    "size": 3
+  },
+  "zerg/lurkerden": {
+    "burnysc2_name": "LURKERDENMP",
+    "display_name_zh": "潜伏穴",
+    "short_name_zh": "潜穴",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 57,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/hydraliskden"
+    ],
+    "size": 3
+  },
+  "zerg/spinecrawler": {
+    "burnysc2_name": "SPINECRAWLER",
+    "display_name_zh": "脊针爬虫",
+    "short_name_zh": "脊针",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/spawningpool"
+    ],
+    "size": 2,
+    "variants": [
+      "SPINECRAWLERUPROOTED"
+    ]
+  },
+  "zerg/sporecrawler": {
+    "burnysc2_name": "SPORECRAWLER",
+    "display_name_zh": "孢子爬虫",
+    "short_name_zh": "孢子",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 75,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 21,
+    "produced_by": null,
+    "prerequisites": [
+      "zerg/spawningpool"
+    ],
+    "size": 2,
+    "variants": [
+      "SPORECRAWLERUPROOTED"
+    ]
+  },
+  "zerg/creeptumor": {
+    "burnysc2_name": "CREEPTUMOR",
+    "display_name_zh": "菌瘤",
+    "short_name_zh": "菌瘤",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 11,
+    "produced_by": null,
+    "prerequisites": [],
+    "size": 1,
+    "variants": [
+      "CREEPTUMORQUEEN",
+      "CREEPTUMORBURROWED"
+    ]
+  },
+  "zerg/larva": {
+    "burnysc2_name": "LARVA",
+    "display_name_zh": "幼虫",
+    "short_name_zh": "幼虫",
+    "role": "combat",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": []
+  },
+  "zerg/egg": {
+    "burnysc2_name": "EGG",
+    "display_name_zh": "卵",
+    "short_name_zh": "卵",
+    "role": "combat",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": "zerg/hatchery",
+    "prerequisites": []
+  },
+  "zerg/broodling": {
+    "burnysc2_name": "BROODLING",
+    "display_name_zh": "巢虫",
+    "short_name_zh": "巢虫",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "BROODLINGESCORT"
+    ]
+  },
+  "zerg/locust": {
+    "burnysc2_name": "LOCUSTMP",
+    "display_name_zh": "蝗虫",
+    "short_name_zh": "蝗虫",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "LOCUSTMPFLYING"
+    ]
+  },
+  "zerg/infestedterran": {
+    "burnysc2_name": "INFESTORTERRAN",
+    "display_name_zh": "感染人",
+    "short_name_zh": "感人",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 3,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "INFESTORTERRANBURROWED",
+      "INFESTEDTERRANSEGG"
+    ]
+  },
+  "zerg/changeling": {
+    "burnysc2_name": "CHANGELING",
+    "display_name_zh": "变形虫",
+    "short_name_zh": "变形",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "CHANGELINGMARINE",
+      "CHANGELINGMARINESHIELD",
+      "CHANGELINGZEALOT",
+      "CHANGELINGZERGLING",
+      "CHANGELINGZERGLINGWINGS"
+    ]
+  },
+  "zerg/meleeweapons1": {
+    "burnysc2_name": "ZERGMELEEWEAPONSLEVEL1",
+    "display_name_zh": "近战武器 1 级",
+    "short_name_zh": "近武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber"
+    ]
+  },
+  "zerg/meleeweapons2": {
+    "burnysc2_name": "ZERGMELEEWEAPONSLEVEL2",
+    "display_name_zh": "近战武器 2 级",
+    "short_name_zh": "近武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber",
+      "zerg/meleeweapons1"
+    ]
+  },
+  "zerg/meleeweapons3": {
+    "burnysc2_name": "ZERGMELEEWEAPONSLEVEL3",
+    "display_name_zh": "近战武器 3 级",
+    "short_name_zh": "近武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber",
+      "zerg/meleeweapons2"
+    ]
+  },
+  "zerg/missileweapons1": {
+    "burnysc2_name": "ZERGMISSILEWEAPONSLEVEL1",
+    "display_name_zh": "远程武器 1 级",
+    "short_name_zh": "远武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber"
+    ]
+  },
+  "zerg/missileweapons2": {
+    "burnysc2_name": "ZERGMISSILEWEAPONSLEVEL2",
+    "display_name_zh": "远程武器 2 级",
+    "short_name_zh": "远武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber",
+      "zerg/missileweapons1"
+    ]
+  },
+  "zerg/missileweapons3": {
+    "burnysc2_name": "ZERGMISSILEWEAPONSLEVEL3",
+    "display_name_zh": "远程武器 3 级",
+    "short_name_zh": "远武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber",
+      "zerg/missileweapons2"
+    ]
+  },
+  "zerg/groundarmors1": {
+    "burnysc2_name": "ZERGGROUNDARMORSLEVEL1",
+    "display_name_zh": "地面装甲 1 级",
+    "short_name_zh": "地甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber"
+    ]
+  },
+  "zerg/groundarmors2": {
+    "burnysc2_name": "ZERGGROUNDARMORSLEVEL2",
+    "display_name_zh": "地面装甲 2 级",
+    "short_name_zh": "地甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber",
+      "zerg/groundarmors1"
+    ]
+  },
+  "zerg/groundarmors3": {
+    "burnysc2_name": "ZERGGROUNDARMORSLEVEL3",
+    "display_name_zh": "地面装甲 3 级",
+    "short_name_zh": "地甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "zerg/evolutionchamber",
+    "prerequisites": [
+      "zerg/evolutionchamber",
+      "zerg/groundarmors2"
+    ]
+  },
+  "zerg/flyerweapons1": {
+    "burnysc2_name": "ZERGFLYERWEAPONSLEVEL1",
+    "display_name_zh": "飞行武器 1 级",
+    "short_name_zh": "飞武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/spire"
+    ]
+  },
+  "zerg/flyerweapons2": {
+    "burnysc2_name": "ZERGFLYERWEAPONSLEVEL2",
+    "display_name_zh": "飞行武器 2 级",
+    "short_name_zh": "飞武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 175,
+      "vespene": 175,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/spire",
+      "zerg/flyerweapons1"
+    ]
+  },
+  "zerg/flyerweapons3": {
+    "burnysc2_name": "ZERGFLYERWEAPONSLEVEL3",
+    "display_name_zh": "飞行武器 3 级",
+    "short_name_zh": "飞武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/spire",
+      "zerg/flyerweapons2"
+    ]
+  },
+  "zerg/flyerarmors1": {
+    "burnysc2_name": "ZERGFLYERARMORSLEVEL1",
+    "display_name_zh": "飞行装甲 1 级",
+    "short_name_zh": "飞甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 114,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/spire"
+    ]
+  },
+  "zerg/flyerarmors2": {
+    "burnysc2_name": "ZERGFLYERARMORSLEVEL2",
+    "display_name_zh": "飞行装甲 2 级",
+    "short_name_zh": "飞甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 175,
+      "vespene": 175,
+      "supply": 0
+    },
+    "build_time": 136,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/spire",
+      "zerg/flyerarmors1"
+    ]
+  },
+  "zerg/flyerarmors3": {
+    "burnysc2_name": "ZERGFLYERARMORSLEVEL3",
+    "display_name_zh": "飞行装甲 3 级",
+    "short_name_zh": "飞甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 157,
+    "produced_by": "zerg/spire",
+    "prerequisites": [
+      "zerg/spire",
+      "zerg/flyerarmors2"
+    ]
+  }
+}

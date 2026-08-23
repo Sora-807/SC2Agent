@@ -15,9 +15,11 @@ export interface ProjectionSeries {
   to: number;
 }
 
+export type EventKind = ProjectionFrame["events"][number]["kind"] | "assign";
+
 export interface EventMarker {
   t: number;
-  kind: ProjectionFrame["events"][number]["kind"];
+  kind: EventKind;
   /** 悬停/图例用的中文说明（拼接自帧字段，不新增语义） */
   text: string;
 }
@@ -39,12 +41,30 @@ const KIND_ZH: Record<ProjectionFrame["events"][number]["kind"], string> = {
   completed: "完成",
 };
 
+/** 瞬时目标值动作（维持采气/采矿/空闲）—— planner 用 assign_<task> 当标签，
+ *  不是目录项：不进泳道（没有工期），在曲线上画成黄色虚线（用户拍板 2026-08-22）。 */
+export function isAssignId(stableId: string | null): boolean {
+  return stableId != null && stableId.startsWith("assign_");
+}
+
+const ASSIGN_ZH: Record<string, string> = {
+  assign_gas: "维持采气", assign_mineral: "维持采矿", assign_idle: "维持空闲",
+};
+
 export function toMarkers(frame: ProjectionFrame): EventMarker[] {
-  return frame.events.map((e) => ({
-    t: e.t,
-    kind: e.kind,
-    text: [KIND_ZH[e.kind], e.stable_id ?? "", e.reason ?? ""].filter((s) => s !== "").join(" "),
-  }));
+  return frame.events.map((e) => {
+    if (isAssignId(e.stable_id)) {
+      return {
+        t: e.t, kind: "assign" as const,
+        text: ASSIGN_ZH[e.stable_id ?? ""] ?? e.stable_id ?? "assign",
+      };
+    }
+    return {
+      t: e.t,
+      kind: e.kind,
+      text: [KIND_ZH[e.kind], e.stable_id ?? "", e.reason ?? ""].filter((s) => s !== "").join(" "),
+    };
+  });
 }
 
 /** mm:ss（游戏时间，不是墙钟） */

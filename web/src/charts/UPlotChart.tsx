@@ -37,15 +37,21 @@ export function UPlotChart(props: {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    // 宽度取**内容盒**：clientWidth 含 padding，uPlot 按它画会溢出内容区 8px，
+    // 表现为图表框底下多一条横向滚动条（2026-08-22 用户实测报的 bug）
+    const contentWidth = (el: HTMLElement): number => {
+      const cs = getComputedStyle(el);
+      return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    };
     const u = new uPlot(
-      { ...props.options, width: Math.max(160, host.clientWidth), height: props.height },
+      { ...props.options, width: Math.max(160, contentWidth(host)), height: props.height },
       dataRef.current,
       host,
     );
     plotRef.current = u;
 
     const ro = new ResizeObserver(() => {
-      const w = host.clientWidth;
+      const w = contentWidth(host);
       if (w > 0) u.setSize({ width: w, height: props.height });
     });
     ro.observe(host);
@@ -96,5 +102,8 @@ export function UPlotChart(props: {
     };
   }, [props.onCursor, props.onPick]);
 
-  return <div ref={hostRef} className={props.className} />;
+  // 双主题轮：图表默认坐在「凹陷面板」上 —— 与卡片面板拉开底色层次
+  // （用户反馈：框里内容纯白缺区分，投影曲线等要有底色）
+  return <div ref={hostRef}
+    className={"overflow-hidden rounded-md border border-l1 bg-inset px-1 " + (props.className ?? "")} />;
 }

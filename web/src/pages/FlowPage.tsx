@@ -13,7 +13,7 @@
  * live 下这页只读（R5）；节点拖动是图内坐标（不是面板 dock，U9 界线）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { branchExit, matchExitBranch, renderBranches, renderValue, storageKey } from "../graph/ast";
+import { branchExit, matchExitBranch, renderBranches, renderValue, storageKey, vocabOf } from "../graph/ast";
 import { PanZoom, type SvgViewport } from "../graph/PanZoom";
 import {
   BRANCH_ROW_H, GAP_X, HEADER_H, LANE_H, NODE_PAD_Y, NODE_W,
@@ -103,6 +103,15 @@ export function FlowPage() {
     return <Empty text="等待 static/strategy（该帧源没有策略图）" />;
   }
 
+  // I2 可读名：step / reason / 组的中文都来自后端（static/strategy），没有就退回 identifier
+  const stepMeta = new Map(
+    (graph.steps as { step_id: string; display_name_zh?: string; description_zh?: string }[])
+      .map((s) => [s.step_id, s]));
+  const stepZh = (id: string): string => stepMeta.get(id)?.display_name_zh || id;
+  const reasonZh = (r: string | null): string => (r == null ? "—" : graph.reasons?.[r] ?? r);
+  const groupZh = (gid: string): string => graph.group_names?.[gid] ?? gid;
+  const vocab = vocabOf(schema);
+
   const active = state?.active_step ?? null;
   const selected = picked ?? active;
   const lastT = state?.transitions.at(-1) ?? null;
@@ -143,12 +152,18 @@ export function FlowPage() {
   return (
     <div className={PAGE_SCROLL + " space-y-3"}>
       <Card
-        title={`策略图 · ${graph.id} v${graph.version}`}
+        title={`策略图 · ${graph.display_name_zh || graph.id} v${graph.version}`}
+        help={
+          (graph.description_zh ? graph.description_zh + "\n\n" : "")
+          + "卡片 = 一步（头部是中文名）；行 = 分支（左侧条件、右侧去向）；"
+          + "实心圆 = 出口（转场），方块 = 终局（结束整个策略）。"
+          + "点行看全文，点选节点，拖动挪位，双击居中。"
+        }
         right={
           <span className="flex items-center gap-3 text-note text-faint">
             {strategies.length > 1 && (
               <select
-                className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5"
+                className="rounded border border-l2 bg-panel px-1 py-0.5"
                 value={instIdx}
                 onChange={(e) => setInstIdx(Number(e.target.value))}
               >{strategies.map((s, i) => (
@@ -158,9 +173,9 @@ export function FlowPage() {
             {state
               ? `转移 ${state.transition_count}/${state.transition_limit}`
               : "无运行状态"}
-            {state?.done && <span className="text-emerald-400">已结束</span>}
+            {state?.done && <span className="text-[color:var(--ok-fg)]">已结束</span>}
             <button
-              className="rounded border border-neutral-700 px-2 py-0.5"
+              className="btn btn-ghost"
               title="清掉手动拖动的节点位置，回到自动布局"
               onClick={() => {
                 setOverrides(new Map());
@@ -205,9 +220,9 @@ export function FlowPage() {
                 <path d={d} fill="none" stroke={color}
                       strokeWidth={isLast ? 2 : 1.2}
                       strokeDasharray={isBack ? "4 3" : undefined} />
-                <title>{`${e.from} → ${e.to}｜${e.kind}/${e.reason}`}</title>
+                <title>{`${stepZh(e.from)}（${e.from}）→ ${stepZh(e.to)}（${e.to}）｜${e.kind}/${e.reason}`}</title>
                 <text x={(sx + tx) / 2} y={isBack ? Math.max(from.y + from.h, to.y + to.h) + LANE_H : (sy + ty) / 2 - 4}
-                      textAnchor="middle" fontSize={10} fill={color}>{e.reason}</text>
+                      textAnchor="middle" fontSize={10} fill={color}>{reasonZh(e.reason)}</text>
               </g>
             );
           })}
@@ -226,13 +241,15 @@ export function FlowPage() {
             const outcomeOf = (idx: number): { text: string; tone: "step" | "end" | "stay" } => {
               const ex = branchExit(step?.branches?.[idx]);
               if (ex.kind === "end") {
-                return { text: "✕ 结束策略 · " + ex.reason, tone: "end" };
+                return { text: "✕ 结束策略 · " + reasonZh(ex.reason), tone: "end" };
               }
               if (ex.kind === "step") {
                 const e = (graph.edges as { from: string; to: string; kind: string; reason: string }[])
                   .find((ed) => ed.from === n.id && matchExitBranch(step?.branches ?? [], ed) === idx);
                 // 声明了 exit_step 却找不到边 = 数据异常，如实说，不假装"留在本步"
-                return e ? { text: e.to, tone: "step" } : { text: "（缺边）" + ex.reason, tone: "step" };
+                return e
+                  ? { text: stepZh(e.to) + "（" + reasonZh(e.reason) + "）", tone: "step" }
+                  : { text: "（缺边）" + ex.reason, tone: "step" };
               }
               return { text: "留在本步", tone: "stay" };
             };
@@ -240,8 +257,7 @@ export function FlowPage() {
               <g key={n.id}
                  transform={`translate(${n.x},${n.y})`}
                  className="cursor-pointer"
-                 onPointerDown={(e) => {
-                   e.stopPropagation();     // 不触发画布平移
+                 onPointerDown={(e) => {                   e.stopPropagation();     // 不触发画布平移
                    const host = (e.currentTarget.closest("svg")?.parentElement)?.getBoundingClientRect();
                    nodeDrag.current = {
                      id: n.id,
@@ -282,13 +298,19 @@ export function FlowPage() {
                  }}
                  onDoubleClick={() => setCenterReq({ x: n.x + NODE_W / 2, y: n.y + n.h / 2 })}
               >
+                <title>
+                  {`${stepZh(n.id)}（${n.id}）`
+                   + (stepMeta.get(n.id)?.description_zh
+                      ? "｜" + stepMeta.get(n.id)!.description_zh : "")}
+                </title>
                 <rect width={NODE_W} height={n.h} rx={6}
                       fill={isActive ? "rgba(52,211,153,0.14)" : "rgba(38,38,38,0.6)"}
                       stroke={n.id === selected ? "#e5e7eb" : isActive ? "#34d399" : "#525252"}
                       strokeWidth={isActive ? 2 : 1} />
-                {/* 头部两行：左=step_id/起点；右=活跃点+耗时+进入次数（互不重叠） */}
+                {/* 头部两行：左=step 中文名（identifier 进 tooltip）；右=活跃点+耗时+进入次数（互不重叠） */}
                 <text x={8} y={16} fontSize={12} fontWeight={600}
-                      fill={isActive ? "#d1fae5" : "#d4d4d4"}>{n.id}</text>
+                      fill={isActive ? "#d1fae5" : "#d4d4d4"}
+                      data-sid={n.id}>{stepZh(n.id)}</text>
                 {n.id === graph.initial_step && (
                   <text x={8} y={27} fontSize={9} fill="#737373">△ 起点</text>
                 )}
@@ -344,9 +366,9 @@ export function FlowPage() {
                         <div
                              title={`${b.when ?? "else（无条件）"} → ${oc.text}`}
                              className={"flex h-full items-center gap-1 "
-                               + (hit ? "text-emerald-200" : "")}>
+                               + (hit ? "text-[color:var(--ok-fg)]" : "")}>
                           <span className={"min-w-0 flex-1 break-all "
-                            + (hit ? "text-emerald-200" : "text-sky-300")}
+                            + (hit ? "text-[color:var(--ok-fg)]" : "text-blue-fg")}
                                 style={{ display: "-webkit-box", WebkitLineClamp: 2,
                                          WebkitBoxOrient: "vertical", overflow: "hidden",
                                          fontSize: "10px", lineHeight: "12px" }}>
@@ -354,12 +376,12 @@ export function FlowPage() {
                           </span>
                           <span className={"shrink-0 whitespace-nowrap "
                             + (hit
-                              ? "text-amber-300"
+                              ? "text-[color:var(--warn-fg)]"
                               : oc.tone === "end"
-                                ? "text-red-300"
+                                ? "text-[color:var(--err-fg)]"
                                 : oc.tone === "stay"
-                                  ? "text-neutral-500"
-                                  : "text-neutral-400")}
+                                  ? "text-faint"
+                                  : "text-dim")}
                                 style={{ fontSize: "10px", lineHeight: "12px" }}>
                             {oc.tone === "end" ? oc.text : "→ " + oc.text}
                           </span>
@@ -373,9 +395,9 @@ export function FlowPage() {
           })}
         </PanZoom>
         <div className="mt-1 flex flex-wrap gap-3 text-note text-ghost">
-          <span><i className="mr-1 inline-block h-0.5 w-4 bg-neutral-600 align-middle" />未走过</span>
-          <span><i className="mr-1 inline-block h-0.5 w-4 bg-emerald-400 align-middle" />走过</span>
-          <span><i className="mr-1 inline-block h-0.5 w-4 bg-amber-400 align-middle" />最近一次</span>
+          <span><i className="mr-1 inline-block h-0.5 w-4 bg-raised align-middle" />未走过</span>
+          <span><i className="mr-1 inline-block h-0.5 w-4 bg-[color:var(--ok-fg)] align-middle" />走过</span>
+          <span><i className="mr-1 inline-block h-0.5 w-4 bg-[color:var(--warn-fg)] align-middle" />最近一次</span>
           <span>虚线 = 回边（成环）· 空心圆 = 入口 · 实心圆 = 出口 · 点行看全文 · 点选节点 · 拖动挪位 · 双击居中</span>
         </div>
       </Card>
@@ -388,26 +410,26 @@ export function FlowPage() {
         const b = rows.find((r) => r.index === branchPick.idx);
         if (!b) return null;
         return (
-          <Card title={`分支详情 · ${branchPick.step} #${b.index}${b.id ? "（" + b.id + "）" : ""}`}
+          <Card title={`分支详情 · ${stepZh(branchPick.step)}（${branchPick.step}）#${b.index}${b.id ? "（" + b.id + "）" : ""}`}
                 right={
-                  <button className="rounded border border-neutral-700 px-2 py-0.5 text-note"
+                  <button className="btn btn-ghost"
                           onClick={() => setBranchPick(null)}>关闭</button>
                 }>
             <div className="space-y-1">
               <div>
                 <span className="mr-2 text-faint">条件</span>
-                <code className="text-sky-300 break-all">{b.when ?? "else（无条件，只能放最后）"}</code>
+                <code className="text-blue-fg break-all">{b.when ?? "else（无条件，只能放最后）"}</code>
               </div>
               <div>
                 <span className="mr-2 text-faint">动作</span>
                 {b.actions.length === 0
                   ? <span className="text-faint">（无 —— 只等待条件）</span>
                   : (
-                    <ul className="ml-16 space-y-0.5 text-neutral-300">
+                    <ul className="ml-16 space-y-0.5 text-dim">
                       {b.actions.map((a, i) => (
                         <li key={i} className={a.forbidden ? "text-ghost" : ""}>
                           → {a.text}
-                          {a.forbidden && <span className="ml-1 text-note text-amber-600">（不可用：{a.forbidden}）</span>}
+                          {a.forbidden && <span className="ml-1 text-note text-[color:var(--warn-fg)]">（不可用：{a.forbidden}）</span>}
                         </li>
                       ))}
                     </ul>
@@ -419,21 +441,23 @@ export function FlowPage() {
       })()}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Card title="转移历史">
+        <Card title="转移历史"
+              help="策略实际走过的步与切换原因；最新一次高亮。名称后的括号是 reason 标识符。">
           {state && state.transitions.length > 0 ? (
             <ol className="space-y-0.5">
               {[...state.transitions].reverse().map((t, i) => (
-                <li key={i} className={i === 0 ? "text-amber-300" : "text-dim"}>
-                  {fmtTime(t.at)} {t.from} → {t.to}
-                  <span className="ml-1 text-note text-ghost">{t.kind}/{t.reason}</span>
+                <li key={i} className={i === 0 ? "text-[color:var(--warn-fg)]" : "text-dim"}
+                    title={`${t.from} → ${t.to}｜${t.kind}/${t.reason}`}>
+                  {fmtTime(t.at)} {stepZh(t.from)} → {stepZh(t.to)}
+                  <span className="ml-1 text-note text-ghost">{reasonZh(t.reason)}</span>
                 </li>
               ))}
             </ol>
           ) : <Empty text="还没有转移" />}
           {state && (
             <div className="mt-2">
-              <div className="h-1 rounded bg-neutral-800">
-                <div className="h-1 rounded bg-sky-500"
+              <div className="h-1 rounded bg-raised">
+                <div className="h-1 rounded bg-[color:var(--accent-blue-fg)]"
                      style={{ width: Math.min(100, (state.transition_count / Math.max(1, state.transition_limit)) * 100) + "%" }} />
               </div>
               <div className="mt-0.5 text-note text-ghost">
@@ -442,36 +466,54 @@ export function FlowPage() {
             </div>
           )}
           {state?.exit_record && (
-            <div className="mt-2 rounded border border-emerald-800 bg-emerald-950/30 p-2">
-              策略已结束：{state.exit_record.kind} / {state.exit_record.reason}
+            <div className="mt-2 rounded border border-[color:var(--ok-fg)] bg-[color:var(--ok-bg)] p-2">
+              策略已结束：{state.exit_record.kind} / {reasonZh(String(state.exit_record.reason ?? ""))}
             </div>
           )}
         </Card>
 
-        <Card title="绑定与参数">
+        <Card title="绑定与参数"
+              help={"槽位 = 策略里的角色名，绑定到装配的组（如 main → 步兵组 G_INF）；"
+                    + "每个组列兵种的 当前/目标 人数与补员状态；参数是本局生效值（声明说明悬停可见）。"}>
           <div className="space-y-1">
             <div className="text-dim">
-              槽位 {graph.group_slots.map((s: string) => `${s}→${graph.bindings[s] ?? "?"}`).join("、")}
+              槽位 {graph.group_slots.map(
+                (s: string) => {
+                  const gid = graph.bindings[s] ?? "?";
+                  return `${s} → ${groupZh(gid)}${gid !== groupZh(gid) ? "（" + gid + "）" : ""}`;
+                }).join("、")}
             </div>
             {flow?.groups.map((g) => (
-              <div key={g.group_id} className="text-neutral-300">
-                {g.group_id}
+              <div key={g.group_id} className="text-dim" title={`group_id: ${g.group_id}`}>
+                {groupZh(g.group_id)}
                 {Object.entries(g.composition).map(([id, c]) => (
-                  <span key={id} className="ml-2">{zhOf(id)} {c.current}/{c.target}</span>
+                  <span key={id} className="ml-2"
+                        title={`当前人数 / 装配目标（${id}）`}>
+                    {zhOf(id)} {c.current}/{c.target}
+                  </span>
                 ))}
-                <span className="ml-2 rounded bg-neutral-800 px-1.5 text-note">{g.refill_state}</span>
+                <span className="ml-2 rounded bg-raised px-1.5 text-note"
+                      title="补员状态：满足 / 滞回区 / 补兵中 / 已截断（后端按滞回语义判定）">
+                  {g.refill_state}
+                </span>
               </div>
             ))}
-            <div className="border-t border-neutral-800 pt-1 text-dim">
-              {Object.entries(state?.params ?? {}).map(([k, v]) => (
-                <span key={k} className="mr-3">{k}={JSON.stringify(v)}</span>
-              ))}
+            <div className="border-t border-l1 pt-1 text-dim">
+              {Object.entries(state?.params ?? {}).map(([k, v]) => {
+                const desc = typeof (graph.params[k]?.["description_zh"]) === "string"
+                  ? String(graph.params[k]["description_zh"]) : "";
+                return (
+                  <span key={k} className="mr-3" title={desc || undefined}>
+                    {k}={JSON.stringify(v)}
+                  </span>
+                );
+              })}
             </div>
             {Object.keys(graph.definitions).length > 0 && (
               <div className="text-note text-faint">
                 别名：{Object.entries(graph.definitions).map(([k, v]) => (
                   <div key={k} className="ml-2">
-                    <span className="text-dim">{k}</span> = <code>{renderValue(v)}</code>
+                    <span className="text-dim">{k}</span> = <code>{renderValue(v, 0, vocab)}</code>
                   </div>
                 ))}
               </div>

@@ -6,11 +6,11 @@ group_hp_ratio/arrived/region_center）+ 动作去重 + exit_strategy。
 from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
-from game.catalog import load_terran
+from game.catalog import load_all
 from game import GameState, Grid, Owner, Point2, Unit
 from tactical_map import BigRegion, RegionLayer
 
-CAT = load_terran()
+CAT = load_all()
 
 BIO_STRATEGY = """
 id: bio_push_test

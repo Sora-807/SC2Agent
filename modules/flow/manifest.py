@@ -34,19 +34,25 @@ class StrategyManifest:
     id: str
     version: int
     group_slots: list[str]
-    params: dict  # name -> {type, default}（键白名单见 PARAM_KEYS）
+    params: dict  # name -> {type, default, description_zh?}（键白名单见 PARAM_KEYS）
     variables: dict
     initial_step: str
-    steps: dict[str, dict]  # step_id -> {branches: [...], locals?: [...]}
+    steps: dict[str, dict]  # step_id -> {branches, display_name_zh?, description_zh?}
     edges: list[dict]
     loop_limits: dict
     definitions: dict = field(default_factory=dict)  # 别名节（T2b）：name -> 值树；when/params 用 {ref: name}
+    # I2：人类可读名与意图描述 —— 策略级（"" = 没写，UI 退回 identifier）
+    display_name_zh: str = ""
+    description_zh: str = ""
+    # I2：reason 标识符 → 中文（edges 的切换原因 / exit 的终局原因共用一张表）
+    reasons: dict = field(default_factory=dict)
 
 
 @dataclass
 class GroupSpec:
     group_id: str
     composition: dict  # type -> {min, target, max}
+    display_name_zh: str = ""  # I4：组名中文（如 G_INF → 步兵组）
 
 
 @dataclass
@@ -69,39 +75,39 @@ class FlowAssembly:
 LOOP_LIMIT_KEYS = frozenset({"max_step_transitions"})
 
 # do 操作词表（spec-003 §5 可写操作 + group_action）
+# 二十六轮（T8 落地）：set_local/start_timer/stop_timer 从"未实现"转正 ——
+# 读侧（{local} 节点、timer_elapsed 谓词）同批落地，不再有"写允许读拒绝"的静默无效。
 DO_OPS = frozenset({
     "group_action", "exit_step", "exit_strategy", "set_variable",
+    "set_local", "start_timer", "stop_timer",
 })
 
-# 词表里有、V1 未实现的 do 操作 → 原因（D8：写被允许而读被拒 = 静默无效，两边一起拒）
-UNIMPLEMENTED_DO_OPS: dict[str, str] = {
-    "start_timer": "计时器运行时（deadline 存储）待建 —— 与 timer_elapsed 谓词对称拒绝（T8 一起放回）",
-    "stop_timer": "计时器运行时（deadline 存储）待建 —— 与 timer_elapsed 谓词对称拒绝（T8 一起放回）",
-    # F2：写了没人能读 —— 值树里没有 {local: name} 节点，写进去的 local 无任何读取路径。
-    # 与 timer 同型（写允许 / 读拒绝 = 静默无效），按 D8 一起拒；T8 做 timer 时和 {local} 一并放回。
-    "set_local": "step 内局部变量的**读取**节点（{local: name}）未实现 —— 写了没人能读（T8 一起放回）",
-}
+# 词表里有、仍未实现的 do 操作 → 原因（D8：写被允许而读被拒 = 静默无效，两边一起拒）
+UNIMPLEMENTED_DO_OPS: dict[str, str] = {}
 
 # step 声明里同样"声明了但没有消费方"的键（与 UNIMPLEMENTED_DO_OPS 对称）
-UNIMPLEMENTED_STEP_KEYS: dict[str, str] = {
-    "locals": "step 局部变量未实现（set_local 与 {local: name} 都待建）—— 声明它只会给人错觉（T8 一起放回）",
-}
+UNIMPLEMENTED_STEP_KEYS: dict[str, str] = {}
 
-# params 声明允许的键与类型白名单（live_editable 等无消费方的键先不收）
-PARAM_KEYS = frozenset({"type", "default"})
+# params 声明允许的键与类型白名单（live_editable 等无消费方的键先不收）。
+# description_zh（I4）：参数的一句话说明，UI 的 ? 帮助与 tooltip 读它。
+PARAM_KEYS = frozenset({"type", "default", "description_zh"})
 PARAM_TYPES = frozenset({"int", "float", "point", "bool", "str"})
 
 # step / branch 键白名单（F3）：拼错 branches 会让这个 step 每帧什么都不做（静默死锁）；
 # 拼错 when 会让条件被丢掉、分支变成无条件执行（静默灾难）。两者编译期都要拦。
-STEP_KEYS = frozenset({"step_id", "branches"})
+# display_name_zh/description_zh（I2）：step 的人类可读名与意图描述，随 static/strategy 下发。
+# locals（二十六轮 T8）：step 局部变量名声明（set_local 写 / {local} 读，换 step 清空）。
+STEP_KEYS = frozenset({"step_id", "branches", "display_name_zh", "description_zh", "locals"})
 # branch_id 是可选的分支稳定标识（B1 观测/读模型用；不写就按 index 定位）
 BRANCH_KEYS = frozenset({"when", "do", "branch_id"})
 
 # strategy / assembly 顶层键白名单：删掉一个字段（如 on_exit）后，旧文件继续写它必须**报错**，
 # 不能静默忽略 —— 否则"删字段"就变成了"悄悄失效"（D5 的反面）。
+# display_name_zh/description_zh/reasons（I2）：可读名、意图描述、reason 中文创。
 STRATEGY_KEYS = frozenset({
     "id", "version", "group_slots", "params", "variables", "definitions",
     "initial_step", "steps", "edges", "loop_limits",
+    "display_name_zh", "description_zh", "reasons",
 })
 ASSEMBLY_KEYS = frozenset({"id", "groups", "strategy_instances", "production_sequence"})
 
@@ -141,6 +147,9 @@ def parse_strategy(yaml_str: str) -> StrategyManifest:
         initial_step=d["initial_step"], steps=steps, edges=d.get("edges", []),
         loop_limits=d.get("loop_limits", {}),
         definitions=d.get("definitions", {}) or {},
+        display_name_zh=d.get("display_name_zh", "") or "",
+        description_zh=d.get("description_zh", "") or "",
+        reasons=d.get("reasons", {}) or {},
     )
     validate_strategy(m)
     return m
@@ -149,7 +158,8 @@ def parse_strategy(yaml_str: str) -> StrategyManifest:
 def parse_assembly(yaml_str: str) -> FlowAssembly:
     d = yaml.safe_load(yaml_str)
     _check_top_level_keys(d, ASSEMBLY_KEYS, "assembly")
-    groups = [GroupSpec(g["group_id"], g["composition"]) for g in d.get("groups", [])]
+    groups = [GroupSpec(g["group_id"], g["composition"], g.get("display_name_zh", "") or "")
+              for g in d.get("groups", [])]
     insts = [
         StrategyInstance(si["instance_id"], si["strategy_ref"], si["bindings"], si.get("params", {}))
         for si in d.get("strategy_instances", [])
@@ -173,15 +183,17 @@ def _check_identifier(value, where: str, field: str, err) -> bool:
     return False
 
 
-def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: tuple = ()) -> None:
-    """递归校验值树（when 条件 / 动作参数 / definitions / set_variable 的 value 共用一套）。
+def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: tuple = (),
+                         locals_names: frozenset | None = None) -> None:
+    """递归校验值树（when 条件 / 动作参数 / definitions / set_* 的 value 共用一套）。
 
     查：节点词表、谓词命名参数（缺失/多余/改用 args）、运算符 arity、param/var/ref 引用存在性、
-    definitions 自引用与环。
+    definitions 自引用与环。`locals_names`：当前 step 声明的局部变量名（None = definitions
+    上下文，{local} 不允许 —— 别名是跨 step 替换，捕获局部变量会变成暗渠）。
     """
     if isinstance(node, (list, tuple)):
         for item in node:
-            _validate_value_node(item, where, m, err, seen_refs)
+            _validate_value_node(item, where, m, err, seen_refs, locals_names)
         return
     if not isinstance(node, dict):
         return  # 字面量（数字/字符串/布尔）
@@ -194,6 +206,14 @@ def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: 
     if "var" in node:
         if node["var"] not in m.variables:
             err(f"{where}: 引用未声明的变量 {node['var']!r}（已声明：{sorted(m.variables)}）")
+        return
+    if "local" in node:
+        name = node["local"]
+        if locals_names is None:
+            err(f"{where}: {{local: {name!r}}} 不能出现在 definitions —— 局部变量是 step 作用域"
+                "（别名跨 step 替换，捕获局部会变暗渠）")
+        elif name not in locals_names:
+            err(f"{where}: 引用未声明的局部变量 {name!r}（本 step 的 locals：{sorted(locals_names)}）")
         return
     if "ref" in node:
         name = node["ref"]
@@ -231,7 +251,7 @@ def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: 
         if extra:
             err(f"{where}: 运算符 {op!r} 只接受 args，多了 {extra}")
         for a in args:
-            _validate_value_node(a, where, m, err, seen_refs)
+            _validate_value_node(a, where, m, err, seen_refs, locals_names)
         return
     if op in PREDICATE_SIGNATURES:
         sig = PREDICATE_SIGNATURES[op]
@@ -242,7 +262,7 @@ def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: 
             err(f"{where}: {op!r} 改用命名参数（{shown}），不再接受 args"
                 "（T2/D2：位置参数写错顺序编译期抓不到）")
             for a in node.get("args") or []:
-                _validate_value_node(a, where, m, err, seen_refs)
+                _validate_value_node(a, where, m, err, seen_refs, locals_names)
             return
         missing = [n for n, req in sig if req and n not in node]
         if missing:
@@ -252,7 +272,7 @@ def _validate_value_node(node, where: str, m: StrategyManifest, err, seen_refs: 
             err(f"{where}: {op!r} 不认识参数 {unknown}（签名：{shown}）")
         for n in names:
             if n in node:
-                _validate_value_node(node[n], f"{where}/{op}.{n}", m, err, seen_refs)
+                _validate_value_node(node[n], f"{where}/{op}.{n}", m, err, seen_refs, locals_names)
         return
     err(f"{where}: 未知谓词 {op!r}（词表：{sorted(PREDICATE_SIGNATURES)}）")
 
@@ -442,6 +462,20 @@ def validate_strategy(m: StrategyManifest) -> None:
     if m.initial_step not in m.steps:
         err(f"initial_step {m.initial_step!r} 不在 steps")
 
+    # I2 可读性字段：必须是字符串（YAML 可能把裸词解析成别的类型；"" = 没写，合法）
+    for field_name in ("display_name_zh", "description_zh"):
+        val = getattr(m, field_name)
+        if not isinstance(val, str):
+            err(f"{field_name} 必须是字符串，当前 {val!r}（{type(val).__name__}）")
+    for rname, rzh in (m.reasons or {}).items():
+        if not isinstance(rname, str) or not isinstance(rzh, str):
+            err(f"reasons.{rname!r}: 键与值都必须是字符串（reason 标识符 → 中文），当前 {rzh!r}")
+
+    for sid, step in m.steps.items():
+        for field_name in ("display_name_zh", "description_zh"):
+            if field_name in step and not isinstance(step[field_name], str):
+                err(f"step {sid}: {field_name} 必须是字符串，当前 {step[field_name]!r}")
+
     for sid in m.steps:
         _check_identifier(sid, "steps", "step_id", err)
 
@@ -514,6 +548,15 @@ def validate_strategy(m: StrategyManifest) -> None:
         if unknown_step_keys:
             err(f"step {sid}: 未知键 {unknown_step_keys}（只允许 {sorted(STEP_KEYS)}；"
                 "拼错 branches 会让这个 step 每帧什么都不做）")
+        # locals 声明（二十六轮 T8）：名字必须是字符串列表 —— set_local/{local} 都对着它查
+        step_locals_raw = step.get("locals")
+        if step_locals_raw is not None and (
+                not isinstance(step_locals_raw, list)
+                or not all(isinstance(n, str) for n in step_locals_raw)):
+            err(f"step {sid}: locals 必须是字符串列表（当前 {step_locals_raw!r}）")
+            step_locals = frozenset()  # 形态非法：按空集继续（上面已报错，不让下游再炸）
+        else:
+            step_locals = frozenset(step_locals_raw or ())
         branches = step.get("branches", [])
         for i, b in enumerate(branches):
             where = f"{sid}/branch[{i}]"
@@ -527,7 +570,7 @@ def validate_strategy(m: StrategyManifest) -> None:
             if "when" not in b and i != len(branches) - 1:
                 err(f"{where}: else（无 when）分支必须且只能放在最后（spec-003 §2）")
             if "when" in b:
-                _validate_value_node(b["when"], where, m, err)
+                _validate_value_node(b["when"], where, m, err, locals_names=step_locals)
             exited = False
             for a in b.get("do", []):
                 op = a.get("op")
@@ -576,11 +619,23 @@ def validate_strategy(m: StrategyManifest) -> None:
                                 err(f"{where}: {atom} 缺必需参数 {pname!r}（OP_CATALOG）")
                     # 动作参数值树：此前只查 when，param/var/ref 写错在运行期才炸（T2c #3）
                     for pname, pval in (a.get("params") or {}).items():
-                        _validate_value_node(pval, f"{where}/{atom}.params.{pname}", m, err)
+                        _validate_value_node(pval, f"{where}/{atom}.params.{pname}", m, err,
+                                             locals_names=step_locals)
                 if op == "set_variable":
                     if a.get("name") not in m.variables:
                         err(f"{where}: set_variable 写未声明的变量 {a.get('name')!r}（声明：{sorted(m.variables)}）")
-                    _validate_value_node(a.get("value"), f"{where}/set_variable.value", m, err)
+                    _validate_value_node(a.get("value"), f"{where}/set_variable.value", m, err,
+                                         locals_names=step_locals)
+                if op == "set_local":
+                    # 二十六轮 T8：局部变量必须先在 step 的 locals 里声明（拼错名 = 永远读不到）
+                    if a.get("name") not in step_locals:
+                        err(f"{where}: set_local 写未声明的局部变量 {a.get('name')!r}"
+                            f"（本 step 的 locals：{sorted(step_locals)}）")
+                    _validate_value_node(a.get("value"), f"{where}/set_local.value", m, err,
+                                         locals_names=step_locals)
+                if op in ("start_timer", "stop_timer"):
+                    # 计时器名是动态创建的（无声明表），只查字符串（YAML bool 陷阱同 H3）
+                    _check_identifier(a.get("name"), where, f"{op}.name", err)
 
 
     for lk, lv in (m.loop_limits or {}).items():

@@ -1,0 +1,170 @@
+{
+  "neutral/mineralfield": {
+    "burnysc2_name": "MINERALFIELD",
+    "display_name_zh": "矿脉",
+    "short_name_zh": "矿",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "MINERALFIELD450",
+      "MINERALFIELD500",
+      "MINERALFIELD750",
+      "MINERALFIELD1000",
+      "MINERALFIELD1500",
+      "MINERALFIELD2000",
+      "BATTLESTATIONMINERALFIELD",
+      "BATTLESTATIONMINERALFIELD750",
+      "PURIFIERMINERALFIELD",
+      "PURIFIERMINERALFIELD750",
+      "PURIFIERMINERALFIELD1000",
+      "PURIFIERMINERALFIELD1500"
+    ]
+  },
+  "neutral/richmineralfield": {
+    "burnysc2_name": "RICHMINERALFIELD",
+    "display_name_zh": "富矿脉",
+    "short_name_zh": "富矿",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "RICHMINERALFIELD750",
+      "RICHMINERALFIELD1000",
+      "RICHMINERALFIELD1500"
+    ]
+  },
+  "neutral/vespenegeyser": {
+    "burnysc2_name": "VESPENEGEYSER",
+    "display_name_zh": "气井",
+    "short_name_zh": "气井",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "RICHVESPENEGEYSER",
+      "SPACEPLATFORMGEYSER"
+    ]
+  },
+  "neutral/xelnagatower": {
+    "burnysc2_name": "XELNAGATOWER",
+    "display_name_zh": "瞭望塔",
+    "short_name_zh": "塔",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "XELNAGATOWERRANGEINDICATORDUMMY"
+    ]
+  },
+  "neutral/destructiblerocks": {
+    "burnysc2_name": "DESTRUCTIBLEROCKS6X6",
+    "display_name_zh": "可破坏岩石",
+    "short_name_zh": "岩石",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "DESTRUCTIBLEROCKS2X2",
+      "DESTRUCTIBLEROCKS4X4",
+      "RAMP6X6"
+    ]
+  },
+  "neutral/destructible": {
+    "burnysc2_name": "DESTRUCTIBLEDEBRIS6X6",
+    "display_name_zh": "障碍物",
+    "short_name_zh": "障碍",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "neutral/collapsibletower": {
+    "burnysc2_name": "COLLAPSIBLEROCKTOWER",
+    "display_name_zh": "可崩塌塔",
+    "short_name_zh": "崩塔",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": [],
+    "variants": [
+      "COLLAPSIBLETERRANTOWER",
+      "COLLAPSIBLEPURIFIERTOWER",
+      "COLLAPSIBLEROCKTOWERDEBRIS",
+      "COLLAPSIBLEROCKTOWERDIAGONAL",
+      "COLLAPSIBLEROCKTOWERPUSHUNIT",
+      "COLLAPSIBLEROCKTOWERRAMPLEFT",
+      "COLLAPSIBLEROCKTOWERRAMPRIGHT",
+      "COLLAPSIBLETERRANTOWERDEBRIS",
+      "COLLAPSIBLETERRANTOWERDIAGONAL",
+      "COLLAPSIBLETERRANTOWERPUSHUNIT",
+      "COLLAPSIBLETERRANTOWERRAMPLEFT",
+      "COLLAPSIBLETERRANTOWERRAMPRIGHT",
+      "COLLAPSIBLEPURIFIERTOWERDEBRIS",
+      "COLLAPSIBLEPURIFIERTOWERDIAGONAL",
+      "COLLAPSIBLEPURIFIERTOWERPUSHUNIT"
+    ]
+  },
+  "neutral/debris": {
+    "burnysc2_name": "DEBRIS2X2NONCONJOINED",
+    "display_name_zh": "残骸",
+    "short_name_zh": "残骸",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  }
+}

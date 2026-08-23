@@ -184,18 +184,20 @@ def test_double_projection_works_on_live_via_subprocess(client: TestClient):
         time.sleep(0.2)
     else:
         raise AssertionError("队列命令没有在帧边界生效")
-    p = client.post("/api/proposals", json={
+    # 审批停用后端点创建即自动应用 —— 预览要测「提案前 vs 提案后」的两条曲线，
+    # 直接走 store 建待审批（无副作用），预览后再走 accept 端点验子进程应用路径。
+    body = {
         "kind": "production_queue", "title_zh": "先造补给站",
         "rationale_zh": "重工厂缺前置会一直卡住，把补给站提前",
         "target": {"queue": "main"},
         "hunks": [{"id": "h1", "kind": "reorder", "text_zh": "换序",
-                   "payload": {"order": [1, 0]}}]}).json()
-    assert p["validation"]["ok"] is True
-    pair = client.get(f"/api/proposals/{p['id']}/preview").json()
+                   "payload": {"order": [1, 0]}}]}
+    pid = client.app.state.proposals.create(body).id
+    pair = client.get(f"/api/proposals/{pid}/preview").json()
     assert pair["proposed"]["points"][-1]["supply_cap"] > pair["current"]["points"][-1]["supply_cap"]
 
     # 接受也走子进程（apply 通过队列命令）
-    r = client.post(f"/api/proposals/{p['id']}/accept")
+    r = client.post(f"/api/proposals/{pid}/accept")
     assert r.status_code == 200 and r.json()["status"] == "已接受"
 
 
@@ -271,3 +273,54 @@ def test_sc2_driver_needs_real_game(client: TestClient):
         assert r.status_code in (200, 500)
     finally:
         client.post("/api/session/stop")
+
+def test_live_session_records_to_disk(tmp_path):
+    """二十六轮：对局记录落盘 —— live 帧流同步写 JSONL，结束后可当复盘源。
+
+    复盘此前只有手搓夹具（用户反馈「对局记录怎么保存？是不是没保存？」—— 对，
+    之前只在内存 FRAME_BUFFER 里，会话一停就没了）。
+    """
+    c = TestClient(create_app(tmp_path / "frames", tmp_path / "p.jsonl",
+                              recordings_dir=tmp_path / "recordings"))
+    try:
+        assert c.post("/api/session/start", params={"driver": "sim"}).status_code == 200
+        _wait_seq(c, 4)
+        rows = c.get("/api/recordings").json()
+        assert len(rows) == 1, rows
+        rid = rows[0]["id"]
+        assert rid.startswith("rec-") and rows[0]["driver"] == "sim"
+        assert rows[0]["state"] == "recording"          # 录制中也在清单里（扫文件补数）
+        assert rows[0]["envelopes"] > 0 and rows[0]["to"] > 0
+        # 帧流端点：与夹具同格式（JsonlFrameSource 直接吃）
+        text = c.get(f"/api/recordings/{rid}/jsonl").text
+        assert "static/map" in text and "frame/world" in text
+        assert json.loads(text.splitlines()[0])["topic"].startswith("static/")
+    finally:
+        c.post("/api/session/stop")
+        if c.app.state.session is not None:
+            c.app.state.session = None
+    # 停止收尾：meta 标终态，带 envelopes/to_time
+    rows = c.get("/api/recordings").json()
+    assert rows[0]["state"] == "已结束" and rows[0]["envelopes"] > 0
+    # 路径安全：id 只认 [\w.-]+，穿越（经路由归一化）与不存在都是 4xx 不是 500
+    assert c.get("/api/recordings/../../etc/passwd/jsonl").status_code in (400, 404)
+    assert c.get("/api/recordings/nope/jsonl").status_code == 404
+
+
+def test_recordings_endpoint_empty_without_dir(tmp_path):
+    """没配 recordings_dir（测试默认）= 不录也列不出 —— 不炸。"""
+    c = TestClient(create_app(tmp_path / "frames", tmp_path / "p.jsonl"))
+    assert c.get("/api/recordings").json() == []
+
+
+def test_races_from_frames_reads_session_then_world():
+    """复盘清单的「人族 vs 神族」：优先会话帧，退 world 敌方单位前缀，都没有 = None。"""
+    from api.live import _races_from_frames
+
+    sess = {"topic": "frame/session",
+            "payload": {"my_race": "terran", "enemy_race": "zerg"}}
+    assert _races_from_frames([sess]) == ("人族", "虫族")
+    world = {"topic": "frame/world",
+             "payload": {"units": [{"stable_id": "protoss/zealot", "owner": "enemy"}]}}
+    assert _races_from_frames([world]) == ("人族", "神族")
+    assert _races_from_frames([]) == (None, None)

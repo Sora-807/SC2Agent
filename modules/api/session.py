@@ -63,14 +63,21 @@ class StaleObservation(Exception):
 DEFAULT_STRATEGY = """
 id: sandbox_hold
 version: 1
+display_name_zh: 集结推进
+description_zh: 凑够 min_units 个单位后整队前往目标点，抵达即结束。
 group_slots: [main]
 params:
-  min_units: {type: int, default: 6}
-  target: {type: point, default: [60.5, 60.5]}
+  min_units: {type: int, default: 6, description_zh: 出发所需的单位数}
+  target: {type: point, default: [60.5, 60.5], description_zh: 推进目标点}
 variables: {}
+reasons:
+  FORMED: 集结完成
+  ARRIVED: 已抵达目标
 initial_step: gather
 steps:
   - step_id: gather
+    display_name_zh: 集结
+    description_zh: 等待部队成型（组内数量 ≥ min_units）
     branches:
       - branch_id: b_ready
         when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
@@ -78,6 +85,8 @@ steps:
       - branch_id: b_wait
         do: []
   - step_id: push
+    display_name_zh: 推进
+    description_zh: 全组攻击移动到目标点
     branches:
       - branch_id: b_arrived
         when: {op: arrived, group: main, target: {param: target}, radius: 4.0}
@@ -95,6 +104,7 @@ DEFAULT_ASSEMBLY = """
 id: sandbox_assembly
 groups:
   - group_id: G_INF
+    display_name_zh: 步兵组
     composition:
       terran/marine: {min: 4, target: 10, max: 12}
 strategy_instances:
@@ -127,7 +137,8 @@ class OfflineSession:
 
     def __init__(self, catalog: Catalog, *, workers: int = 12, minerals: float = 400.0,
                  label: str = "离线沙盒（真引擎 + 假世界）",
-                 map_plan: str | None = None) -> None:
+                 map_plan: str | None = None,
+                 strategy_path: str | None = None) -> None:
         from worldsim import WorldSim
 
         self.catalog = catalog
@@ -143,14 +154,26 @@ class OfflineSession:
         tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
         _, layout = sorted(tpl.spawns.items())[0]
         self.layer = instantiate_spawn(tpl, layout, self.world.cc_pos)
+        # I8：预设固定建造点名进 layer —— placement 的 exact.mark 可直接引用
+        # （蓝方主矿气井1…）。名字是全图命名空间，与装载哪份规划无关。
+        from tactical_map.reserved import reserved_marks
+        self.layer.pos_marks.update(reserved_marks(catalog))
 
         self.sink = _Collect()
         self.ring = OpRing(maxlen=400)
         clock = self._clock
         self.reservations = WorkerReservations()
         self.allocator = Allocator(catalog=catalog, reservations=self.reservations)
-        self.manifest = parse_strategy(DEFAULT_STRATEGY)
-        self.assembly = parse_assembly(DEFAULT_ASSEMBLY)
+        # 策略装配（二十七轮「开放写策略」）：strategy_path 指向策略文件
+        #（strategy+assembly 两段）；缺省 = 内置常量。坏文件/编译失败在这里抛 ——
+        # 会话起不来要说清楚是策略的问题（带 step 定位），不是静默退回常量。
+        if strategy_path:
+            from view.strategies import load_strategy_file
+
+            self.manifest, self.assembly = load_strategy_file(Path(strategy_path))
+        else:
+            self.manifest = parse_strategy(DEFAULT_STRATEGY)
+            self.assembly = parse_assembly(DEFAULT_ASSEMBLY)
         self.engine = FlowEngine(
             self.manifest, self.assembly,
             RecordingPort(self.sink, "flow", self.ring, clock=clock),

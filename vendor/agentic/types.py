@@ -32,6 +32,18 @@ class Tool:
 
 
 @dataclass
+class LLMDelta:
+    """LLM 一次 complete 内部的流式增量分片(on_delta 回调逐条给出)。
+
+    kind:"reasoning"(思考链)| "content"(正文)| "tool_call"(工具调用 arguments 分片)。
+    tool_call 的 index 是同一条回复里第几个 tool_call(从 0 起)。
+    """
+    kind: str
+    text: str
+    index: int | None = None
+
+
+@dataclass
 class LLMResponse:
     """LLM 一次 complete 的返回。"""
     message: Message
@@ -40,6 +52,37 @@ class LLMResponse:
     model: str
     reasoning: str | None = None
     cached_tokens: int | None = None
+
+
+# ---- 流式事件类型(Engine.start_stream 的内存事件通道词汇;不进 trace,见 ADR-0007)----
+# runner 发 delta/turn/tool 五种;run_end 由 engine 发(它拥有 TaskStatus 终态)。
+STREAM_DELTA = "delta"            # LLM 增量分片(带 delta: LLMDelta + turn_no)
+STREAM_TURN_START = "turn_start"  # 一轮开始
+STREAM_TOOL_CALL = "tool_call"    # 一轮中一次工具执行完成(带 tool/args/result_preview)
+STREAM_TURN_END = "turn_end"      # 一轮结束
+STREAM_LLM_TIMEOUT = "llm_timeout"  # 一轮 LLM 调用超时(会重试)
+STREAM_RUN_END = "run_end"        # 一个 agent 的 run 终态(带 outcome/result/summary)
+
+STREAM_TYPES = (STREAM_DELTA, STREAM_TURN_START, STREAM_TOOL_CALL, STREAM_TURN_END, STREAM_LLM_TIMEOUT, STREAM_RUN_END)
+
+
+@dataclass
+class StreamEvent:
+    """start_stream 产出的一条事件:入口/子 agent 的增量与阶段动态。
+
+    agent_id 标归属(dispatch 出去的子 agent 事件与入口混在同一条流里);
+    字段按 type 取用,其余为 None。
+    """
+    agent_id: str
+    type: str
+    turn_no: int | None = None
+    delta: LLMDelta | None = None         # type=STREAM_DELTA
+    tool: str | None = None               # type=STREAM_TOOL_CALL
+    args: dict | None = None              # type=STREAM_TOOL_CALL
+    result_preview: str | None = None     # type=STREAM_TOOL_CALL
+    outcome: str | None = None            # type=STREAM_RUN_END: done/paused/error
+    result: str | None = None             # type=STREAM_RUN_END: done 提交的 result
+    summary: str | None = None            # type=STREAM_RUN_END: paused/error 原因
 
 
 @dataclass

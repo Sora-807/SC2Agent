@@ -18,9 +18,9 @@ export interface AlertItem {
 }
 
 const SEV_CLASS: Record<AlertItem["severity"], string> = {
-  error: "text-red-400",
-  warn: "text-amber-400",
-  info: "text-sky-300",
+  error: "text-[color:var(--err-fg)]",
+  warn: "text-[color:var(--warn-fg)]",
+  info: "text-blue-fg",
 };
 
 export function AlertsList(props: { alerts: AlertItem[]; empty?: ReactNode }) {

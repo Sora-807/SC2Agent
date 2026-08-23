@@ -1,9 +1,9 @@
 """flow Allocator V1：FCFS + sticky lease 语义（spec-006 接口预留的简实现）。"""
 from game import GameState, Grid, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from flow.allocator import Allocator
 
-CAT = load_terran()
+CAT = load_all()
 
 
 def _u(tag, type_name="MARINE", owner=Owner.SELF, x=0.0, y=0.0):

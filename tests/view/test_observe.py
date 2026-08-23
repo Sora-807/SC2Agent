@@ -13,10 +13,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from game.catalog import load_terran  # noqa: E402
+from game.catalog import load_all  # noqa: E402
 from view.observe import PROJECTION_LOOKAHEAD, frames_by_topic, observation_packet  # noqa: E402
 
-CAT = load_terran()
+CAT = load_all()
 FIXTURES = ROOT / "web" / "public" / "fixtures"
 
 

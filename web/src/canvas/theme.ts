@@ -33,24 +33,37 @@ export function fontCss(token: FontToken, weight = 400): string {
   return `${weight} ${FONT_PX[token]}px ${family}`;
 }
 
-/** 语义色：状态（ok/warn/error/blocked/live）+ owner×4。类别永不进色，只进形状（G4）。 */
+/** 语义色：状态（ok/warn/error/blocked/live）+ owner×4。类别永不进色，只进形状（G4）。
+ * 粉蓝白主题下调一档饱和度：亮底上原 400 档荧光色刺眼。 */
 const OWNER_COLORS = {
-  self: "#34d399",
-  ally: "#38bdf8",
-  enemy: "#f87171",
-  neutral: "#94a3b8",
+  self: "#4db590",
+  ally: "#5fa8d6",
+  enemy: "#e07b7b",
+  neutral: "#a49bb1",
 } as const;
+
+/** 画布基础色（粉蓝白主题：白画布 + 李子灰文字 + 薰衣草格线）。 */
+export const CANVAS_THEME = {
+  dark: { void: "#fdfcff", text: "#2c3138", grid: "#e9ecf2" },
+} as const;
+
+export type CanvasBase = { void: string; text: string; grid: string };
+
+/** 当前主题的画布基础色（DOM 侧由 index.css 的变量同一开关控制）。 */
+export function canvasBase(): CanvasBase {
+  return CANVAS_THEME.dark;
+}
 
 /** owner → 色（未知 owner 降级灰，不猜） */
 export function ownerColor(owner: string): string {
   return (OWNER_COLORS as Record<string, string>)[owner] ?? "#888";
 }
 
-/** 槽位类别色（类别本该走形状；这是既有约定，保留） */
+/** 槽位类别色（类别本该走形状；这是既有约定，保留。粉蓝白主题同批去饱和） */
 const SLOT_COLORS = {
-  supply: "#a3a3a3",
-  production: "#60a5fa",
-  addon: "#c084fc",
+  supply: "#a49bb1",
+  production: "#5fa8d6",
+  addon: "#9a86bb",
 } as const;
 
 /** 槽位 kind → 色（未知 kind 降级灰） */
@@ -59,11 +72,11 @@ export function slotColor(kind: string): string {
 }
 
 export const COLOR = {
-  ok: "#34d399",
-  warn: "#fbbf24",
-  error: "#f87171",
-  blocked: "#94a3b8",
-  live: "#22d3ee",
+  ok: "#4db590",
+  warn: "#d9a83e",
+  error: "#e07b7b",
+  blocked: "#a49bb1",
+  live: "#4aa8cc",
   /** 画布底色（terrain=null 降级时的纯色底） */
   void: "#111820",
   text: "#e5e7eb",
@@ -72,8 +85,9 @@ export const COLOR = {
    * 单列一色而不是复用 warn/blocked：标记既不是 owner 也不是**状态**，
    * 借状态色会让人以为"这个点有告警"（G4 只允许颜色表达 owner 与状态，
    * 所以这里明确登记成第三类语义，而不是偷用状态色）。
+   * 粉蓝白主题：标记 = 主题粉的 fg 深度（白底上 #e3b1d2 太浅）。
    */
-  mark: "#c4b5fd",
+  mark: "#7d679b",
 } as const;
 
 /** 形状语言常量（U16：不跨类复用）。 */

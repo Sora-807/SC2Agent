@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent / "modules"))
 import yaml  # noqa: E402
 
 from game import GameState, Grid, Order, Owner, Point2, Unit  # noqa: E402
-from game.catalog import load_terran  # noqa: E402
+from game.catalog import load_all  # noqa: E402
 from planner import Planner, ProductionModuleInstance  # noqa: E402
 
 
@@ -52,7 +52,7 @@ def load_seq(path: str | None) -> list[ProductionModuleInstance]:
 def main() -> None:
     seq_path = sys.argv[1] if len(sys.argv) > 1 else None
     seq = load_seq(seq_path)
-    cat = load_terran()
+    cat = load_all()
     gs = make_starting_state()
     planner = Planner(cat)
     until = 600

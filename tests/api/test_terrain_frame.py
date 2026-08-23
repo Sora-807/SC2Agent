@@ -30,6 +30,9 @@ def test_terrain_control_line_becomes_a_frame(monkeypatch):
     sess._acks = 0
     sess._pending = {}
     sess._next_req = 0
+    sess._rec_fh = None            # 二十六轮：录制句柄（不落盘路径下的直调测试）
+    sess._rec_meta_path = None
+    sess._rec_count = 0
 
     sess._control(json.loads(_fake_terrain_line()))
     terrains = [f for f in sess.frames if f["topic"] == "static/terrain"]

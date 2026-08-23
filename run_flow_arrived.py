@@ -13,7 +13,7 @@ from loguru import logger
 
 from driver.sc2_adapter import SC2GamePort
 from flow.engine import FlowEngine
-from game.catalog import load_terran
+from game.catalog import load_all
 from flow.manifest import parse_assembly, parse_strategy
 from game import Owner
 from sc2.data import Difficulty, Race
@@ -95,7 +95,7 @@ def main() -> None:
         sink=None, game_time_limit=120, realtime=False,
     )
     engine = FlowEngine(parse_strategy(STRATEGY), parse_assembly(ASSEMBLY), port,
-                        catalog=load_terran())
+                        catalog=load_all())
     port.set_sink(LoopSink(engine))
     port.start("arrived-1")
     log(f"=== done: engine._done={engine._done} ===")

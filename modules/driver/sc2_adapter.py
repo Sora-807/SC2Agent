@@ -33,7 +33,7 @@ from game import (
     RuntimeSink,
     SessionEvent,
 )
-from game.catalog import load_terran
+from game.catalog import load_all
 
 # ---------- extraction（纯函数，duck-typed burnysc2 对象）----------
 
@@ -457,7 +457,7 @@ class SC2GamePort:
         self._sink = sink
         self._game_time_limit = game_time_limit
         self._realtime = realtime
-        self._catalog = catalog if catalog is not None else load_terran()
+        self._catalog = catalog if catalog is not None else load_all()
         self._bot_cls = bot_cls
         self._op_queue: list[Operation] = []
         self._pending_results: dict[int, OpApply] = {}

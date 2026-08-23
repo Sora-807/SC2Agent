@@ -63,31 +63,48 @@ vi.mock("../src/fixtures", () => ({
   })),
 }));
 
-import { MODE_SOURCES, allowedSources, defaultSource, pickMapPlan, type Mode } from "../src/shell/mode";
+import { MODE_META, MODE_ORDER, MODE_SOURCES, allowedSources, defaultSource, pickMapPlan, type Mode } from "../src/shell/mode";
 import { useFrames } from "../src/store/frames";
 
 const FIXTURES = [{ key: "opening" }, { key: "leapfrog" }, { key: "blocked" }];
 
+describe("模式命名与顺序（2026-08-22 十四轮：用户最终命名）", () => {
+  it("三段控件顺序 = 游戏 | 复盘 | 规划", () => {
+    expect(MODE_ORDER).toEqual(["drive", "replay", "offline"]);
+  });
+
+  it("显示名收短（id 不动）：drive=游戏、replay=复盘、offline=规划", () => {
+    expect(MODE_META.drive.label).toBe("游戏");
+    expect(MODE_META.replay.label).toBe("复盘");
+    expect(MODE_META.offline.label).toBe("规划");
+  });
+});
+
 describe("模式 → 合法帧源", () => {
-  it("三个模式各自的合法帧源（U19：drive 只有 live；offline 只有夹具）", () => {
+  it("三个模式各自的合法帧源（二十七轮：复盘收敛成只看对局记录，mock-live/api 退役不露出）", () => {
     expect(MODE_SOURCES.offline).toEqual(["fixture"]);
-    expect(MODE_SOURCES.replay).toEqual(["fixture", "mock-live", "api"]);
+    expect(MODE_SOURCES.replay).toEqual(["fixture"]);
     expect(MODE_SOURCES.drive).toEqual(["live"]);
   });
 
   it("后端不在时剔除 api / live（不给点不动的选项）", () => {
-    expect(allowedSources("replay", false)).toEqual(["fixture", "mock-live"]);
-    expect(allowedSources("replay", true)).toEqual(["fixture", "mock-live", "api"]);
+    expect(allowedSources("replay", false)).toEqual(["fixture"]);
     expect(allowedSources("drive", false)).toEqual([]);
   });
 
-  it("切模式落点：保持当前夹具优先；drive 需要后端", () => {
+  it("切模式落点：offline 保持当前夹具；replay 只落对局记录（没有记录 = null 引导）", () => {
     expect(defaultSource("offline", FIXTURES, false, "leapfrog"))
       .toEqual({ kind: "fixture", fixtureKey: "leapfrog" });
     expect(defaultSource("offline", FIXTURES, false, null))
       .toEqual({ kind: "fixture", fixtureKey: "opening" });
-    expect(defaultSource("replay", FIXTURES, true, null))
-      .toEqual({ kind: "fixture", fixtureKey: "opening" });
+    // 只有夹具（无 rec: 录像）时进复盘 = null（页面给「开一局自动录制」的引导）
+    expect(defaultSource("replay", FIXTURES, true, null)).toBeNull();
+    const withRec = [...FIXTURES, { key: "rec:rec-1-sc2" }];
+    expect(defaultSource("replay", withRec, true, null))
+      .toEqual({ kind: "fixture", fixtureKey: "rec:rec-1-sc2" });
+    // 已在看某份录像 → 切走再切回仍保持它
+    expect(defaultSource("replay", withRec, true, "rec:rec-1-sc2"))
+      .toEqual({ kind: "fixture", fixtureKey: "rec:rec-1-sc2" });
     expect(defaultSource("drive", FIXTURES, false, null)).toBeNull();
     expect(defaultSource("drive", FIXTURES, true, null))
       .toEqual({ kind: "live", fixtureKey: "live" });
@@ -136,12 +153,14 @@ describe("store：切模式真正连 live（根因 U 不复发）", () => {
     expect(s.fixtureKey).toBe("opening");
   });
 
-  it("所有模式值都能落到合法帧源（穷举，防 Mode 扩了忘改 defaultSource）", () => {
-    for (const m of ["offline", "replay", "drive"] as Mode[]) {
+  it("所有模式值都能落到合法帧源（穷举；replay 没录像时允许 null = 引导态）", () => {
+    for (const m of ["offline", "drive"] as Mode[]) {
       const target = defaultSource(m, FIXTURES, true, null);
       expect(target, m).not.toBeNull();
       expect(MODE_SOURCES[m]).toContain(target!.kind);
     }
+    expect(defaultSource("replay", FIXTURES, true, null)).toBeNull();
+    expect(defaultSource("replay", [{ key: "rec:x" }], true, null)).not.toBeNull();
   });
 });
 

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent / "modules"))
 from loguru import logger
 
 from game import QueueItem, Owner, Point2
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementInRegion
 from driver.sc2_adapter import SC2GamePort
 from sc2.data import Difficulty, Race
@@ -83,7 +83,7 @@ class ProdCheckSink:
             return orig_submit(ops)
 
         self._port.submit_operations = logging_submit  # type: ignore[method-assign]
-        self._runtime = ProductionRuntime(load_terran(), self._port, region_layer=layer)
+        self._runtime = ProductionRuntime(load_all(), self._port, region_layer=layer)
         self._runtime.submit_queue("opening", [
             QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),
             QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),

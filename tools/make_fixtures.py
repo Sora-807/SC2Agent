@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "modules"))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from game.catalog import load_terran  # noqa: E402
+from game.catalog import load_all  # noqa: E402
 from game.geometry import Grid, Point2  # noqa: E402
 from game.ports import ApplyResult  # noqa: E402
 from game.production import PlacementInRegion, QueueItem, QueueOp, WorkerTask  # noqa: E402
@@ -40,7 +40,7 @@ from view.schema import HunkView, ProposalsFrame, ProposalView  # noqa: E402
 from view.statics import ladder_terrain_view, terrain_static  # noqa: E402
 from worldsim import WorldSim  # noqa: E402
 
-CAT = load_terran()
+CAT = load_all()
 BASIC_PLAN = [ProductionModuleInstance(
     instance_id="m0", module_ref="basic_opening", version=1, params={})]
 
@@ -127,14 +127,21 @@ def _synth_terrain() -> dict:
 FORMUP_STRATEGY = """
 id: formup_probe
 version: 1
+display_name_zh: 集结推进
+description_zh: 凑够 min_units 个单位后整队前往目标点，抵达即结束。
 group_slots: [main]
 params:
-  min_units: {type: int, default: 2}
-  target: {type: point, default: [48.5, 48.5]}
+  min_units: {type: int, default: 2, description_zh: 出发所需的单位数}
+  target: {type: point, default: [48.5, 48.5], description_zh: 推进目标点}
 variables: {}
+reasons:
+  FORMED: 集结完成
+  ARRIVED: 已抵达目标
 initial_step: formup
 steps:
   - step_id: formup
+    display_name_zh: 集结
+    description_zh: 等待部队成型（组内数量 ≥ min_units）
     branches:
       - branch_id: b_ready
         when: {op: ">=", args: [{op: group_count, group: main}, {param: min_units}]}
@@ -142,6 +149,8 @@ steps:
       - branch_id: b_wait
         do: []
   - step_id: advance
+    display_name_zh: 推进
+    description_zh: 全组攻击移动到目标点
     branches:
       - branch_id: b_arrived
         when: {op: arrived, group: main, target: {param: target}, radius: 3.0}
@@ -159,6 +168,7 @@ FORMUP_ASSEMBLY = """
 id: formup_assembly
 groups:
   - group_id: G_INF
+    display_name_zh: 步兵组
     composition:
       terran/marine: {min: 2, target: 6, max: 8}
 strategy_instances:
@@ -172,13 +182,20 @@ strategy_instances:
 LEAPFROG_STRATEGY = """
 id: leapfrog_probe
 version: 1
+display_name_zh: 装甲蛙跳推进
+description_zh: 坦克先推到步兵前方 hop 距离，步兵跟上，循环往复直到目标。
 group_slots: [inf, armor]
 params:
-  min_inf: {type: int, default: 6}
-  min_armor: {type: int, default: 2}
-  target: {type: point, default: [80.5, 80.5]}
-  hop: {type: float, default: 7.0}
+  min_inf: {type: int, default: 6, description_zh: 出发所需枪兵数}
+  min_armor: {type: int, default: 2, description_zh: 出发所需坦克数}
+  target: {type: point, default: [80.5, 80.5], description_zh: 推进目标点}
+  hop: {type: float, default: 7.0, description_zh: 每轮蛙跳的前压距离}
 variables: {}
+reasons:
+  READY: 集结就绪
+  ARMOR_UP: 坦克已前压
+  INF_UP: 步兵已跟进
+  ARRIVED: 已抵达目标
 definitions:
   front:
     op: point_toward
@@ -188,6 +205,8 @@ definitions:
 initial_step: garrison
 steps:
   - step_id: garrison
+    display_name_zh: 驻守集结
+    description_zh: 等步兵与坦克都凑够数量
     branches:
       - branch_id: b_ready
         when:
@@ -199,6 +218,8 @@ steps:
       - branch_id: b_wait
         do: []
   - step_id: armor_hop
+    display_name_zh: 坦克前压
+    description_zh: 装甲推到步兵前方 hop 距离处
     branches:
       - branch_id: b_armor_up
         when: {op: arrived, group: armor, target: {ref: front}, radius: 3.5}
@@ -208,6 +229,8 @@ steps:
           - {op: group_action, group_slot: armor, type: terran/siegetank,
              action_atom: attack_move_to, params: {position: {ref: front}}}
   - step_id: inf_hop
+    display_name_zh: 步兵跟进
+    description_zh: 步兵跟上坦克新位置；整队抵达目标则结束
     branches:
       # 环的出口（ADR-0021 §4：每个环必须有出口，loop_limits 只是兜底）
       - branch_id: b_done
@@ -231,9 +254,11 @@ LEAPFROG_ASSEMBLY = """
 id: leapfrog_assembly
 groups:
   - group_id: G_INF
+    display_name_zh: 步兵组
     composition:
       terran/marine: {min: 6, target: 10, max: 12}
   - group_id: G_TANK
+    display_name_zh: 装甲组
     composition:
       terran/siegetank: {min: 2, target: 3, max: 4}
 strategy_instances:

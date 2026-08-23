@@ -4,12 +4,12 @@ flow 经 catalog 反向归一仍把它算作 SIEGETANK 组——计数/lease/下
 对照：不传 catalog 时归一透传，架起态漏计（回归基线）。
 """
 from game import GameState, Grid, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from driver.fake import FakeGamePort
 from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
 
-CAT = load_terran()
+CAT = load_all()
 
 FORMUP_STRATEGY = """
 id: tank_formup

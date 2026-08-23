@@ -15,9 +15,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "modules"))
+# agent 对话服务要用根下的 agent/ 包与 vendor 的 agentic 运行时（P3 切片 A）
+sys.path.insert(0, str(ROOT / "vendor"))
+sys.path.insert(0, str(ROOT))
 
 from api.app import (DEFAULT_FRAME_DIR, DEFAULT_MAP_PLANS_DIR, DEFAULT_PLANS_DIR,
-                     DEFAULT_PROPOSAL_LOG, create_app)  # noqa: E402
+                     DEFAULT_PROPOSAL_LOG, DEFAULT_RECORDINGS_DIR, create_app)  # noqa: E402
 
 
 def main() -> int:
@@ -32,6 +35,10 @@ def main() -> int:
                     help="规划文件目录（一个规划一个 YAML）")
     ap.add_argument("--map-plans", default=str(ROOT / DEFAULT_MAP_PLANS_DIR),
                     help="地图规划文件目录（默认地图锁定 + 复制新建）")
+    ap.add_argument("--recordings", default=str(ROOT / DEFAULT_RECORDINGS_DIR),
+                    help="对局记录目录（live 帧流落盘；复盘下拉里的对局记录）")
+    ap.add_argument("--strategies", default=str(ROOT / "runtime/strategies"),
+                    help="策略文件目录（开放写策略：strategy+assembly 两段 YAML）")
     ap.add_argument("--log-level", default="warning")
     args = ap.parse_args()
     print(f"view API → http://{args.host}:{args.port}/api/health")
@@ -39,7 +46,13 @@ def main() -> int:
     print(f"  提案日志 {args.proposals}")
     print(f"  规划目录 {args.plans}")
     print(f"  地图规划目录 {args.map_plans}")
-    uvicorn.run(create_app(args.frame_dir, args.proposals, args.plans, args.map_plans),
+    print(f"  对局记录目录 {args.recordings}")
+    print(f"  agent 对话 → POST http://{args.host}:{args.port}/api/agent/chat"
+          "（LLM 读 .env，未配密钥时首条消息会说明）")
+    uvicorn.run(create_app(args.frame_dir, args.proposals, args.plans, args.map_plans,
+                           recordings_dir=args.recordings,
+                           strategies_dir=args.strategies,
+                           agent_base=f"http://{args.host}:{args.port}"),
                 host=args.host, port=args.port, log_level=args.log_level)
     return 0
 

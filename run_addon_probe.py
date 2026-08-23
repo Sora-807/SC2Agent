@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent / "modules"))
 from loguru import logger
 
 from game import QueueItem, Owner
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementInRegion
 from driver.sc2_adapter import SC2GamePort
 from production.runtime import ProductionRuntime
@@ -41,7 +41,7 @@ class ProbeSink:
                       if u.owner is Owner.SELF and u.type_name == "COMMANDCENTER")
             template = load_ladder_map()
             layer = instantiate_spawn(template, spawn_layout_nearest(template, cc), cc)
-            self._runtime = ProductionRuntime(load_terran(), self._port, region_layer=layer)
+            self._runtime = ProductionRuntime(load_all(), self._port, region_layer=layer)
             self._runtime.submit_queue("probe", [
                 QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),
                 QueueItem(op="build", type="terran/barracks", placement=PlacementInRegion("home")),

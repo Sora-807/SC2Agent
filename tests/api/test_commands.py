@@ -12,9 +12,9 @@ from fastapi.testclient import TestClient
 
 from api.app import create_app
 from api.session import MAX_STALE_SEQ, OfflineSession
-from game.catalog import load_terran
+from game.catalog import load_all
 
-CAT = load_terran()
+CAT = load_all()
 
 
 @pytest.fixture()

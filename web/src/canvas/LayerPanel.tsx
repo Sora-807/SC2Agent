@@ -25,7 +25,7 @@ export function LayerPanel(props: {
   return (
     <div className="absolute bottom-2 left-2 z-10 flex max-w-64 flex-col gap-1">
       {open && (
-        <div className={"rounded border border-neutral-700 bg-neutral-950/92 p-2 " + T.note}>
+        <div className={"rounded border border-l2 bg-inset p-2 " + T.note}>
           <ul className="space-y-0.5">
             {LAYERS.map((l) => {
               const av = l.available(props.map, props.world ?? null);
@@ -40,7 +40,7 @@ export function LayerPanel(props: {
                       onChange={(e) => toggle(l.key, e.target.checked)}
                     />
                     <span>{l.label}</span>
-                    {!av.ok && <span className="text-amber-500">不可用</span>}
+                    {!av.ok && <span className="text-[color:var(--warn-fg)]">不可用</span>}
                   </label>
                 </li>
               );
@@ -51,8 +51,8 @@ export function LayerPanel(props: {
       )}
       <button
         onClick={() => setOpen((v) => !v)}
-        className={"w-fit rounded border border-neutral-700 bg-neutral-950/85 px-2 py-0.5 "
-          + T.note + " text-faint hover:text-neutral-200"}
+        className={"w-fit rounded border border-l2 bg-inset px-2 py-0.5 "
+          + T.note + " text-faint hover:text-strong"}
         title="图层开关（不常用，收起来不占地方）"
       >
         图层 {open ? "▾" : "▴"}

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from game.catalog import load_terran
+from game.catalog import load_all
 from planner.build_order import Build, Train
 from view.plans import PlanStore, ops_to_items
 
@@ -73,7 +73,7 @@ def test_save_validates_items_with_reasons(client: TestClient):
 
 
 def test_plan_files_survive_restart(tmp_path: Path):
-    cat = load_terran()
+    cat = load_all()
     dir = tmp_path / "plans"
     PlanStore(cat, dir).create({"id": "keep", "title_zh": "落盘",
                                 "queue": [{"op": "train", "type": "terran/marine",
@@ -126,11 +126,11 @@ def test_simulate_needs_no_session(client: TestClient):
 def test_simulate_reports_skipped_items(client: TestClient):
     """simulate 不拒未知项 —— 进 skipped 带原因返回（不静默；save 才 400）。"""
     r = client.post("/api/plans/simulate", json={
-        "items": [{"op": "cancel"}, {"op": "train", "type": "terran/ghost"}],
+        "items": [{"op": "cancel"}, {"op": "train", "type": "terran/zzz_fake"}],
     })
     assert r.status_code == 200
     reasons = "；".join(s["reason"] for s in r.json()["skipped"])
-    assert "取消不进投影" in reasons and "terran/ghost" in reasons
+    assert "取消不进投影" in reasons and "terran/zzz_fake" in reasons
 
 
 def test_simulate_bad_shape_is_400(client: TestClient):
@@ -139,3 +139,44 @@ def test_simulate_bad_shape_is_400(client: TestClient):
         "items": [{"op": "explode", "type": "terran/scv"}],
     })
     assert r.status_code == 400 and "未知队列 op" in r.json()["detail"]
+
+
+def test_simulate_reports_assembly_gap(client: TestClient):
+    """I12-B2：规划终局凑不齐装配 target → assembly_gap 前瞻警报（缺口显形）。"""
+    r = client.post("/api/plans/simulate", json={
+        "items": [
+            {"op": "build", "type": "terran/barracks", "count": 1,
+             "placement": {"kind": "in_region", "region": "home"}},
+            {"op": "train", "type": "terran/marine", "count": 4},
+        ],
+    })
+    assert r.status_code == 200
+    gaps = [a for a in r.json()["alerts"] if a["kind"] == "assembly_gap"]
+    # DEFAULT_ASSEMBLY 步兵组 target=10；本规划只出 4 个机枪兵
+    assert any("步兵组" in a["text_zh"] and "机枪兵" in a["text_zh"]
+               for a in gaps)
+    assert all(a["severity"] == "warn" for a in gaps)
+
+
+def test_modules_list_and_from_module_roundtrip(client: TestClient):
+    """I12-B3：参考模块一键落地成规划 —— 模板是唯一真相源，不再手抄队列。"""
+    rows = client.get("/api/modules").json()
+    ids = {m["id"] for m in rows}
+    assert {"basic_opening", "bio_tank_opening"} <= ids
+    assert all(m["items"] > 0 for m in rows)
+
+    r = client.post("/api/plans/from-module", json={"module": "basic_opening"})
+    assert r.status_code == 200, r.text
+    plan = r.json()
+    assert plan["queue"], "模板落地不该是空队列"
+    assert plan["title_zh"].startswith("basic_opening")
+    # 落地的是真规划文件：读回来一致、可删
+    got = client.get(f"/api/plans/{plan['id']}").json()
+    assert len(got["queue"]) == len(plan["queue"])
+    assert client.delete(f"/api/plans/{plan['id']}").status_code == 200
+
+    # 模块不存在 / params 形态错 → 400 带原因
+    assert client.post("/api/plans/from-module",
+                       json={"module": "nope"}).status_code == 400
+    assert client.post("/api/plans/from-module",
+                       json={"module": "basic_opening", "params": 42}).status_code == 400

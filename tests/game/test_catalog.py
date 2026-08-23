@@ -35,11 +35,11 @@ def test_entry_fields():
 def test_where_role():
     cat = load_terran()
     workers = cat.where(role="worker")  # 字符串查询也归一化到 Role
-    assert len(workers) == 1
+    assert len(workers) == 2  # SCV + MULE
     assert workers[0].stable_id == "terran/scv"
     assert workers[0].role is Role.WORKER
     buildings = cat.where(role=Role.BUILDING)
-    assert len(buildings) == 11  # CC + Depot + Barracks + Reactor + TechLab + Refinery + Factory + FactoryTechLab + EngineeringBay + Armory + FactoryReactor
+    assert len(buildings) == 22  # 16 建筑 + 6 挂件（含 AutoTurret 召唤物）
     stable_ids = {e.stable_id for e in buildings}
     assert "terran/commandcenter" in stable_ids
     assert "terran/supplydepot" in stable_ids
@@ -58,10 +58,10 @@ def test_where_capability():
 
 def test_unknown_returns_none():
     cat = load_terran()
-    assert cat.by_stable_id("terran/ghost") is None
-    assert cat.by_burnysc2_name("GHOST") is None
-    assert cat.burnysc2_name_for("terran/ghost") is None
-    assert cat.stable_id_for("GHOST") is None
+    assert cat.by_stable_id("terran/zzz_fake") is None
+    assert cat.by_burnysc2_name("ZZZ_FAKE") is None
+    assert cat.burnysc2_name_for("terran/zzz_fake") is None
+    assert cat.stable_id_for("ZZZ_FAKE") is None
 
 
 def test_register_custom():
@@ -124,7 +124,7 @@ def test_siegetank_entry_fields():
     assert e.burnysc2_name == "SIEGETANK"
     assert e.role is Role.COMBAT
     assert "attack" in e.capabilities and "move" in e.capabilities
-    assert e.cost == Cost(minerals=150, vespene=125, supply=2)
+    assert e.cost == Cost(minerals=150, vespene=125, supply=3)
     assert e.build_time == 32
     assert e.produced_by == "terran/factory"
     assert "terran/factorytechlab" in e.prerequisites

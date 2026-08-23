@@ -9,7 +9,7 @@ import type {
   AlertsFrame, CatalogStatic, EconomyFrame, FlowFrame, MapStatic, OpsFrame, ProductionFrame,
   ProjectionFrame, ProposalsFrame, SchemaStatic, SessionFrame, StrategyStatic, WorldFrame,
 } from "../contract";
-import { listFixtures, loadFixture, type FixtureMeta } from "../fixtures";
+import { listFixtures, listRecordings, loadFixture, type FixtureMeta } from "../fixtures";
 import { JsonlFrameSource } from "../source/jsonl";
 import { MockLiveFrameSource } from "../source/mock-live";
 import { ReviewableSource } from "../source/reviewable";
@@ -96,6 +96,25 @@ let source: FrameSource | null = null;
 let unsubs: Unsubscribe[] = [];
 let rafPending = false;
 
+/** 动态帧合并（二十三轮：live 地图卡顿的主因之一）—— SC2 每 game step 一帧
+ *  （~16/s），逐帧 set() 把 React 渲染打满。按 topic 只留最新 payload，首个到达
+ *  后 150ms 冲刷一次：≤7 次 setState/秒，画面延迟 ≤150ms（live 视觉无感）。
+ *  静态面（static/*）不走这里 —— 一局只来几次，且测试同步断言依赖立即生效。 */
+const FRAME_FLUSH_MS = 150;
+const frameBuf = new Map<string, () => void>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const offer = (key: string, apply: () => void): void => {
+  frameBuf.set(key, apply);
+  if (flushTimer === null) {
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      const fns = [...frameBuf.values()];
+      frameBuf.clear();
+      for (const fn of fns) fn();
+    }, FRAME_FLUSH_MS);
+  }
+};
+
 export const useFrames = create<FramesStore>((set, get) => {
   /** 把源的游标/范围/模式同步进 store（合帧到一次 rAF，避免每帧 setState 抖动） */
   const syncMeta = (): void => {
@@ -128,7 +147,11 @@ export const useFrames = create<FramesStore>((set, get) => {
       // 探测后端与读本地夹具是独立的两件事：任一可用就能工作
       void probeApi(API_BASE).then((api) => set({ api }));
       try {
-        const list = await listFixtures();
+        // 二十六轮：复盘下拉 = 夹具（手搓场景）+ 对局录像（后端落盘的真局）。
+        // 录像取不到不影响夹具（listRecordings 内部吞错返回空表）。
+        const fixtures = await listFixtures();
+        const recordings = await listRecordings(API_BASE);
+        const list = [...fixtures, ...recordings];
         set({ fixtures: list, error: null });
         const first = list.at(0);
         if (first) await get().attach("fixture", first.key);
@@ -191,16 +214,17 @@ export const useFrames = create<FramesStore>((set, get) => {
 
       source = src;
       unsubs = [
-        src.subscribe("frame/session", (e) => set({ session: e.payload })),
+        // 动态帧经 offer() 合并（见 FRAME_FLUSH_MS 注释）；static/* 直通
+        src.subscribe("frame/session", (e) => offer("session", () => set({ session: e.payload }))),
         // world 帧的 seq 就是"这一刻的世界版本"，命令拿它当 based_on_seq
-        src.subscribe("frame/world", (e) => set({ world: e.payload, seq: e.seq })),
-        src.subscribe("frame/flow", (e) => set({ flow: e.payload })),
-        src.subscribe("frame/production", (e) => set({ production: e.payload })),
-        src.subscribe("frame/economy", (e) => set({ economy: e.payload })),
-        src.subscribe("frame/ops", (e) => set({ ops: e.payload })),
-        src.subscribe("frame/projection", (e) => set({ projection: e.payload })),
-        src.subscribe("frame/alerts", (e) => set({ alerts: e.payload })),
-        src.subscribe("proposals", (e) => set({ proposals: e.payload })),
+        src.subscribe("frame/world", (e) => offer("world", () => set({ world: e.payload, seq: e.seq }))),
+        src.subscribe("frame/flow", (e) => offer("flow", () => set({ flow: e.payload }))),
+        src.subscribe("frame/production", (e) => offer("production", () => set({ production: e.payload }))),
+        src.subscribe("frame/economy", (e) => offer("economy", () => set({ economy: e.payload }))),
+        src.subscribe("frame/ops", (e) => offer("ops", () => set({ ops: e.payload }))),
+        src.subscribe("frame/projection", (e) => offer("projection", () => set({ projection: e.payload }))),
+        src.subscribe("frame/alerts", (e) => offer("alerts", () => set({ alerts: e.payload }))),
+        src.subscribe("proposals", (e) => offer("proposals", () => set({ proposals: e.payload }))),
         src.subscribe("static/map", (e) => set((s2) => ({
           map: { ...e.payload, terrain: e.payload.terrain ?? s2.pendingTerrain ?? null },
           pendingTerrain: null,
@@ -239,7 +263,9 @@ export const useFrames = create<FramesStore>((set, get) => {
           mode: m,
           error: m === "drive"
             ? "实时驾驶需要后端 API：先启动 python tools/serve_api.py，再回到这里切模式"
-            : "该模式没有可用帧源（没有夹具？先在 web/ 下跑 pnpm gen:fixtures）",
+            : m === "replay"
+              ? "还没有对局记录 —— 切到「游戏」开一局（真机或沙盒），结束后自动出现在复盘列表里"
+              : "该模式没有可用帧源（没有夹具？先在 web/ 下跑 pnpm gen:fixtures）",
         });
         return;
       }
@@ -295,6 +321,11 @@ export const useFrames = create<FramesStore>((set, get) => {
       unsubs = [];
       source?.dispose();
       source = null;
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      frameBuf.clear();
     },
   };
 });

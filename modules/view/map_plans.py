@@ -81,82 +81,17 @@ def _hunks_of(raw_hunks: list[dict]) -> list[MapHunkLike]:
 
 
 def _reserved_boxes(catalog, mains_spec: dict[str, tuple[float, float]] | None = None) -> list[dict]:
-    """固定建造点预留区（真机采集数据 → 矩形 + 预设名清单，几何单点）。
+    """固定建造点预留区 —— 计算已下沉 tactical_map.reserved（I8：会话装配也要用，
+    view 不许被 world 反向依赖）。这里保留签名做委托，payload/save 两个调用点不动。"""
+    from tactical_map.reserved import reserved_boxes
 
-    - 基地（扩张点）：CC footprint（catalog 的 commandcenter.size，实测 12 个），
-      命名 蓝方主矿/蓝方二矿…红方主矿…（主基按出生点匹配，分矿按距离编号）；
-    - 气井：3×3（refinery footprint），命名 归属基地 + 气井N；
-    - 矿脉：2×2，不命名（98 块）。
-
-    背景：game_info 的 placeable/pathable **不含资源占用**（矿/井位置两格全 1，
-    2026-08-21 实测）—— 预留必须靠这份显式数据。
-    """
-    from view.statics import _ladder_map_data
-
-    raw = _ladder_map_data() or {}
-    boxes: list[dict] = []
-    cc = catalog.by_stable_id("terran/commandcenter")
-    cc_size = int(cc.size) if cc is not None and cc.size else 5
-    refinery = catalog.by_stable_id("terran/refinery")
-    geyser_size = int(refinery.size) if refinery is not None and refinery.size else 3
-
-    def box(x: float, y: float, size: int, kind: str, name: str | None = None) -> dict:
-        tlx, tly = int(x) - size // 2, int(y) - size // 2
-        return {"tl": [tlx, tly], "br": [tlx + size - 1, tly + size - 1],
-                "kind": kind, "name": name,
-                "label_zh": {"base": "基地", "geyser": "气井", "mineral": "矿脉"}[kind]}
-
-    bases = [(float(b[0]), float(b[1])) for b in raw.get("bases") or []]
-    names: dict[int, str] = {}
-    mains: dict[int, str] = {}
-    if mains_spec:
-        for spawn, origin in mains_spec.items():
-            side = "蓝方" if spawn == "bl" else "红方"
-            best = min(range(len(bases)),
-                       key=lambda i: (bases[i][0] - origin[0]) ** 2 + (bases[i][1] - origin[1]) ** 2)
-            bx, by = bases[best]
-            if abs(bx - origin[0]) < 3 and abs(by - origin[1]) < 3:
-                mains[best] = side
-    for i, side in mains.items():
-        names[i] = side + "主矿"
-    zh = ["二", "三", "四", "五", "六", "七", "八", "九", "十"]
-    for i in mains:
-        side = mains[i]
-        exps = [j for j in range(len(bases)) if j not in mains]
-        exps.sort(key=lambda j: (bases[j][0] - bases[i][0]) ** 2 + (bases[j][1] - bases[i][1]) ** 2)
-        others = [k for k in mains if k != i]
-        for n, j in enumerate(exps[:len(zh)]):
-            if others and any(
-                (bases[j][0] - bases[k][0]) ** 2 + (bases[j][1] - bases[k][1]) ** 2
-                < (bases[j][0] - bases[i][0]) ** 2 + (bases[j][1] - bases[i][1]) ** 2
-                for k in others):
-                continue
-            names[j] = side + zh[n] + "矿"
-    for i, (bx, by) in enumerate(bases):
-        boxes.append(box(bx, by, cc_size, "base", names.get(i)))
-
-    geyser_no: dict[int, int] = {}
-    for r in raw.get("resources") or []:
-        if r.get("kind") != "geyser":
-            continue
-        gx, gy = float(r["pos"][0]), float(r["pos"][1])
-        nearest = min(range(len(bases)),
-                      key=lambda i: (bases[i][0] - gx) ** 2 + (bases[i][1] - gy) ** 2)
-        geyser_no[nearest] = geyser_no.get(nearest, 0) + 1
-        gname = (names.get(nearest) or "矿区") + f"气井{geyser_no[nearest]}"
-        boxes.append(box(gx, gy, geyser_size, "geyser", gname))
-
-    for r in raw.get("resources") or []:
-        if r.get("kind") == "geyser":
-            continue
-        boxes.append(box(float(r["pos"][0]), float(r["pos"][1]), 2, "mineral"))
-    return boxes
+    return reserved_boxes(catalog, mains_spec)
 
 
 def _default_catalog():
-    from game.catalog import load_terran
+    from game.catalog import load_all
 
-    return load_terran()
+    return load_all()
 
 
 def _plan_locked(pid: str) -> bool:
@@ -191,13 +126,9 @@ def _template_from_dict(d: dict) -> BaseTemplate:
 
 
 def _source_mains() -> dict[str, tuple[float, float]]:
-    sp = _source().get("spawns") or {}
-    out: dict[str, tuple[float, float]] = {}
-    for side in SPAWNS:
-        if side in sp and sp[side].get("origin"):
-            o = sp[side]["origin"]
-            out[side] = (float(o[0]), float(o[1]))
-    return out
+    from tactical_map.reserved import source_mains
+
+    return source_mains()
 
 
 class MapPlanStore:
@@ -319,6 +250,85 @@ class MapPlanStore:
             out = {**d, "build_slots": state["slots"], "pos_marks": marks,
                    "updated_at": time.time()}
             self._write(pid, out)
+            return {"ok": True}
+
+    def doc(self, pid: str) -> dict:
+        """文档形状（agent 文件工作区读写用的就是这份）：不含画布要的 static/map 大负载。"""
+        with self._lock:
+            d = self._read(pid)
+        if not d:
+            raise KeyError(pid)
+        out = {"id": pid}
+        for k in ("title_zh", "map_name", "spawn", "build_slots", "pos_marks", "updated_at"):
+            if d.get(k) is not None:
+                out[k] = d[k]
+        return out
+
+    def save_payload(self, pid: str, doc: dict) -> dict:
+        """全量保存（agent 文件工作区的写钩子走这里，2026-08-22）。
+
+        校验口径与 save(hunks) 一致：**只查本次改动的槽位**（预设存量不追溯 ——
+        预设早于预留系统，历史压线不算新账）。改动 = 新增的槽位，或 pos/size
+        变了的槽位；重叠检查覆盖「改动 × 全部」（新槽压老槽同样是冲突）。
+        """
+        with self._lock:
+            if _plan_locked(pid):
+                raise ValueError("预设已锁定（空白地图/出厂校准）：复制一份再改")
+            cur = self._read(pid)
+            if not cur:
+                raise KeyError(pid)
+            cur_slots = dict(cur.get("build_slots") or {})
+            new_slots = {str(k): dict(v) for k, v in (doc.get("build_slots") or {}).items()}
+            changed = {n for n, e in new_slots.items()
+                       if n not in cur_slots
+                       or (cur_slots[n].get("pos") != e.get("pos")
+                           or cur_slots[n].get("size") != e.get("size"))}
+            merged = {**cur, "title_zh": str(doc.get("title_zh") or cur.get("title_zh") or pid),
+                      "map_name": str(doc.get("map_name") or cur.get("map_name") or "unknown"),
+                      "spawn": str(doc.get("spawn") or cur.get("spawn") or "bl"),
+                      "build_slots": new_slots,
+                      "pos_marks": {str(k): dict(v)
+                                    for k, v in (doc.get("pos_marks") or {}).items()},
+                      "updated_at": time.time()}
+            try:
+                t = _template_from_dict(merged)
+            except Exception as exc:  # noqa: BLE001 —— 模板解析错误要变成结构化理由
+                return {"ok": False, "errors": [{"hunk_id": None,
+                                                "text_zh": f"文档解析失败：{exc}"}]}
+            errors: list[dict] = []
+            reserved = _reserved_boxes(self._catalog or _default_catalog(), None)
+            for a in sorted(changed):
+                ea = new_slots[a]
+                pos_a = ea.get("pos")
+                if not pos_a:
+                    continue
+                fp_a = _footprint([float(pos_a[0]), float(pos_a[1])],
+                                  int(ea.get("size") or 0))
+                for b, eb in sorted(new_slots.items()):
+                    if b == a:
+                        continue
+                    pos_b = eb.get("pos")
+                    if not pos_b:
+                        continue
+                    fp_b = _footprint([float(pos_b[0]), float(pos_b[1])],
+                                      int(eb.get("size") or 0))
+                    if _overlaps(fp_a, fp_b):
+                        errors.append({"hunk_id": a,
+                                       "text_zh": f"槽位 {a!r} 与 {b!r} 重叠"})
+                        break
+                else:
+                    for rb in reserved:
+                        if _overlaps(fp_a, (rb["tl"][0], rb["tl"][1],
+                                            rb["br"][0], rb["br"][1])):
+                            errors.append({
+                                "hunk_id": a,
+                                "text_zh": (f"槽位 {a!r} 压住{rb['label_zh']}"
+                                            "（固定建造点，不可占用）"),
+                            })
+                            break
+            if errors:
+                return {"ok": False, "errors": errors}
+            self._write(pid, merged)
             return {"ok": True}
 
     def create(self, raw: dict) -> dict:

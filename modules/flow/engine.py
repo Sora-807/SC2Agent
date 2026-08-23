@@ -29,13 +29,21 @@ DEFAULT_MAX_STEP_TRANSITIONS = 200
 #: 引擎内存里留一小段就够 UI 显示"最近怎么转过来的"。
 TRANSITION_HISTORY = 20
 
+#: under_attack 的受击回看窗口（游戏秒）：掉血后这么久内算"正在被打"。
+#: hp 是逐帧快照，没有伤害事件 —— 窗口太短会闪断（1Hz 求值漏拍），太长会把旧伤算成现伤。
+HIT_MEMORY_SECS = 5.0
+
+#: engaged 的近敌判定缓冲（格）：敌人进入 (单位射程 + 该值) 视为已接敌。
+#: 攻击移动中的单位射程外一点也在"交火"语义里（弹道/走位中）。
+ENGAGE_BUFFER = 2.0
+
 
 class FlowEngine:
     def __init__(self, manifest: StrategyManifest, assembly: FlowAssembly, port,
                  region_layer=None, catalog=None, allocator=None) -> None:
         if catalog is None:
             raise ValueError(
-                "FlowEngine 需要 catalog（game.catalog.load_terran()）：flow authoring 只用 stable id"
+                "FlowEngine 需要 catalog（game.catalog.load_all()）：flow authoring 只用 stable id"
                 "（如 terran/marine），引擎靠 catalog 把 gs 的 burnysc2 实体名（含 SIEGETANKSIEGED 这类"
                 "形态变体）翻译回 stable id 才能匹配（T1 词汇统一，D1）"
             )
@@ -66,6 +74,14 @@ class FlowEngine:
         self._step_transition_count = 0
         self._variables = {v: spec.get("default") for v, spec in manifest.variables.items()}
         self._locals: dict = {}  # 进入 step 时重置（spec-003 §3.2）
+        # ---- 二十六轮（T8 落地）：计时器与交火态 ----
+        # 计时器：name -> {"start": t, "end": t|None}。start_timer 起算、stop_timer 冻结
+        # （end 后 elapsed 不再增长）；未 start 的名字 elapsed = None（比较降级 False + 诊断）。
+        self._timers: dict[str, dict] = {}
+        # 交火态：上一帧的 hp 快照 + 最近掉血时刻。under_attack = 窗口内掉过血（HIT_MEMORY_SECS），
+        # engaged = 攻击命令或近敌入射程 —— 都从每帧 gs 推导，不发新命令、不加新帧。
+        self._prev_hp: dict[int, float] = {}
+        self._last_hit: dict[int, float] = {}
         self._strategy_start: float | None = None
         self._step_entered: float | None = None
         # 去重状态：(slot, type, atom) -> (unit_tags, params_key)。
@@ -98,7 +114,10 @@ class FlowEngine:
         ctx = EvalCtx(gs, self._alloc, self._bindings, self._params, self._variables,
                       self._strategy_start, self._step_entered, self._region_layer,
                       catalog=self._catalog, definitions=self._m.definitions,
-                      step_id=self._active_step, diagnostics=self.eval_diagnostics)
+                      step_id=self._active_step, diagnostics=self.eval_diagnostics,
+                      locals=self._locals,
+                      timers=lambda name: self._timer_elapsed(name, gs.game_time),
+                      combat=self._combat_view(gs))
         step = self._m.steps[self._active_step]
         for index, b in enumerate(step.get("branches", [])):
             when = b.get("when")
@@ -109,7 +128,88 @@ class FlowEngine:
                     "index": index,
                 }
                 self._exec_do(b.get("do", []), ctx, gs)
+                self._track_hp(gs)
                 return  # 首条命中，本帧结束
+        self._track_hp(gs)
+
+    # ---- 计时器 / 交火态（二十六轮 T8；供 EvalCtx 的 timers/combat 注入）----
+
+    def _timer_elapsed(self, name: str, now: float):
+        """timer_elapsed 的读侧：未 start / 引擎没跑过 → None（比较降级 False + 诊断）。"""
+        t = self._timers.get(name)
+        if t is None:
+            return None
+        end = t["end"] if t["end"] is not None else now
+        return max(0.0, end - t["start"])
+
+    def _combat_view(self, gs: GameState):
+        """engaged / under_attack 的读侧闭包（装进 EvalCtx.combat）。
+
+        组集合在构造 ctx 前算好（一帧一份，两个谓词共享）；
+        slot 级查询就是集合成员判断。
+        """
+        eng = self._engaged_groups(gs)
+        hit = self._under_attack_groups(gs)
+
+        class View:
+            def engaged(_self, slot):
+                return slot in eng
+
+            def under_attack(_self, slot):
+                return slot in hit
+
+        return View()
+
+    def _engaged_groups(self, gs) -> frozenset[str]:
+        """交火中的 slot 集合：组内任一单位带攻击命令，或任一敌人进入其射程 + 缓冲。"""
+        from game import Owner
+        from tactical_map.spatial import distance
+
+        enemies = [u for u in gs.units if u.owner is Owner.ENEMY]
+        out: set[str] = set()
+        for slot, gid in self._bindings.items():
+            tags = set(self._alloc.expand_all(gid)) if gid else set()
+            units = [u for u in gs.units if u.tag in tags]
+            if not units:
+                continue
+            # 攻击命令不需要敌人可见（迷雾下 order 也存在）；近敌判定没有敌人自然为 False
+            engaged = False
+            for u in units:
+                if any("attack" in (o.ability or "").lower() for o in u.orders):
+                    engaged = True
+                    break
+                entry = self._catalog.by_burnysc2_name(
+                    self._catalog.normalize_burnysc2_name(u.type_name.upper()))
+                rng = float(entry.attack_range or 4.0) + ENGAGE_BUFFER if entry else 6.0
+                if any(distance(u.position, e.position) <= rng for e in enemies):
+                    engaged = True
+                    break
+            if engaged:
+                out.add(slot)
+        return frozenset(out)
+
+    def _under_attack_groups(self, gs) -> frozenset[str]:
+        """近期掉血的 slot 集合：窗口内 hp 下降过的组内单位（hp 历史推导，无伤害事件）。"""
+        out: set[str] = set()
+        for slot, gid in self._bindings.items():
+            tags = set(self._alloc.expand_all(gid)) if gid else set()
+            if any(t in self._last_hit and gs.game_time - self._last_hit[t] <= HIT_MEMORY_SECS
+                   for t in tags):
+                out.add(slot)
+        return frozenset(out)
+
+    def _track_hp(self, gs: GameState) -> None:
+        """帧尾更新 hp 快照 + 掉血时刻（under_attack 的记忆来源）。
+
+        必须在**求值之后**调：本帧的 under_attack 反映"上一帧到这一帧"的变化，
+        同帧写同帧读会把一次掉血当两次。阵亡单位（快照里有、场上没了）也记一击。
+        """
+        current = {u.tag: u.hp for u in gs.units if u.owner is not None and u.hp_max > 0}
+        for tag, prev in self._prev_hp.items():
+            now_hp = current.get(tag)
+            if now_hp is None or now_hp < prev - 1e-6:
+                self._last_hit[tag] = gs.game_time
+        self._prev_hp = current
 
     def on_session_event(self, event) -> None:
         pass
@@ -133,6 +233,10 @@ class FlowEngine:
             "params": dict(self._params),
             "variables": dict(self._variables),
             "locals": dict(self._locals),
+            # 计时器读数（二十六轮 T8）：观测用，契约 StrategyView 未收（内部态）；
+            # 调试页要看时可从这里取。未启动的表不在 dict 里（elapsed=None 的语义）。
+            "timers": {name: self._timer_elapsed(name, now) if now is not None else None
+                       for name in self._timers},
             "definitions": dict(self._m.definitions),
             "active_step": self._active_step,
             "step_entered_at": entered,
@@ -173,6 +277,16 @@ class FlowEngine:
                 self._variables[a["name"]] = eval_when(a.get("value"), ctx)
             elif op == "set_local":
                 self._locals[a["name"]] = eval_when(a.get("value"), ctx)
+            elif op == "start_timer":
+                # 幂等：已在走的不归零（do 每帧重执行，非幂等会让表永远到不了阈值）。
+                # 要重新起算：先 stop_timer 再 start_timer（显式两步，不藏在重复执行里）。
+                t = self._timers.get(a["name"])
+                if t is None or t["end"] is not None:
+                    self._timers[a["name"]] = {"start": gs.game_time, "end": None}
+            elif op == "stop_timer":
+                t = self._timers.get(a["name"])
+                if t is not None and t["end"] is None:
+                    t["end"] = gs.game_time  # 冻结读数；stop 未启动的表是 no-op（不静默谎报 0）
             else:
                 raise ValueError(f"unknown do op {op!r}")  # 编译期已拦；此为兜底
 

@@ -54,6 +54,11 @@ class WorldSim:
     resources: list[Unit] = field(default_factory=list)
     _pending: list[_Pending] = field(default_factory=list)
     _next_tag: int = 1000
+    #: 训练产槽（I10 修复）：producer tag → 产槽空闲时刻。真机 SC2 的训练是**排队**的 ——
+    #: 命令立刻接受，但进度条要等该建筑前一个训完才起算。之前没有占用模型，
+    #: count=6 的 TRAIN 会让一个兵营同时爬 6 条机枪兵进度条，90 秒夹具的投影
+    #: 泳道因此堆出矿量根本撑不住的"并行行"（I10 的根因就在这，不在 planner 经济参数）。
+    _train_busy: dict[int, float] = field(default_factory=dict)
     #: 世界没实现的动作（诊断：夹具生成时能看出哪些 op 没有后果）
     unhandled: list[str] = field(default_factory=list)
 
@@ -158,8 +163,15 @@ class WorldSim:
             return
         producer = next((self.units.get(t) for t in op.unit_tags if t in self.units), None)
         at = producer.position if producer else self.cc_pos
+        # 产槽排队（I10）：命令现在就接受并扣矿（真机行为），但完成时刻从产槽空闲起算。
+        # 排队中的单位 build_progress 停在 0.05 下限 —— 投影读到的 in_flight 也就如实
+        # 呈现"这些是排着队的，不是并行开工"。
+        start = self.t
+        if producer is not None:
+            start = max(self.t, self._train_busy.get(producer.tag, 0.0))
+            self._train_busy[producer.tag] = start + float(entry.build_time)
         u = self._spawn(entry.stable_id, Point2(at.x + 1.5, at.y - 1.5), ready=False)
-        self._pending.append(_Pending(self.t + float(entry.build_time), u.tag, "train"))
+        self._pending.append(_Pending(start + float(entry.build_time), u.tag, "train"))
         if producer is not None:
             producer.orders = [Order(ability=entry.burnysc2_name)]
 

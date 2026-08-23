@@ -2,11 +2,11 @@
 import pytest
 
 from game import GameState, Grid, Owner, Point2, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from flow.predicates import EvalCtx, UNIMPLEMENTED_PREDICATE_OPS, eval_when
 from tactical_map import load_region_layer
 
-CAT = load_terran()
+CAT = load_all()
 
 LAYER_YAML = """
 map_name: p
@@ -315,7 +315,7 @@ def test_unimplemented_spatial_tools_raise():
 
 def test_and_or_short_circuit():
     """D9：and/or 短路 —— 右支若会抛（未实现谓词）也不被求值。"""
-    boom = {"op": "engaged", "group": "main"}  # 未实现 → 求值即抛
+    boom = {"op": "has_ready_base", "group": "main"}  # 未实现 → 求值即抛
     assert eval_when({"op": "and", "args": [{"const": False}, boom]}, _ctx()) is False
     assert eval_when({"op": "or", "args": [{"const": True}, boom]}, _ctx()) is True
     with pytest.raises(ValueError, match="未实现"):

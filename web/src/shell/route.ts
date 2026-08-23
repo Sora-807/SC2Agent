@@ -37,22 +37,34 @@ export function planTabOf(key: PageKey): "map" | "production" | "flow" {
 
 const isPage = (v: string): v is PageKey => PAGES.some((p) => p.key === v);
 
-function current(): PageKey {
-  const raw = window.location.hash.replace(/^#\/?/, "");
-  // 旧链接 #/planning 落到生产规划（F9 时代的单入口）
-  if (raw === "planning") return "plan-production";
-  return isPage(raw) ? raw : "overview";
+/** hash 里的路由信息：页 + 查询参数（如 `#/plan-production?plan=agent-m1`）。 */
+export interface Route {
+  page: PageKey;
+  params: URLSearchParams;
 }
 
-export function useRoute(): [PageKey, (p: PageKey) => void] {
-  const [page, setPage] = useState<PageKey>(current);
+/** 纯解析（可测）：`plan-production?plan=x` → {page, params}。旧 #/planning 兼容。 */
+export function parseRoute(raw: string): Route {
+  const [path = "", query = ""] = raw.split("?");
+  // 旧链接 #/planning 落到生产规划（F9 时代的单入口）
+  const page: PageKey = path === "planning" ? "plan-production"
+    : isPage(path) ? path : "overview";
+  return { page, params: new URLSearchParams(query) };
+}
+
+function current(): Route {
+  return parseRoute(window.location.hash.replace(/^#\/?/, ""));
+}
+
+export function useRoute(): [PageKey, (p: PageKey) => void, URLSearchParams] {
+  const [route, setRoute] = useState<Route>(current);
   useEffect(() => {
-    const onHash = (): void => setPage(current());
+    const onHash = (): void => setRoute(current());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const go = (p: PageKey): void => {
     window.location.hash = "#/" + p;
   };
-  return [page, go];
+  return [route.page, go, route.params];
 }

@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import QueueItem, QueueOp
 from view.proposals import (
     ANCHOR_STALE_SECONDS,
@@ -23,7 +23,7 @@ from view.proposals import (
     parse_item,
 )
 
-CAT = load_terran()
+CAT = load_all()
 
 
 @pytest.fixture()
@@ -44,7 +44,7 @@ def _queue(client: TestClient, items: list[dict]) -> None:
     assert r.status_code == 200, r.text
 
 
-def _propose(client: TestClient, **over) -> dict:
+def _propose_body(**over) -> dict:
     body = {
         "kind": "production_queue",
         "title_zh": "先出兵",
@@ -54,7 +54,11 @@ def _propose(client: TestClient, **over) -> dict:
                    "payload": {"order": [1, 0]}}],
     }
     body.update(over)
-    return client.post("/api/proposals", json=body).json()
+    return body
+
+
+def _propose(client: TestClient, **over) -> dict:
+    return client.post("/api/proposals", json=_propose_body(**over)).json()
 
 
 # ---------------- hunk 应用（纯函数） ----------------
@@ -165,8 +169,11 @@ def test_preview_pair_gives_two_different_futures(client: TestClient):
         {"op": "build", "type": "terran/supplydepot",
          "placement": {"kind": "in_region", "region": "home"}},
     ])
-    p = _propose(client, title_zh="先造补给站",
-                 rationale_zh="重工厂缺前置会一直卡住，把补给站提前免得整队冻结")
+    # 审批停用后端点创建即自动应用，「提案前队列」就不存在了 —— 预览这个
+    # 休眠功能要测数学本身，直接走 store（绕过端点的自动应用）。
+    p = client.app.state.proposals.create(_propose_body(
+        title_zh="先造补给站",
+        rationale_zh="重工厂缺前置会一直卡住，把补给站提前免得整队冻结")).to_json()
     assert p["validation"]["ok"] is True
     assert p["preview"]["kind"] == "projection_pair"
 
@@ -185,14 +192,18 @@ def test_preview_pair_gives_two_different_futures(client: TestClient):
 # ---------------- 接受 / 拒绝 ----------------
 
 def test_accept_applies_through_the_same_command_path(client: TestClient):
-    """P4：应用走与 agent 相同的命令路径，不开 UI 后门。"""
+    """P4：应用走与 agent 相同的命令路径，不开 UI 后门。
+
+    端点创建即自动应用后，手工 accept 是休眠通道 —— 直接走 store 建一条待审批，
+    再打 accept 端点，验证的正是这条预留路径。
+    """
     _queue(client, [
         {"op": "build", "type": "terran/factory",
          "placement": {"kind": "in_region", "region": "home"}},
         {"op": "train", "type": "terran/marine", "count": 6},
     ])
-    p = _propose(client)
-    r = client.post(f"/api/proposals/{p['id']}/accept")
+    pid = client.app.state.proposals.create(_propose_body()).id
+    r = client.post(f"/api/proposals/{pid}/accept")
     assert r.status_code == 200
     assert r.json()["status"] == "已接受"
     sess = client.app.state.session
@@ -202,13 +213,13 @@ def test_accept_applies_through_the_same_command_path(client: TestClient):
 
 def test_partial_accept_marks_partial(client: TestClient):
     _queue(client, [{"op": "train", "type": "terran/marine"}])
-    p = _propose(client, hunks=[
+    pid = client.app.state.proposals.create(_propose_body(hunks=[
         {"id": "h1", "kind": "insert", "text_zh": "加农民",
          "payload": {"index": 0, "item": {"op": "train", "type": "terran/scv"}}},
         {"id": "h2", "kind": "insert", "text_zh": "加医疗机",
          "payload": {"index": 0, "item": {"op": "train", "type": "terran/medivac"}}},
-    ])
-    r = client.post(f"/api/proposals/{p['id']}/accept", json={"hunk_ids": ["h1"]})
+    ])).id
+    r = client.post(f"/api/proposals/{pid}/accept", json={"hunk_ids": ["h1"]})
     assert r.status_code == 200 and r.json()["status"] == "部分接受"
     sess = client.app.state.session
     assert [i.type for i in sess.runtime.queue("main").items] == [
@@ -234,23 +245,26 @@ def test_reject_requires_a_reason_that_flows_back(client: TestClient):
 def test_accepting_twice_is_refused(client: TestClient):
     _queue(client, [{"op": "train", "type": "terran/marine"},
                     {"op": "train", "type": "terran/scv"}])
-    p = _propose(client)
-    assert client.post(f"/api/proposals/{p['id']}/accept").status_code == 200
-    r = client.post(f"/api/proposals/{p['id']}/accept")
+    pid = client.app.state.proposals.create(_propose_body()).id
+    assert client.post(f"/api/proposals/{pid}/accept").status_code == 200
+    r = client.post(f"/api/proposals/{pid}/accept")
     assert r.status_code == 409 and "已处理" in r.json()["detail"]
 
 
 def test_stale_anchor_expires_and_blocks_accept_p5(client: TestClient):
-    """P5：提案基于的世界已经不在了 → 自动失效，禁止盲接受。"""
+    """P5：提案基于的世界已经不在了 → 自动失效，禁止盲接受。
+
+    端点创建即应用后这条保护主要服务休眠的手工通道（store 建的待审批提案）。
+    """
     _queue(client, [{"op": "train", "type": "terran/marine"},
                     {"op": "train", "type": "terran/scv"}])
-    p = _propose(client)
+    pid = client.app.state.proposals.create(_propose_body()).id
     sess = client.app.state.session
     for _ in range(int(ANCHOR_STALE_SECONDS) + 2):
         sess.tick()
     rows = {x["id"]: x for x in client.get("/api/proposals").json()}
-    assert rows[p["id"]]["status"] == "已失效"
-    r = client.post(f"/api/proposals/{p['id']}/accept")
+    assert rows[pid]["status"] == "已失效"
+    r = client.post(f"/api/proposals/{pid}/accept")
     assert r.status_code == 409 and "已失效" in r.json()["detail"]
 
 
@@ -264,12 +278,12 @@ def test_stale_anchor_blocks_accept_without_listing_first_p5(client: TestClient)
     """
     _queue(client, [{"op": "train", "type": "terran/marine"},
                     {"op": "train", "type": "terran/scv"}])
-    p = _propose(client)
+    pid = client.app.state.proposals.create(_propose_body()).id
     sess = client.app.state.session
     for _ in range(int(ANCHOR_STALE_SECONDS) + 2):
         sess.tick()
     # 注意：这里**没有** GET /api/proposals
-    r = client.post(f"/api/proposals/{p['id']}/accept")
+    r = client.post(f"/api/proposals/{pid}/accept")
     assert r.status_code == 409, "过期提案必须被拒，不能因为没人拉过列表就放行"
     assert "已失效" in r.json()["detail"]
 
@@ -316,11 +330,12 @@ def test_map_plan_proposal_applies_to_overrides(client, monkeypatch, tmp_path):
     ov_path = tmp_path / "base_layout.overrides.yaml"
     monkeypatch.setattr(mp, "MAP_OVERRIDES_PATH", ov_path)
 
-    p = _propose(client, kind="map_plan", title_zh="放个新点位",
-                 target={}, hunks=[
-                     {"id": "h1", "kind": "add_mark", "text_zh": "新增点位 mark_1",
-                      "payload": {"name": "mark_1", "pos": [55.5, 42.5]}},
-                 ])
+    p = client.app.state.proposals.create(_propose_body(
+        kind="map_plan", title_zh="放个新点位",
+        target={}, hunks=[
+            {"id": "h1", "kind": "add_mark", "text_zh": "新增点位 mark_1",
+             "payload": {"name": "mark_1", "pos": [55.5, 42.5]}},
+        ])).to_json()
     assert p["validation"]["ok"] is True, p["validation"]
     assert p["preview"]["kind"] == "map_overlay"
 

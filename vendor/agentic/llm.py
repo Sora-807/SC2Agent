@@ -1,15 +1,16 @@
 """LLM client:OpenAI 直连(async)+ Fake(测试)。
 
 OpenAIClient 用 .env(OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL)。
-只暴露 ``complete(messages, tools)`` —— runner 用它跑 tool loop。
+暴露 ``complete(messages, tools)`` —— runner 用它跑 tool loop;可选 ``on_delta``
+回调把流式分片(LLMDelta)外发给上层(start_stream 的流式通道,见 ADR-0007)。
 """
 from __future__ import annotations
 
 import json
 import os
-from typing import Protocol
+from typing import Callable, Protocol
 
-from .types import LLMResponse, Message, Tool, ToolCall
+from .types import LLMDelta, LLMResponse, Message, Tool, ToolCall
 
 
 class LLMClient(Protocol):
@@ -19,6 +20,7 @@ class LLMClient(Protocol):
         tools: list[Tool] | None = None,
         *,
         model: str | None = None,
+        on_delta: Callable[[LLMDelta], None] | None = None,
     ) -> LLMResponse: ...
 
 
@@ -120,6 +122,7 @@ class OpenAIClient:
         tools: list[Tool] | None = None,
         *,
         model: str | None = None,
+        on_delta: Callable[[LLMDelta], None] | None = None,
         retries: int = 4,
     ) -> LLMResponse:
         import asyncio
@@ -144,15 +147,15 @@ class OpenAIClient:
         last_exc: Exception | None = None
         for attempt in range(retries):
             try:
-                return await self._stream_call(kwargs)
+                return await self._stream_call(kwargs, on_delta)
             except Exception as e:  # noqa: BLE001 — rate limit / API / 网络,简单重试
                 last_exc = e
                 await asyncio.sleep(2 ** attempt)  # 1, 2, 4, 8s
         assert last_exc is not None
         raise last_exc
 
-    async def _stream_call(self, kwargs: dict) -> LLMResponse:
-        """流式拉取 + 累积,整条 LLMResponse 返回(对 caller 透明,不暴露 chunk 细节)。"""
+    async def _stream_call(self, kwargs: dict, on_delta=None) -> LLMResponse:
+        """流式拉取 + 累积,整条 LLMResponse 返回;on_delta 逐分片外发(可选)。"""
         stream = await self._client.chat.completions.create(**kwargs)
         reasoning_parts: list[str] = []
         content_parts: list[str] = []
@@ -167,8 +170,12 @@ class OpenAIClient:
             rc = getattr(delta, "reasoning_content", None)  # 思考链(独立字段)
             if rc:
                 reasoning_parts.append(rc)
+                if on_delta:
+                    on_delta(LLMDelta("reasoning", rc))
             if delta.content:
                 content_parts.append(delta.content)
+                if on_delta:
+                    on_delta(LLMDelta("content", delta.content))
             if delta.tool_calls:  # index-based,arguments 分片到达,需拼接
                 for tool_call_delta in delta.tool_calls:
                     index = tool_call_delta.index if tool_call_delta.index is not None else 0
@@ -179,6 +186,8 @@ class OpenAIClient:
                         slot["name"] = tool_call_delta.function.name
                     if tool_call_delta.function and tool_call_delta.function.arguments:
                         slot["arguments"] += tool_call_delta.function.arguments
+                        if on_delta:
+                            on_delta(LLMDelta("tool_call", tool_call_delta.function.arguments, index=index))
         content = "".join(content_parts)
         parsed_tcs: list[ToolCall] = []
         for idx in sorted(tool_calls):
@@ -202,7 +211,10 @@ class OpenAIClient:
 
 
 class FakeLLMClient:
-    """测试用:脚本化响应。responses 可为 list(队列)或 callable(messages, tools)-> LLMResponse。"""
+    """测试用:脚本化响应。responses 可为 list(队列)或 callable(messages, tools)-> LLMResponse。
+
+    on_delta 模拟:整条 reasoning / content 各作为单个分片发出(足够测流式管道)。
+    """
 
     def __init__(self, responses) -> None:
         if isinstance(responses, list):
@@ -219,10 +231,18 @@ class FakeLLMClient:
         tools: list[Tool] | None = None,
         *,
         model: str | None = None,
+        on_delta=None,
     ) -> LLMResponse:
         self.calls.append((messages, tools))
         if self._fn is not None:
-            return self._fn(messages, tools)
-        if not self._queue:
+            response = self._fn(messages, tools)
+        elif self._queue:
+            response = self._queue.pop(0)
+        else:
             raise RuntimeError("FakeLLMClient: response queue exhausted")
-        return self._queue.pop(0)
+        if on_delta is not None:
+            if response.reasoning:
+                on_delta(LLMDelta("reasoning", response.reasoning))
+            if response.message.content:
+                on_delta(LLMDelta("content", response.message.content))
+        return response

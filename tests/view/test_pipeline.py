@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from game.catalog import load_terran  # noqa: E402
+from game.catalog import load_all  # noqa: E402
 from game.geometry import Point2  # noqa: E402
 from game.ports import ApplyResult  # noqa: E402
 from game.production import PlacementInRegion, QueueItem, QueueOp, WorkerTask  # noqa: E402
@@ -28,7 +28,7 @@ from view.schema import REV, TOPICS  # noqa: E402
 from view.statics import catalog_static, map_static, resource_nodes_from_state, schema_static  # noqa: E402
 from worldsim import WorldSim  # noqa: E402
 
-CAT = load_terran()
+CAT = load_all()
 
 STRATEGY = """
 id: pipe_probe

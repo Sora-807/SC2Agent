@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent / "modules"))
 from loguru import logger
 
 from game import QueueItem, Owner, Point2
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementInRegion
 from driver.sc2_adapter import SC2GamePort
 from flow.engine import FlowEngine
@@ -128,7 +128,7 @@ class FullFlowSink:
             return orig_submit(ops)
 
         self._port.submit_operations = logging_submit  # type: ignore[method-assign]
-        self._runtime = ProductionRuntime(load_terran(), self._port, region_layer=layer)
+        self._runtime = ProductionRuntime(load_all(), self._port, region_layer=layer)
         self._runtime.submit_queue("macro", [
             QueueItem(op="assign_workers", task="mineral", count=16),
             *[QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home"))
@@ -151,7 +151,7 @@ class FullFlowSink:
             parse_assembly(_assembly([self._enemy.x, self._enemy.y])),
             self._port,
             region_layer=layer,
-            catalog=load_terran(),  # T1：flow authoring 全 stable id，引擎靠 catalog 翻译实体名
+            catalog=load_all(),  # T1：flow authoring 全 stable id，引擎靠 catalog 翻译实体名
         )
         log(f"[setup] CC={cc} 模板出生点={layout.origin} 敌方主矿={self._enemy}")
         log(f"[setup] macro 队列 = 补给站×8 精炼厂×2 兵营×4 枪兵×8（自卫）SCV×12；反应堆×4 独立并行队列；枪兵维持补到 50（固定位顺序摆放）")

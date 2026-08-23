@@ -83,6 +83,37 @@ def ops_to_items(ops: list[Op]) -> list[QueueItem]:
     return out
 
 
+def resolve_placement_refs(items: list[QueueItem],
+                           map_plan_id: str | None) -> tuple[list[QueueItem], str | None]:
+    """I8 限定引用「规划名/点位名」→ 裸名（命令面进入会话前的 REST 层映射）。
+
+    - 裸名原样通过（兼容存量：in_region 区域名、预设固定建造点名本来就是全局的）；
+    - mark 含 "/"（"agent-m1/rax9"）：会话装的就是该规划 → 剥前缀；装的不是 →
+      结构化错误（跨规划引用，槽位名只在规划内唯一）；会话没装规划（出厂模板）
+      → 同样拒（没有规划命名空间可对）。
+    返回 (新列表, None) 或 (None, 中文理由)。runtime 只见裸名 —— ADR-0027 的
+    抽象标记语义不变，ViewFrame 契约零改动。
+    """
+    from dataclasses import replace
+
+    from game.production import PlacementExact
+
+    out: list[QueueItem] = []
+    for i, it in enumerate(items):
+        p = it.placement
+        if isinstance(p, PlacementExact) and isinstance(p.mark, str) and "/" in p.mark:
+            prefix, name = p.mark.split("/", 1)
+            if map_plan_id is None:
+                return [], (f"第 {i} 项 placement 引用规划 {prefix!r} 的点位，"
+                            "但会话装的是出厂模板（无规划命名空间）")
+            if prefix != map_plan_id:
+                return [], (f"第 {i} 项 placement 引用规划 {prefix!r} 的点位，"
+                            f"但会话装的是 {map_plan_id!r}")
+            it = replace(it, placement=replace(p, mark=name))
+        out.append(it)
+    return out, None
+
+
 class PlanStore:
     """规划文件存储：`{dir}/{id}.yaml`，一规划一文件；dir=None = 纯内存（测试）。"""
 

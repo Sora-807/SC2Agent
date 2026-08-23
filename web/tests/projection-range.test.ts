@@ -2,7 +2,7 @@
  * 投影板时间轴缩放（F15）—— 纯函数，不需要 DOM。
  *
  * 锁死的交互语义（用户拍板）：
- * - 宽度只由滚轮调（clamp 20..600s），拖顶层时间轴/新帧不许改变宽度；
+ * - 宽度钳制（二十七轮起上限 300s = 默认窗口 5 分钟），拖顶层时间轴/新帧不许改变宽度；
  * - 滚轮围绕光标缩放（anchorT 停在屏幕上的 frac 位置不动）；
  * - 中心跟随 = centerRange(center, span)，center 变化只移中心。
  */
@@ -17,11 +17,11 @@ describe("zoomSpan", () => {
     expect(zoomSpan(120, 0.8)).toBe(96);
   });
 
-  it("夹在 [20, 600]（再窄读不出建造周期，再宽全是空）", () => {
+  it("夹在 [20, 300]（二十七轮拍板：默认窗口 5 分钟，10 分钟拖得还是快）", () => {
     expect(zoomSpan(25, 0.1)).toBe(ZOOM_SPAN_MIN);
     expect(zoomSpan(500, 10)).toBe(ZOOM_SPAN_MAX);
     expect(ZOOM_SPAN_MIN).toBe(20);
-    expect(ZOOM_SPAN_MAX).toBe(600);
+    expect(ZOOM_SPAN_MAX).toBe(300);
   });
 });
 

@@ -21,11 +21,11 @@ import { Empty, fmtTime } from "../shell/ui";
 import type { Proposal } from "../contract";
 
 const STATUS_TONE: Record<string, string> = {
-  "待审批": "bg-fuchsia-900/60 text-fuchsia-200",
-  "已接受": "bg-emerald-900/60 text-emerald-200",
-  "部分接受": "bg-sky-900/60 text-sky-200",
-  "已拒绝": "bg-neutral-800 text-dim",
-  "已失效": "bg-amber-900/50 text-amber-300",
+  "待审批": "bg-pink-soft text-pink-fg",
+  "已接受": "bg-[color:var(--ok-bg)] text-[color:var(--ok-fg)]",
+  "部分接受": "bg-blue-soft text-blue-fg",
+  "已拒绝": "bg-raised text-dim",
+  "已失效": "bg-[color:var(--warn-bg)] text-[color:var(--warn-fg)]",
 };
 
 export function ProposalReview(props: { proposal: Proposal; onDone: () => void }) {
@@ -73,30 +73,30 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
 
   return (
     <div className="space-y-3">
-      <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3">
+      <div className="rounded border border-l1 bg-panel p-3">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className={"rounded px-1.5 text-note " + (STATUS_TONE[p.status] ?? "bg-neutral-800")}>
+          <span className={"rounded px-1.5 text-note " + (STATUS_TONE[p.status] ?? "bg-raised")}>
             {p.status}
           </span>
-          <h2 className="font-semibold text-neutral-100">{p.title_zh}</h2>
+          <h2 className="font-semibold text-strong">{p.title_zh}</h2>
           <span className="text-note text-faint">
             {p.author === "agent" ? "agent 提出" : "你提出"} · {fmtTime(p.created_at)} · {p.kind}
           </span>
         </div>
-        <div className="mt-2 rounded bg-neutral-950/60 p-2 text-neutral-300">
+        <div className="mt-2 rounded bg-inset p-2 text-dim">
           <span className="text-faint">理由：</span>{p.rationale_zh}
         </div>
         {p.anchor && (
           <div className="mt-1 text-note text-faint">
             基于 seq {p.anchor.seq}（{fmtTime(p.anchor.game_time)}）
             {anchorAge !== null && anchorAge > 0 && ` · 已过去 ${anchorAge.toFixed(0)}s`}
-            {stale && <span className="ml-1 text-amber-400">
+            {stale && <span className="ml-1 text-[color:var(--warn-fg)]">
               —— 它基于的世界已经不在了，不能盲接受
             </span>}
           </div>
         )}
         {!valid && (
-          <div className="mt-2 rounded border border-red-900 bg-red-950/40 p-2 text-red-300">
+          <div className="mt-2 rounded border border-[color:var(--err-fg)] bg-[color:var(--err-bg)] p-2 text-[color:var(--err-fg)]">
             <div className="font-medium">校验未通过 —— 不可接受，但保留可见（便于诊断与让 agent 学）</div>
             <ul className="mt-1 list-inside list-disc">
               {(p.validation?.errors ?? []).map((e, i) => <li key={i}>{e.text_zh}</li>)}
@@ -113,8 +113,8 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
         )}
       </div>
 
-      <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3">
-        <h3 className="mb-2 font-semibold text-neutral-200">改动（可逐条选择）</h3>
+      <div className="rounded border border-l1 bg-panel p-3">
+        <h3 className="mb-2 font-semibold text-strong">改动（可逐条选择）</h3>
         {p.hunks.length === 0 ? <Empty text="这条提案没有任何改动" /> : (
           <ul className="space-y-1">
             {p.hunks.map((h) => (
@@ -131,7 +131,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
                   })}
                 />
                 <div>
-                  <div className="text-neutral-200">{h.text_zh}</div>
+                  <div className="text-strong">{h.text_zh}</div>
                   <div className="text-note text-ghost">
                     {h.id} · {h.kind} · {JSON.stringify(h.payload)}
                   </div>
@@ -149,7 +149,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
           拒绝按钮在"校验未过/已失效"时**仍然可用**：理由回流正是 P3 的通道，
           连它一起藏掉，agent 就永远收不到"你这条为什么不行"。只有已处理（已接受/
           部分接受/已拒绝）才两个都关 —— 那时确实无事可做。 */}
-      <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3 space-y-2">
+      <div className="rounded border border-l1 bg-panel p-3 space-y-2">
         {!canAct && (
           <div className="text-label text-dim">
             不能接受：{(gate as { reason: string }).reason}
@@ -159,7 +159,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
           <button
             disabled={busy || picked.size === 0 || !canAct}
             title={canAct ? "" : (gate as { reason: string }).reason}
-            className="rounded border border-emerald-700 bg-emerald-900/40 px-3 py-1 text-emerald-200 disabled:opacity-40"
+            className="btn btn-ok px-3"
             onClick={() => void act(() => acceptProposal(
               p.id,
               picked.size === p.hunks.length ? undefined : [...picked],
@@ -169,7 +169,7 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
           </button>
           <button
             disabled={busy || !canReject(reason) || settled}
-            className="rounded border border-red-800 bg-red-950/40 px-3 py-1 text-red-300 disabled:opacity-40"
+            className="btn btn-danger px-3"
             title={settled
               ? "提案已处理，无需再拒"
               : reason.trim() ? "" : "拒绝必须填理由（理由会回流给 agent）"}
@@ -185,10 +185,10 @@ export function ProposalReview(props: { proposal: Proposal; onDone: () => void }
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="拒绝理由（必填）／接受时的备注（可选）—— 理由会回流给 agent，否则它会重复推同一个提案"
-            className="w-full resize-none rounded border border-neutral-800 bg-neutral-950 p-2 text-sm placeholder:text-ghost"
+            className="w-full resize-none rounded border border-l1 bg-inset p-2 text-body placeholder:text-ghost"
           />
         )}
-        {error && <div className="text-red-400">{error}</div>}
+        {error && <div className="text-[color:var(--err-fg)]">{error}</div>}
       </div>
     </div>
   );
@@ -203,15 +203,15 @@ function PreviewBlock(props: {
 }) {
   const kind = props.proposal.preview?.kind;
   return (
-    <div className="rounded border border-neutral-800 bg-neutral-900/40 p-3">
-      <h3 className="mb-2 font-semibold text-neutral-200">
+    <div className="rounded border border-l1 bg-panel p-3">
+      <h3 className="mb-2 font-semibold text-strong">
         预览 · {kind === "projection_pair" ? "双投影对比（接受前先看未来）"
           : kind === "map_overlay" ? "地图叠加"
           : kind === "graph_diff" ? "策略图 diff" : "无"}
       </h3>
       {kind === "projection_pair" ? (
         props.error ? (
-          <div className="text-amber-400">算不出预览：{props.error}</div>
+          <div className="text-[color:var(--warn-fg)]">算不出预览：{props.error}</div>
         ) : props.pair ? (
           <ProjectionPairChart current={props.pair.current} proposed={props.pair.proposed} />
         ) : (
@@ -246,16 +246,16 @@ function MapOverlayPreview(props: { proposal: Proposal }) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex overflow-hidden rounded border border-neutral-700">
+        <div className="flex overflow-hidden rounded border border-l2">
           <button
             onClick={() => setShow("current")}
             className={"px-2 py-0.5 text-note " + (show === "current"
-              ? "bg-neutral-700 text-neutral-100" : "text-neutral-400")}
+              ? "bg-raised text-strong" : "text-dim")}
           >当前</button>
           <button
             onClick={() => setShow("proposed")}
             className={"px-2 py-0.5 text-note " + (show === "proposed"
-              ? "bg-neutral-700 text-neutral-100" : "text-neutral-400")}
+              ? "bg-raised text-strong" : "text-dim")}
           >提案后</button>
         </div>
         <span className={"text-note text-faint "}>
@@ -264,7 +264,7 @@ function MapOverlayPreview(props: { proposal: Proposal }) {
             : "当前静态面（含已接受的覆盖层）"}
         </span>
       </div>
-      <div className="h-[46vh] min-h-[320px] overflow-hidden rounded border border-neutral-800">
+      <div className="h-[46vh] min-h-[320px] overflow-hidden rounded border border-l1">
         <MapCanvas
           map={map}
           world={null}

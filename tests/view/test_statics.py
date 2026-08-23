@@ -3,7 +3,7 @@
 这三条测试守的是契约里最容易悄悄坏掉的三件事：
 zh 名有没有下发（前端不做 i18n）、ADR-0027 的换算有没有算好、词表有没有被加工。
 """
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.geometry import Point2
 from tactical_map.base import instantiate_spawn, load_ladder_map
 from tactical_map.placement import BuildSlot
@@ -23,7 +23,7 @@ def _ladder_layer():
 # ---------------- catalog ----------------
 
 def test_catalog_static_covers_everything_with_zh_names():
-    cat = load_terran()
+    cat = load_all()
     out = catalog_static(cat)
     assert len(out.entries) == len(cat.where())
     assert [e.stable_id for e in out.entries] == sorted(e.stable_id for e in cat.where())
@@ -35,7 +35,7 @@ def test_catalog_static_covers_everything_with_zh_names():
 
 def test_catalog_static_keeps_footprint_size_for_buildings():
     """建筑必须带 size —— 前端画 footprint 靠它（经 adapt 换算，前端不算）。"""
-    out = catalog_static(load_terran())
+    out = catalog_static(load_all())
     by_id = {e.stable_id: e for e in out.entries}
     assert by_id["terran/supplydepot"].size == 2
     assert by_id["terran/barracks"].size == 3
@@ -44,7 +44,7 @@ def test_catalog_static_keeps_footprint_size_for_buildings():
 
 
 def test_catalog_static_is_json_serializable():
-    d = to_json(catalog_static(load_terran()))
+    d = to_json(catalog_static(load_all()))
     assert isinstance(d["entries"], list)
     assert isinstance(d["entries"][0]["cost"], dict)
 

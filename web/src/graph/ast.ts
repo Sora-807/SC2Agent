@@ -4,6 +4,9 @@
  * 词表是闭集且由后端下发（`static/schema`），所以这里只做**结构到文本**的映射，
  * 不判断合法性 —— 合法性是编译器的事，前端重写一份只会两边不一致。
  * F4 用它显示分支条件；F9 的编辑器会复用同一套结构认知。
+ *
+ * 中文名（I1/I4，rev 12）：谓词/运算符/动作的 zh 从 `static/schema` 的 name_zh 读，
+ * 前端不抄第二份词表（红线 C4）。没拿到 schema 时退回 identifier，行为同旧版。
  */
 import type { SchemaStatic } from "../contract";
 
@@ -12,39 +15,63 @@ type Node = unknown;
 const isRec = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** 运算符用中缀显示；谓词用 `名(参数=值)`；引用节点用中文标注 */
-export function renderValue(node: Node, depth = 0): string {
+/** 词表中文名查找表（vocabOf 从 schema 建出来；空表 = 无 schema，退回 identifier） */
+export interface Vocab {
+  pred: Record<string, string>;
+  ops: Record<string, string>;
+  acts: Record<string, string>;
+}
+
+export const EMPTY_VOCAB: Vocab = { pred: {}, ops: {}, acts: {} };
+
+export function vocabOf(schema: SchemaStatic | null): Vocab {
+  if (!schema?.predicates) return EMPTY_VOCAB;
+  return {
+    pred: Object.fromEntries(
+      Object.entries(schema.predicates).map(([k, v]) => [k, v.name_zh || k]),
+    ),
+    ops: Object.fromEntries(
+      Object.entries(schema.operators ?? {}).map(([k, v]) => [k, v.name_zh || k]),
+    ),
+    acts: Object.fromEntries(
+      Object.entries(schema.actions ?? {}).map(([k, v]) => [k, v.name_zh || k]),
+    ),
+  };
+}
+
+/** 运算符用中缀显示（rev 12 起用词表中文名，如 ≥）；谓词用 `中文名(参数=值)`；引用节点用中文标注 */
+export function renderValue(node: Node, depth = 0, vocab: Vocab = EMPTY_VOCAB): string {
   if (node === null || node === undefined) return "null";
   if (typeof node === "number" || typeof node === "boolean") return String(node);
   if (typeof node === "string") return node;
-  if (Array.isArray(node)) return "[" + node.map((v) => renderValue(v, depth + 1)).join(", ") + "]";
+  if (Array.isArray(node)) return "[" + node.map((v) => renderValue(v, depth + 1, vocab)).join(", ") + "]";
   if (!isRec(node)) return String(node);
 
-  if ("param" in node) return "参数." + String(node["param"]);
-  if ("var" in node) return "变量." + String(node["var"]);
-  if ("ref" in node) return "别名." + String(node["ref"]);
-  if ("const" in node) return renderValue(node["const"], depth + 1);
+  if ("param" in node) return "参数 " + String(node["param"]);
+  if ("var" in node) return "变量 " + String(node["var"]);
+  if ("ref" in node) return "别名 " + String(node["ref"]);
+  if ("const" in node) return renderValue(node["const"], depth + 1, vocab);
 
   const op = node["op"];
   if (typeof op !== "string") return JSON.stringify(node);
 
   const args = node["args"];
   if (Array.isArray(args)) {
-    const parts = args.map((a) => renderValue(a, depth + 1));
+    const parts = args.map((a) => renderValue(a, depth + 1, vocab));
     if (op === "not") return "非(" + parts.join("") + ")";
     if (op === "and" || op === "or") {
       const join = op === "and" ? " 且 " : " 或 ";
       const body = parts.join(join);
       return depth > 0 ? "(" + body + ")" : body;
     }
-    return parts.join(" " + op + " ");
+    return parts.join(" " + (vocab.ops[op] ?? op) + " ");
   }
 
-  // 命名参数谓词：{op: arrived, group: inf, target: ..., radius: 8}
+  // 命名参数谓词：{op: arrived, group: inf, target: ..., radius: 8} → 已抵达(group=inf, …)
   const named = Object.entries(node)
     .filter(([k]) => k !== "op")
-    .map(([k, v]) => k + "=" + renderValue(v, depth + 1));
-  return op + "(" + named.join(", ") + ")";
+    .map(([k, v]) => k + "=" + renderValue(v, depth + 1, vocab));
+  return (vocab.pred[op] ?? op) + "(" + named.join(", ") + ")";
 }
 
 export interface RenderedBranch {
@@ -61,30 +88,36 @@ export function renderBranches(
   schema: SchemaStatic | null,
 ): RenderedBranch[] {
   const forbiddenDo: Record<string, string> = schema?.forbidden["do_ops"] ?? {};
+  const vocab = vocabOf(schema);
   return branches.map((b, index) => ({
     id: typeof b["branch_id"] === "string" ? b["branch_id"] : null,
     index,
-    when: "when" in b ? renderValue(b["when"]) : null,
+    when: "when" in b ? renderValue(b["when"], 0, vocab) : null,
     actions: (Array.isArray(b["do"]) ? (b["do"] as Record<string, unknown>[]) : []).map((a) => ({
-      text: renderAction(a),
+      text: renderAction(a, vocab),
       forbidden: typeof a["op"] === "string" ? forbiddenDo[a["op"]] ?? null : null,
     })),
   }));
 }
 
-function renderAction(a: Record<string, unknown>): string {
+function renderAction(a: Record<string, unknown>, vocab: Vocab = EMPTY_VOCAB): string {
   const op = String(a["op"] ?? "?");
   if (op === "exit_step" || op === "exit_strategy") {
-    return op + "(" + String(a["kind"]) + "/" + String(a["reason"]) + ")";
+    return (op === "exit_step" ? "转场" : "结束策略")
+      + "(" + String(a["kind"]) + "/" + String(a["reason"]) + ")";
   }
   if (op === "group_action") {
     const params = isRec(a["params"])
-      ? Object.entries(a["params"]).map(([k, v]) => k + "=" + renderValue(v, 1)).join(", ")
+      ? Object.entries(a["params"]).map(([k, v]) => k + "=" + renderValue(v, 1, vocab)).join(", ")
       : "";
-    return `${String(a["group_slot"])}·${String(a["type"])} → ${String(a["action_atom"])}(${params})`;
+    const atom = String(a["action_atom"]);
+    return `${String(a["group_slot"])}·${String(a["type"])} → ${vocab.acts[atom] ?? atom}(${params})`;
   }
   if (op === "set_variable" || op === "set_local") {
-    return op + " " + String(a["name"]) + " = " + renderValue(a["value"], 1);
+    return "设变量 " + String(a["name"]) + " = " + renderValue(a["value"], 1, vocab);
+  }
+  if (op === "start_timer" || op === "stop_timer") {
+    return (op === "start_timer" ? "起表 " : "停表 ") + String(a["name"]);
   }
   return op;
 }

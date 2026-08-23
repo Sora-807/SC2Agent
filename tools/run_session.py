@@ -30,7 +30,7 @@ for _p in (ROOT / "modules", ROOT / "tools", ROOT):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from game.catalog import load_terran  # noqa: E402
+from game.catalog import load_all  # noqa: E402
 from game.geometry import Point2  # noqa: E402
 from game.ports import ApplyResult  # noqa: E402
 from game.production import QueueItem  # noqa: E402
@@ -109,10 +109,11 @@ class Session:
 
     def __init__(self, *, driver: str, reader: _CommandReader,
                  cc: Point2, map_name: str = "LadderMap",
-                 map_plan: str | None = None) -> None:
+                 map_plan: str | None = None,
+                 strategy_file: str | None = None) -> None:
         self.driver = driver
         self.reader = reader
-        self.catalog = load_terran()
+        self.catalog = load_all()
         self.sink = _Sink()
         self.ring = OpRing(maxlen=400)
         self.seq = 0
@@ -123,12 +124,21 @@ class Session:
         tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
         _, layout = sorted(tpl.spawns.items())[0]
         self.layer = instantiate_spawn(tpl, layout, cc)
+        # I8：预设固定建造点名进 layer（与 OfflineSession 同一语义，见 api/session.py）
+        from tactical_map.reserved import reserved_marks
+        self.layer.pos_marks.update(reserved_marks(self.catalog))
 
         clock = lambda: self.game_time  # noqa: E731
         self.reservations = WorkerReservations()
         self.allocator = Allocator(catalog=self.catalog, reservations=self.reservations)
-        self.manifest = parse_strategy(DEFAULT_STRATEGY)
-        self.assembly = parse_assembly(DEFAULT_ASSEMBLY)
+        # 策略装配（二十七轮）：strategy_file 覆盖内置常量；坏文件带原因抛出
+        if strategy_file:
+            from view.strategies import load_strategy_file
+
+            self.manifest, self.assembly = load_strategy_file(Path(strategy_file))
+        else:
+            self.manifest = parse_strategy(DEFAULT_STRATEGY)
+            self.assembly = parse_assembly(DEFAULT_ASSEMBLY)
         self.engine = FlowEngine(
             self.manifest, self.assembly,
             RecordingPort(self.sink, "flow", self.ring, clock=clock),
@@ -143,12 +153,15 @@ class Session:
             catalog=self.catalog, engine=self.engine, runtime=self.runtime, keeper=self.keeper,
             ring=self.ring, planner=Planner(self.catalog), region_layer=self.layer,
             manifest=self.manifest, assembly=self.assembly, spawn="bl",
-            frame_source="live", enemy_race="protoss", my_race="terran",
+            # enemy_race 起手未知（对手是 Random）：首个可见敌方单位出现时推导覆盖
+            #（写死 "protoss" 是假数据 —— 复盘清单的「人族 vs ?」就出不来）
+            frame_source="live", enemy_race=None, my_race="terran",
             projection_plan=[ProductionModuleInstance(
                 instance_id="m0", module_ref="basic_opening", version=1, params={})])
         self._statics_done = False
         #: 最近一帧的 GameState —— 投影要用它当起点（父进程那边只有帧）
         self._last_gs: GameState | None = None
+        self._enemy_race: str | None = None
 
     # ---- 每帧 ----
 
@@ -156,6 +169,11 @@ class Session:
         self._last_gs = gs
         self.seq = gs.seq
         self.game_time = gs.game_time
+        if self._enemy_race is None:
+            r = self._derive_enemy_race(gs)
+            if r is not None:
+                self._enemy_race = r
+                self.producer.enemy_race = r
         if not self._statics_done:
             self._statics_done = True
             for frame in self.producer.statics(gs):
@@ -173,6 +191,19 @@ class Session:
             _emit(frame)
 
     # ---- 命令 ----
+
+    def _derive_enemy_race(self, gs: GameState) -> str | None:
+        """首个可见敌方单位的 stable id 前缀（terran/protoss/zerg）。没见过敌人 = None。"""
+        from game import Owner
+
+        for u in gs.units:
+            if u.owner is not Owner.ENEMY:
+                continue
+            entry = self.catalog.by_burnysc2_name(
+                self.catalog.normalize_burnysc2_name(u.type_name.upper()))
+            if entry is not None and "/" in entry.stable_id:
+                return entry.stable_id.split("/", 1)[0]
+        return None
 
     def _apply(self, cmd: dict) -> None:
         op = str(cmd.get("op") or "")
@@ -342,6 +373,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="会话子进程（帧出 stdout、命令入 stdin）")
     ap.add_argument("--driver", choices=("sim", "sc2"), default="sim")
     ap.add_argument("--map", default="LadderMap")
+    ap.add_argument("--strategy-file", default=None,
+                    help="策略文件（strategy+assembly 两段 YAML）；缺省 = 内置常量")
     ap.add_argument("--map-plan", default=None,
                     help="地图规划文件路径（会话装配用它；缺省 = 手写出厂模板）")
     ap.add_argument("--seconds", type=float, default=600.0, help="时长上限（游戏秒）")
@@ -356,7 +389,8 @@ def main() -> int:
     reader.start()
     try:
         session = Session(driver=args.driver, reader=reader, cc=Point2(30.5, 30.5),
-                          map_name=args.map, map_plan=args.map_plan)
+                          map_name=args.map, map_plan=args.map_plan,
+                          strategy_file=args.strategy_file)
         if args.driver == "sim":
             _run_sim(session, seconds=args.seconds, workers=args.workers,
                      minerals=args.minerals, tick_seconds=args.tick_seconds)

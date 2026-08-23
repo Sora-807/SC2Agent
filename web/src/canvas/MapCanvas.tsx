@@ -19,7 +19,7 @@ import type { CatalogStatic, EconomyFrame, MapStatic, WorldFrame, ProductionFram
 import { slotTl, type MarkView, type SlotView } from "../planning/map-draft";
 import { bakeGrid, bakeTerrain, decodeGrid, regionColor, terrainClassifier, terrainKindZh, type Palette } from "./grid";
 import { clusterUnits } from "./cluster";
-import { ALPHA_BUDGET, COLOR, LOD, SHAPE, fontCss, ownerColor, slotColor } from "./theme";
+import { ALPHA_BUDGET, COLOR, LOD, SHAPE, canvasBase, fontCss, ownerColor, slotColor } from "./theme";
 import { T } from "../shell/tokens";
 import {
   fitViewport, resizeViewport, screenToWorld, worldToScreen, zoomAt, type Viewport,
@@ -167,7 +167,7 @@ export function MapCanvas(props: {
   const terrainImage = useMemo(() => {
     const t = props.map.terrain;
     if (!t?.height) return null;
-    return bakeTerrain(decodeGrid(t.height), t.pathable ? decodeGrid(t.pathable) : null);
+    return bakeTerrain(decodeGrid(t.height), t.pathable ? decodeGrid(t.pathable) : null, true);
   }, [props.map]);
 
   // F16：可建区位图（placeable=1 淡绿 tint）—— 编辑背景，回答「哪里能放」。
@@ -232,8 +232,12 @@ export function MapCanvas(props: {
   // 绘制循环读**最新** props 与烤好的位图，但不因它们变化重建 rAF（根因 C）。
   // 原来依赖里有 props（每次渲染都是新对象）→ 每渲染拆一次、建一次 rAF 循环。
   const live = useRef({ props, baked: { regionImage, gridImages, terrainImage, placeableImage } });
+  // 脏标记（二十二轮）：live 地图卡顿的主因 = rAF 60fps 无条件全量重画。
+  // 每次渲染（帧/图层/选中变了）置脏；绘制循环只在脏或平滑插值未收敛时才画。
+  const dirty = useRef(1);
   useEffect(() => {
     live.current = { props, baked: { regionImage, gridImages, terrainImage, placeableImage } };
+    dirty.current += 1;
   });
 
   // 绘制循环
@@ -244,9 +248,14 @@ export function MapCanvas(props: {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    let painted = 0;
     const draw = (): void => {
       raf = requestAnimationFrame(draw);
       const { props: p, baked } = live.current;
+      const alpha = lerpAlpha(prev.current, cur.current, p.smooth);
+      const animating = p.smooth && alpha < 1;
+      if (!animating && painted === dirty.current) return;   // 空转跳过
+      painted = dirty.current;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       if (canvas.width !== Math.floor(vp.cw * dpr)) canvas.width = Math.floor(vp.cw * dpr);
       if (canvas.height !== Math.floor(vp.ch * dpr)) canvas.height = Math.floor(vp.ch * dpr);
@@ -254,7 +263,7 @@ export function MapCanvas(props: {
       ctx.clearRect(0, 0, vp.cw, vp.ch);
       paint(ctx, vp, p, baked, {
         prevWorld: prev.current?.world ?? null,
-        alpha: lerpAlpha(prev.current, cur.current, p.smooth),
+        alpha,
         slotGhost: slotGhost.current,
       });
     };
@@ -266,8 +275,8 @@ export function MapCanvas(props: {
     <div ref={hostRef} className="relative h-full w-full">
       <canvas
         ref={canvasRef}
-        style={{ width: vp?.cw ?? size.w, height: vp?.ch ?? size.h }}
-        className="block cursor-crosshair rounded bg-[#0d1117]"
+        style={{ width: vp?.cw ?? size.w, height: vp?.ch ?? size.h, background: canvasBase().void }}
+        className="block cursor-crosshair rounded"
         onPointerDown={(e) => {
           drag.current = { x: e.clientX, y: e.clientY, travel: 0, mode: "pan" };
           // F14 2b：点到可拖槽位 → 进入槽位拖动模式（不 pan、不选单位）
@@ -368,7 +377,7 @@ export function MapCanvas(props: {
       </div>
       {/* F18：鼠标格子信息悬浮窗（左上角）—— 坐标 + 地形分类；地形未下发时如实只给坐标 */}
       {hoverCell && (
-        <div className={"pointer-events-none absolute left-2 top-2 rounded border border-neutral-700 bg-neutral-950/85 px-2 py-1 text-neutral-300 " + T.note}>
+        <div className={"pointer-events-none absolute left-2 top-2 rounded border border-l2 bg-inset px-2 py-1 text-dim " + T.note}>
           ({hoverCell.world[0].toFixed(1)}, {hoverCell.world[1].toFixed(1)})
           {(() => {
             const info = classify ? classify(hoverCell.cell[0], hoverCell.cell[1]) : null;
@@ -452,7 +461,7 @@ function paint(
   const names = shortNameMap(props.catalog);
 
   // 底：terrain 为 null 时用纯色 —— 后端 B4 之前不伪造地形（不静默）
-  ctx.fillStyle = COLOR.void;
+  ctx.fillStyle = canvasBase().void;
   const [x0, y0] = worldToScreen(vp, 0, map.size[1]);
   ctx.fillRect(x0, y0, map.size[0] * vp.scale, map.size[1] * vp.scale);
   if (layersOn(props, "terrain") && baked.terrainImage) {
@@ -578,7 +587,7 @@ function paint(
       ctx.fill();
       ctx.globalAlpha = 1;
       if (st && st.workers > 0) {
-        ctx.fillStyle = COLOR.text;
+        ctx.fillStyle = canvasBase().text;
         ctx.font = fontCss("note");
         ctx.fillText(String(st.workers), sx + 4, sy - 4);
       }
@@ -898,7 +907,7 @@ function drawBuildingLabel(
   if (vp.scale < LOD.buildingLabelFull) {
     // 字形级：1 字 + 状态色（放不下两行也要能认出这是什么）
     ctx.font = fontCss("metric", 600);
-    ctx.fillStyle = COLOR.text;
+    ctx.fillStyle = canvasBase().text;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(short.slice(0, 1), cx, cy);
@@ -912,7 +921,7 @@ function drawBuildingLabel(
   if (ctx.measureText(short).width > box.w - 2) {
     // 宽度不够放全名：退到字形级
     ctx.font = fontCss("metric", 600);
-    ctx.fillStyle = COLOR.text;
+    ctx.fillStyle = canvasBase().text;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(short.slice(0, 1), cx, cy);
@@ -920,7 +929,7 @@ function drawBuildingLabel(
     ctx.textBaseline = "alphabetic";
     return;
   }
-  ctx.fillStyle = COLOR.text;
+  ctx.fillStyle = canvasBase().text;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   if (line2 !== null && box.h >= 26) {
@@ -991,19 +1000,20 @@ function drawUnitChip(
   const x = sx - w / 2;
   const y = sy - h / 2;
 
-  ctx.fillStyle = "rgba(13,17,23,0.82)";
+  // 白底黑字 + owner 色边（二十二轮：暗色硬编码底在白画布上成了黑块，字看不清）
+  ctx.fillStyle = canvasBase().void;
   roundRect(ctx, x, y, w, h, SHAPE.unit.chipRadius);
   ctx.fill();
   ctx.strokeStyle = ownerColor(c.owner);
   ctx.lineWidth = 1.25;
   roundRect(ctx, x, y, w, h, SHAPE.unit.chipRadius);
   ctx.stroke();
-  ctx.fillStyle = COLOR.text;
+  ctx.fillStyle = canvasBase().text;
   ctx.textBaseline = "middle";
   ctx.fillText(text, x + padX, y + h / 2 + 0.5);
   if (showGroup && c.group_id) {
     ctx.font = fontCss("note");
-    ctx.fillStyle = "#fde68a";
+    ctx.fillStyle = COLOR.warn;   // 白画布上可读的琥珀（亮黄 #fde68a 是暗底时代的）
     ctx.fillText(c.group_id, x + w + 3, y + h / 2 + 0.5);
     ctx.font = fontCss("label", 600);
   }

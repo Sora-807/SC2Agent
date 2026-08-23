@@ -2,10 +2,10 @@
 from collections import Counter
 
 from game import GameState, Grid, Order, Owner, Point2, Unit, WorkerTask
-from game.catalog import load_terran
+from game.catalog import load_all
 from production.worker import WorkerAllocator
 
-CAT = load_terran()
+CAT = load_all()
 ALLOC = WorkerAllocator(CAT)
 
 

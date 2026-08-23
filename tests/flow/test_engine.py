@@ -6,10 +6,10 @@
 from driver.fake import FakeGamePort
 from flow.engine import DEFAULT_MAX_STEP_TRANSITIONS, FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
-from game.catalog import load_terran
+from game.catalog import load_all
 from game import GameState, Grid, Owner, Point2, Unit
 
-CAT = load_terran()
+CAT = load_all()
 
 STRATEGY_YAML = """
 id: simple_push
@@ -668,3 +668,179 @@ def test_unit_death_reasserts_order_to_survivors():
     assert [o.unit_tags for o in port.submitted][-1] == [100, 101, 102]
     eng.on_game_state(_gs(2, 3, 2.0))
     assert len(port.submitted) == 2  # 稳定后不再重发
+
+
+# ---------------- 二十六轮 T8：timer 族 + locals + engaged/under_attack ----------------
+
+
+def _asm(strategy_ref: str):
+    return parse_assembly(ASSEMBLY_YAML.replace("strategy_ref: simple_push",
+                                                f"strategy_ref: {strategy_ref}"))
+
+
+TIMER_STRATEGY = """
+id: timer_probe
+version: 1
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: wait
+steps:
+  - step_id: wait
+    locals: [burst]
+    branches:
+      - when: {op: ">=", args: [{local: burst}, {const: 2.0}]}
+        do: [{op: exit_strategy, kind: done, reason: READ}]
+      - when: {op: ">=", args: [{op: timer_elapsed, name: raid}, {const: 1.0}]}
+        do: [{op: set_local, name: burst, value: {op: timer_elapsed, name: raid}}
+        ]
+      - do: [{op: start_timer, name: raid}]
+"""
+
+
+def test_timer_start_elapsed_stop_and_local_carry():
+    """T8 落地：start_timer 幂等起算 → timer_elapsed 增长 → {local} 在同 step 内可读写。"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(TIMER_STRATEGY), _asm("timer_probe"),
+                     port, catalog=CAT)
+    # t=0 起表（else 分支；幂等 = 后续帧重执行不归零）；t=1 elapsed>=1 → burst=1；
+    # t=2 burst=2；t=3 burst>=2 → exit_strategy READ
+    eng.on_game_state(_gs(0, 4, 0.0))
+    eng.on_game_state(_gs(1, 4, 1.0))
+    eng.on_game_state(_gs(2, 4, 2.0))
+    eng.on_game_state(_gs(3, 4, 3.0))
+    snap = eng.snapshot()
+    assert snap["exit_record"] == {"kind": "done", "reason": "READ"}
+    assert snap["locals"] == {"burst": 2.0}
+    assert snap["timers"] == {"raid": 3.0}
+
+
+def test_stop_timer_freezes_elapsed():
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(TIMER_STRATEGY.replace(
+        "- do: [{op: start_timer, name: raid}]",
+        "- do: [{op: start_timer, name: raid}, {op: stop_timer, name: raid}]")),
+        _asm("timer_probe"), port, catalog=CAT)
+    # 表起即停：elapsed 冻结在 0，永远到不了 3 —— 留在 wait（未启动语义的镜像：停着的表不计时）
+    for seq, t in [(0, 0.0), (1, 5.0), (2, 30.0)]:
+        eng.on_game_state(_gs(seq, 4, t))
+    snap = eng.snapshot()
+    assert snap["active_step"] == "wait" and not snap["done"]
+    assert snap["timers"] == {"raid": 0.0}
+
+
+def test_locals_reset_on_step_entry():
+    """换 step 清空 locals（spec-003 §3.2）：上个 step 写的值不进新 step，{local} 读到 None。"""
+    port = FakeGamePort(script=[])
+    st = """
+id: timer_probe
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: wait
+steps:
+  - step_id: wait
+    locals: [burst]
+    branches:
+      - when: {op: ">=", args: [{op: timer_elapsed, name: raid}, {const: 1.0}]}
+        do: [{op: set_local, name: burst, value: {const: 7}},
+             {op: exit_step, kind: done, reason: GO}]
+      - do: [{op: start_timer, name: raid}]
+  - step_id: after
+    locals: [burst]
+    branches:
+      - when: {op: "==", args: [{local: burst}, {const: 7}]}
+        do: [{op: exit_strategy, kind: failed, reason: LEAKED}]
+      - do: [{op: exit_strategy, kind: done, reason: CLEAN}]
+edges:
+  - {from: wait, to: after, kind: done, reason: GO}
+"""
+    eng = FlowEngine(parse_strategy(st), _asm("timer_probe"), port, catalog=CAT)
+    eng.on_game_state(_gs(0, 4, 0.0))
+    eng.on_game_state(_gs(1, 4, 1.0))
+    eng.on_game_state(_gs(2, 4, 2.0))
+    snap = eng.snapshot()
+    # wait 里写过的 burst=7 不该漏进 after（局部 = step 作用域；转场即清空）
+    assert snap["exit_record"] == {"kind": "done", "reason": "CLEAN"}
+    assert snap["locals"] == {}
+
+
+COMBAT_STRATEGY = """
+id: combat_probe
+version: 1
+group_slots: [main]
+params: {}
+variables: {}
+initial_step: watch
+steps:
+  - step_id: watch
+    branches:
+      - when: {op: under_attack, group: main}
+        do: [{op: exit_strategy, kind: failed, reason: HIT}]
+      - when: {op: engaged, group: main}
+        do: [{op: exit_step, kind: done, reason: FIGHT}]
+      - do: []
+  - step_id: fight
+    branches:
+      - do: [{op: exit_strategy, kind: done, reason: OK}]
+edges:
+  - {from: watch, to: fight, kind: done, reason: FIGHT}
+"""
+
+
+def _gs_with_enemy(seq: int, t: float, *, enemy_pos=None, hp: float = 45.0,
+                   attack_order: bool = False):
+    gs = _gs(seq, 4, t)
+    for u in gs.units:
+        u.hp = hp
+        if attack_order:
+            from game import Order
+            u.orders = [Order(ability="Attack", target_pos=Point2(9.0, 9.0))]
+    if enemy_pos is not None:
+        from game import Order as _O
+        gs.units.append(Unit(tag=900, type_name="ZERGLING", position=enemy_pos,
+                             owner=Owner.ENEMY, hp=35.0, hp_max=35.0, shield=0.0,
+                             energy=0.0, build_progress=1.0, orders=[_O(ability="Attack")]))
+    return gs
+
+
+def test_engaged_via_enemy_in_range():
+    """敌人贴脸（射程+缓冲内）→ engaged 成立 → 转场。"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(COMBAT_STRATEGY), _asm("combat_probe"),
+                     port, catalog=CAT)
+    eng.on_game_state(_gs_with_enemy(0, 0.0))                 # 无敌：等待
+    assert eng.snapshot()["active_step"] == "watch"
+    eng.on_game_state(_gs_with_enemy(1, 1.0, enemy_pos=Point2(1.5, 0.0)))  # 敌入射程
+    assert eng.snapshot()["active_step"] == "fight"
+
+
+def test_engaged_via_attack_order_even_at_range():
+    """远敌但有攻击命令 → engaged（在打）成立。"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(COMBAT_STRATEGY), _asm("combat_probe"),
+                     port, catalog=CAT)
+    eng.on_game_state(_gs_with_enemy(0, 0.0, attack_order=True))
+    assert eng.snapshot()["active_step"] == "fight"
+
+
+def test_under_attack_via_hp_drop_within_window():
+    """掉血后 5s 内算受击；窗口过后不再算（hp 历史推导）。"""
+    port = FakeGamePort(script=[])
+    eng = FlowEngine(parse_strategy(COMBAT_STRATEGY), _asm("combat_probe"),
+                     port, catalog=CAT)
+    eng.on_game_state(_gs_with_enemy(0, 0.0))                    # 基线快照
+    eng.on_game_state(_gs_with_enemy(1, 1.0, hp=30.0))           # 掉血（帧尾记账）
+    assert eng.snapshot()["active_step"] == "watch"              # 本帧还看不见（上一帧为准）
+    eng.on_game_state(_gs_with_enemy(2, 2.0, hp=30.0))           # 下一帧起窗口内 → HIT
+    snap = eng.snapshot()
+    assert snap["exit_record"] == {"kind": "failed", "reason": "HIT"}
+
+    # 另一局：掉血后过了窗口（无新伤）→ under_attack False，无敌也不 engaged → 留在 watch
+    eng2 = FlowEngine(parse_strategy(COMBAT_STRATEGY), _asm("combat_probe"),
+                      port, catalog=CAT)
+    eng2.on_game_state(_gs_with_enemy(0, 0.0))
+    eng2.on_game_state(_gs_with_enemy(1, 10.0, hp=30.0))         # 掉血发生在 t=10
+    eng2.on_game_state(_gs_with_enemy(2, 16.0, hp=30.0))         # 6s 后，窗口已过
+    snap2 = eng2.snapshot()
+    assert snap2["active_step"] == "watch" and not snap2["done"]

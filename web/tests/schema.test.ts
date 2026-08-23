@@ -50,11 +50,20 @@ describe("static/schema 不变式", () => {
     expect(schema.actions["hold_position"]?.params).toEqual([]);
   });
 
-  it("运算符 arity 表：and/or 不限、not 恰好一个", () => {
-    expect(schema.operators["and"]).toEqual({ min_args: 2, max_args: null });
-    expect(schema.operators["or"]).toEqual({ min_args: 2, max_args: null });
-    expect(schema.operators["not"]).toEqual({ min_args: 1, max_args: 1 });
-    expect(schema.operators[">="]).toEqual({ min_args: 2, max_args: 2 });
+  it("运算符 arity 表：and/or 不限、not 恰好一个（rev 12 起还带 name_zh）", () => {
+    expect(schema.operators["and"]).toEqual({ name_zh: "且", min_args: 2, max_args: null });
+    expect(schema.operators["or"]).toEqual({ name_zh: "或", min_args: 2, max_args: null });
+    expect(schema.operators["not"]).toEqual({ name_zh: "非", min_args: 1, max_args: 1 });
+    expect(schema.operators[">="]).toEqual({ name_zh: "≥", min_args: 2, max_args: 2 });
+    // 每个谓词/动作都带中文名（I1：前端不抄第二份词表，缺了立即显形）
+    for (const [name, spec] of Object.entries(schema.predicates)) {
+      expect(spec.name_zh, "predicates." + name + " 缺 name_zh").toBeTruthy();
+    }
+    for (const [name, spec] of Object.entries(schema.actions)) {
+      expect(spec.name_zh, "actions." + name + " 缺 name_zh").toBeTruthy();
+    }
+    expect(schema.predicates["group_count"]?.name_zh).toBe("组内数量");
+    expect(schema.actions["attack_move_to"]?.name_zh).toBe("攻击移动");
   });
 
   it("forbidden 是开放分组表，后端新增分组会流通过来（rev 5）", () => {

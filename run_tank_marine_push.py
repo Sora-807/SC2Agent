@@ -1,7 +1,7 @@
 """步坦协同真机全链验证（T7，需 SC2）：20 步兵 + 4 坦克循环蛙跳攻到敌方主矿。
 
 双运行时联动（同 port）：production（V3 build order + 枪兵/坦克维持）与 flow（T5 循环蛙跳 +
-catalog=load_terran 归一化）每帧并行消费 GameState。
+catalog=load_all 归一化）每帧并行消费 GameState。
 
 生产半边：macro V3 = 农民优先(间插×11) → depot×4 → 兵营×2+反应堆×2（双倍机枪 = 4 训练槽）
 → 气矿×2(气工紧跟) → 工厂+科技实验室 → 工程站+军械库 → 机枪×20 → 坦克×4；
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent / "modules"))
 from loguru import logger
 
 from game import QueueItem, Owner, Point2
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementExact, PlacementInRegion
 from driver.sc2_adapter import SC2GamePort
 from flow.allocator import Allocator
@@ -104,7 +104,7 @@ class TankFullFlowSink:
         self._port.submit_operations = logging_submit  # type: ignore[method-assign]
         # ADR-0030 会话装配：一张 lease 表（Allocator=WorkerPoolPort）+ 征用登记 + 经济维持器，
         # 三方（战斗组 / 生产建造 / 采矿）共用同一份所有权，flow 与 production 都不互相 import。
-        cat = load_terran()
+        cat = load_all()
         self._reservations = WorkerReservations()
         self._alloc = Allocator(cat, reservations=self._reservations)
         self._economy = EconomyKeeper(cat, self._port, region_layer=layer,

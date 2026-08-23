@@ -1,0 +1,1006 @@
+{
+  "protoss/probe": {
+    "burnysc2_name": "PROBE",
+    "display_name_zh": "探针",
+    "short_name_zh": "探针",
+    "role": "worker",
+    "capabilities": [
+      "gather",
+      "build"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 0,
+      "supply": 1
+    },
+    "build_time": 12,
+    "produced_by": "protoss/nexus",
+    "prerequisites": []
+  },
+  "protoss/zealot": {
+    "burnysc2_name": "ZEALOT",
+    "display_name_zh": "狂热者",
+    "short_name_zh": "狂热",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 2
+    },
+    "build_time": 27,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/gateway"
+    ]
+  },
+  "protoss/stalker": {
+    "burnysc2_name": "STALKER",
+    "display_name_zh": "追猎者",
+    "short_name_zh": "追猎",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 125,
+      "vespene": 50,
+      "supply": 2
+    },
+    "build_time": 27,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ]
+  },
+  "protoss/sentry": {
+    "burnysc2_name": "SENTRY",
+    "display_name_zh": "哨兵",
+    "short_name_zh": "哨兵",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 100,
+      "supply": 2
+    },
+    "build_time": 23,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ]
+  },
+  "protoss/adept": {
+    "burnysc2_name": "ADEPT",
+    "display_name_zh": "升华者",
+    "short_name_zh": "升华",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 25,
+      "supply": 2
+    },
+    "build_time": 33,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ],
+    "variants": [
+      "ADEPTPHASESHIFT"
+    ]
+  },
+  "protoss/hightemplar": {
+    "burnysc2_name": "HIGHTEMPLAR",
+    "display_name_zh": "高阶圣堂武士",
+    "short_name_zh": "高圣",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 50,
+      "vespene": 150,
+      "supply": 2
+    },
+    "build_time": 40,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/templararchive"
+    ]
+  },
+  "protoss/darktemplar": {
+    "burnysc2_name": "DARKTEMPLAR",
+    "display_name_zh": "黑暗圣堂武士",
+    "short_name_zh": "黑圣",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 125,
+      "vespene": 125,
+      "supply": 2
+    },
+    "build_time": 40,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/darkshrine"
+    ]
+  },
+  "protoss/archon": {
+    "burnysc2_name": "ARCHON",
+    "display_name_zh": "执政官",
+    "short_name_zh": "执政",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 175,
+      "vespene": 275,
+      "supply": 4
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "protoss/observer": {
+    "burnysc2_name": "OBSERVER",
+    "display_name_zh": "观察者",
+    "short_name_zh": "观察",
+    "role": "combat",
+    "capabilities": [
+      "move"
+    ],
+    "cost": {
+      "minerals": 25,
+      "vespene": 75,
+      "supply": 1
+    },
+    "build_time": 18,
+    "produced_by": "protoss/roboticsfacility",
+    "prerequisites": [
+      "protoss/roboticsfacility"
+    ],
+    "variants": [
+      "OBSERVERSIEGEMODE"
+    ]
+  },
+  "protoss/immortal": {
+    "burnysc2_name": "IMMORTAL",
+    "display_name_zh": "不朽者",
+    "short_name_zh": "不朽",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 250,
+      "vespene": 100,
+      "supply": 4
+    },
+    "build_time": 39,
+    "produced_by": "protoss/roboticsfacility",
+    "prerequisites": [
+      "protoss/roboticsfacility"
+    ]
+  },
+  "protoss/warpprism": {
+    "burnysc2_name": "WARPPRISM",
+    "display_name_zh": "折跃棱镜",
+    "short_name_zh": "棱镜",
+    "role": "combat",
+    "capabilities": [
+      "transport",
+      "move"
+    ],
+    "cost": {
+      "minerals": 250,
+      "vespene": 0,
+      "supply": 2
+    },
+    "build_time": 36,
+    "produced_by": "protoss/roboticsfacility",
+    "prerequisites": [
+      "protoss/roboticsfacility"
+    ],
+    "variants": [
+      "WARPPRISMPHASING"
+    ]
+  },
+  "protoss/colossus": {
+    "burnysc2_name": "COLOSSUS",
+    "display_name_zh": "巨像",
+    "short_name_zh": "巨像",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 300,
+      "vespene": 200,
+      "supply": 6
+    },
+    "build_time": 54,
+    "produced_by": "protoss/roboticsfacility",
+    "prerequisites": [
+      "protoss/roboticsbay"
+    ]
+  },
+  "protoss/disruptor": {
+    "burnysc2_name": "DISRUPTOR",
+    "display_name_zh": "干扰者",
+    "short_name_zh": "干扰",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 4
+    },
+    "build_time": 36,
+    "produced_by": "protoss/roboticsfacility",
+    "prerequisites": [
+      "protoss/roboticsbay"
+    ],
+    "variants": [
+      "DISRUPTORPHASED"
+    ]
+  },
+  "protoss/phoenix": {
+    "burnysc2_name": "PHOENIX",
+    "display_name_zh": "凤凰",
+    "short_name_zh": "凤凰",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 2
+    },
+    "build_time": 25,
+    "produced_by": "protoss/stargate",
+    "prerequisites": [
+      "protoss/stargate"
+    ]
+  },
+  "protoss/voidray": {
+    "burnysc2_name": "VOIDRAY",
+    "display_name_zh": "虚空辉光舰",
+    "short_name_zh": "虚空",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 250,
+      "vespene": 150,
+      "supply": 4
+    },
+    "build_time": 43,
+    "produced_by": "protoss/stargate",
+    "prerequisites": [
+      "protoss/stargate"
+    ]
+  },
+  "protoss/oracle": {
+    "burnysc2_name": "ORACLE",
+    "display_name_zh": "先知",
+    "short_name_zh": "先知",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 3
+    },
+    "build_time": 37,
+    "produced_by": "protoss/stargate",
+    "prerequisites": [
+      "protoss/stargate"
+    ]
+  },
+  "protoss/tempest": {
+    "burnysc2_name": "TEMPEST",
+    "display_name_zh": "暴风舰",
+    "short_name_zh": "暴风",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 250,
+      "vespene": 175,
+      "supply": 4
+    },
+    "build_time": 43,
+    "produced_by": "protoss/stargate",
+    "prerequisites": [
+      "protoss/fleetbeacon"
+    ]
+  },
+  "protoss/carrier": {
+    "burnysc2_name": "CARRIER",
+    "display_name_zh": "航母",
+    "short_name_zh": "航母",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 350,
+      "vespene": 250,
+      "supply": 6
+    },
+    "build_time": 64,
+    "produced_by": "protoss/stargate",
+    "prerequisites": [
+      "protoss/fleetbeacon"
+    ]
+  },
+  "protoss/mothership": {
+    "burnysc2_name": "MOTHERSHIP",
+    "display_name_zh": "母舰",
+    "short_name_zh": "母舰",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 400,
+      "vespene": 400,
+      "supply": 8
+    },
+    "build_time": 89,
+    "produced_by": "protoss/nexus",
+    "prerequisites": [
+      "protoss/fleetbeacon"
+    ]
+  },
+  "protoss/interceptor": {
+    "burnysc2_name": "INTERCEPTOR",
+    "display_name_zh": "拦截机",
+    "short_name_zh": "拦截",
+    "role": "combat",
+    "capabilities": [
+      "attack",
+      "move"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "protoss/forcefield": {
+    "burnysc2_name": "FORCEFIELD",
+    "display_name_zh": "力场",
+    "short_name_zh": "力场",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 0,
+    "produced_by": null,
+    "prerequisites": []
+  },
+  "protoss/nexus": {
+    "burnysc2_name": "NEXUS",
+    "display_name_zh": "枢纽",
+    "short_name_zh": "枢纽",
+    "role": "building",
+    "capabilities": [
+      "train",
+      "dropoff"
+    ],
+    "cost": {
+      "minerals": 400,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 71,
+    "produced_by": null,
+    "prerequisites": [],
+    "size": 5
+  },
+  "protoss/pylon": {
+    "burnysc2_name": "PYLON",
+    "display_name_zh": "水晶塔",
+    "short_name_zh": "水晶",
+    "role": "building",
+    "capabilities": [
+      "supply"
+    ],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 18,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/nexus"
+    ],
+    "size": 2,
+    "variants": [
+      "PYLONOVERCHARGED"
+    ]
+  },
+  "protoss/assimilator": {
+    "burnysc2_name": "ASSIMILATOR",
+    "display_name_zh": "同化者",
+    "short_name_zh": "同化",
+    "role": "building",
+    "capabilities": [
+      "gas"
+    ],
+    "cost": {
+      "minerals": 75,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 21,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/nexus"
+    ],
+    "size": 3,
+    "variants": [
+      "ASSIMILATORRICH"
+    ]
+  },
+  "protoss/gateway": {
+    "burnysc2_name": "GATEWAY",
+    "display_name_zh": "传送门",
+    "short_name_zh": "门",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/nexus"
+    ],
+    "size": 3
+  },
+  "protoss/warpgate": {
+    "burnysc2_name": "WARPGATE",
+    "display_name_zh": "折跃门",
+    "short_name_zh": "折跃",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 0,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 4,
+    "produced_by": "protoss/gateway",
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ]
+  },
+  "protoss/forge": {
+    "burnysc2_name": "FORGE",
+    "display_name_zh": "熔炉",
+    "short_name_zh": "熔炉",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 32,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/nexus"
+    ],
+    "size": 3
+  },
+  "protoss/cyberneticscore": {
+    "burnysc2_name": "CYBERNETICSCORE",
+    "display_name_zh": "控制核心",
+    "short_name_zh": "控核",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/gateway"
+    ],
+    "size": 3
+  },
+  "protoss/photoncannon": {
+    "burnysc2_name": "PHOTONCANNON",
+    "display_name_zh": "光子炮",
+    "short_name_zh": "光炮",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 29,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/forge"
+    ],
+    "size": 2
+  },
+  "protoss/shieldbattery": {
+    "burnysc2_name": "SHIELDBATTERY",
+    "display_name_zh": "护盾电池",
+    "short_name_zh": "护盾",
+    "role": "building",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 0,
+      "supply": 0
+    },
+    "build_time": 29,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ],
+    "size": 2
+  },
+  "protoss/roboticsfacility": {
+    "burnysc2_name": "ROBOTICSFACILITY",
+    "display_name_zh": "机器人设施",
+    "short_name_zh": "机器",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ],
+    "size": 3
+  },
+  "protoss/roboticsbay": {
+    "burnysc2_name": "ROBOTICSBAY",
+    "display_name_zh": "机器人港口",
+    "short_name_zh": "机港",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 46,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/roboticsfacility"
+    ],
+    "size": 3
+  },
+  "protoss/twilightcouncil": {
+    "burnysc2_name": "TWILIGHTCOUNCIL",
+    "display_name_zh": "黄昏议会",
+    "short_name_zh": "议会",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ],
+    "size": 3
+  },
+  "protoss/templararchive": {
+    "burnysc2_name": "TEMPLARARCHIVE",
+    "display_name_zh": "圣堂文献",
+    "short_name_zh": "文献",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 36,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/twilightcouncil"
+    ],
+    "size": 3
+  },
+  "protoss/darkshrine": {
+    "burnysc2_name": "DARKSHRINE",
+    "display_name_zh": "黑暗圣所",
+    "short_name_zh": "圣所",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 71,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/twilightcouncil"
+    ],
+    "size": 2
+  },
+  "protoss/stargate": {
+    "burnysc2_name": "STARGATE",
+    "display_name_zh": "星门",
+    "short_name_zh": "星门",
+    "role": "building",
+    "capabilities": [
+      "train"
+    ],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 43,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ],
+    "size": 3
+  },
+  "protoss/fleetbeacon": {
+    "burnysc2_name": "FLEETBEACON",
+    "display_name_zh": "舰队航标",
+    "short_name_zh": "航标",
+    "role": "building",
+    "capabilities": [
+      "research"
+    ],
+    "cost": {
+      "minerals": 300,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 43,
+    "produced_by": null,
+    "prerequisites": [
+      "protoss/stargate"
+    ],
+    "size": 3
+  },
+  "protoss/groundweapons1": {
+    "burnysc2_name": "PROTOSSGROUNDWEAPONSLEVEL1",
+    "display_name_zh": "地面武器 1 级",
+    "short_name_zh": "地武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 121,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge"
+    ]
+  },
+  "protoss/groundweapons2": {
+    "burnysc2_name": "PROTOSSGROUNDWEAPONSLEVEL2",
+    "display_name_zh": "地面武器 2 级",
+    "short_name_zh": "地武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 145,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge",
+      "protoss/groundweapons1"
+    ]
+  },
+  "protoss/groundweapons3": {
+    "burnysc2_name": "PROTOSSGROUNDWEAPONSLEVEL3",
+    "display_name_zh": "地面武器 3 级",
+    "short_name_zh": "地武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 168,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge",
+      "protoss/groundweapons2"
+    ]
+  },
+  "protoss/groundarmors1": {
+    "burnysc2_name": "PROTOSSGROUNDARMORSLEVEL1",
+    "display_name_zh": "地面装甲 1 级",
+    "short_name_zh": "地甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 121,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge"
+    ]
+  },
+  "protoss/groundarmors2": {
+    "burnysc2_name": "PROTOSSGROUNDARMORSLEVEL2",
+    "display_name_zh": "地面装甲 2 级",
+    "short_name_zh": "地甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 145,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge",
+      "protoss/groundarmors1"
+    ]
+  },
+  "protoss/groundarmors3": {
+    "burnysc2_name": "PROTOSSGROUNDARMORSLEVEL3",
+    "display_name_zh": "地面装甲 3 级",
+    "short_name_zh": "地甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 168,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge",
+      "protoss/groundarmors2"
+    ]
+  },
+  "protoss/shields1": {
+    "burnysc2_name": "PROTOSSSHIELDSLEVEL1",
+    "display_name_zh": "护盾 1 级",
+    "short_name_zh": "护盾",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 150,
+      "vespene": 150,
+      "supply": 0
+    },
+    "build_time": 121,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge"
+    ]
+  },
+  "protoss/shields2": {
+    "burnysc2_name": "PROTOSSSHIELDSLEVEL2",
+    "display_name_zh": "护盾 2 级",
+    "short_name_zh": "护盾",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 200,
+      "vespene": 200,
+      "supply": 0
+    },
+    "build_time": 145,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge",
+      "protoss/shields1"
+    ]
+  },
+  "protoss/shields3": {
+    "burnysc2_name": "PROTOSSSHIELDSLEVEL3",
+    "display_name_zh": "护盾 3 级",
+    "short_name_zh": "护盾",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 168,
+    "produced_by": "protoss/forge",
+    "prerequisites": [
+      "protoss/forge",
+      "protoss/shields2"
+    ]
+  },
+  "protoss/airweapons1": {
+    "burnysc2_name": "PROTOSSAIRWEAPONSLEVEL1",
+    "display_name_zh": "空军武器 1 级",
+    "short_name_zh": "空武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 129,
+    "produced_by": "protoss/cyberneticscore",
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ]
+  },
+  "protoss/airweapons2": {
+    "burnysc2_name": "PROTOSSAIRWEAPONSLEVEL2",
+    "display_name_zh": "空军武器 2 级",
+    "short_name_zh": "空武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 175,
+      "vespene": 175,
+      "supply": 0
+    },
+    "build_time": 154,
+    "produced_by": "protoss/cyberneticscore",
+    "prerequisites": [
+      "protoss/cyberneticscore",
+      "protoss/airweapons1"
+    ]
+  },
+  "protoss/airweapons3": {
+    "burnysc2_name": "PROTOSSAIRWEAPONSLEVEL3",
+    "display_name_zh": "空军武器 3 级",
+    "short_name_zh": "空武",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 179,
+    "produced_by": "protoss/cyberneticscore",
+    "prerequisites": [
+      "protoss/cyberneticscore",
+      "protoss/airweapons2"
+    ]
+  },
+  "protoss/airarmors1": {
+    "burnysc2_name": "PROTOSSAIRARMORSLEVEL1",
+    "display_name_zh": "空军装甲 1 级",
+    "short_name_zh": "空甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 100,
+      "vespene": 100,
+      "supply": 0
+    },
+    "build_time": 129,
+    "produced_by": "protoss/cyberneticscore",
+    "prerequisites": [
+      "protoss/cyberneticscore"
+    ]
+  },
+  "protoss/airarmors2": {
+    "burnysc2_name": "PROTOSSAIRARMORSLEVEL2",
+    "display_name_zh": "空军装甲 2 级",
+    "short_name_zh": "空甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 175,
+      "vespene": 175,
+      "supply": 0
+    },
+    "build_time": 154,
+    "produced_by": "protoss/cyberneticscore",
+    "prerequisites": [
+      "protoss/cyberneticscore",
+      "protoss/airarmors1"
+    ]
+  },
+  "protoss/airarmors3": {
+    "burnysc2_name": "PROTOSSAIRARMORSLEVEL3",
+    "display_name_zh": "空军装甲 3 级",
+    "short_name_zh": "空甲",
+    "role": "upgrade",
+    "capabilities": [],
+    "cost": {
+      "minerals": 250,
+      "vespene": 250,
+      "supply": 0
+    },
+    "build_time": 179,
+    "produced_by": "protoss/cyberneticscore",
+    "prerequisites": [
+      "protoss/cyberneticscore",
+      "protoss/airarmors2"
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 """tactical_map.base：主基建造模板（多出生点变体 + 平移实例化 + 与生产运行时联动）。"""
 from game import GameState, Grid, GridPos, Owner, Point2, QueueItem, Unit
-from game.catalog import load_terran
+from game.catalog import load_all
 from game.production import PlacementInRegion
 from production.runtime import ProductionRuntime
 from tactical_map.base import (
@@ -79,14 +79,14 @@ def test_fixed_order_placement_via_production_runtime(tmp_path):
     layout = spawn_layout_nearest(t, Point2(10.5, 10.5))
     layer = instantiate_spawn(t, layout, Point2(10.5, 10.5), map_size=(176, 160))
     port = _Port()
-    rt = ProductionRuntime(load_terran(), port, region_layer=layer)
+    rt = ProductionRuntime(load_all(), port, region_layer=layer)
     rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
                                     placement=PlacementInRegion("home"))])
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")]))
     assert port.submitted[0].params["position"] == [8.5, 12.5]  # depot1 固定位
     # depot1 被占后 → depot2
     port2 = _Port()
-    rt2 = ProductionRuntime(load_terran(), port2, region_layer=layer)
+    rt2 = ProductionRuntime(load_all(), port2, region_layer=layer)
     rt2.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
                                      placement=PlacementInRegion("home"))])
     rt2.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),

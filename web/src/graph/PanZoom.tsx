@@ -106,7 +106,7 @@ export function PanZoom(props: {
     <div className="relative">
       <div
         ref={hostRef}
-        className="h-[52vh] min-h-[320px] cursor-grab overflow-hidden rounded border border-neutral-800 bg-neutral-950/60 active:cursor-grabbing"
+        className="h-[52vh] min-h-[320px] cursor-grab overflow-hidden rounded border border-l1 bg-inset active:cursor-grabbing"
         onPointerDown={(e) => {
           drag.current = { x: e.clientX, y: e.clientY };
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -130,9 +130,9 @@ export function PanZoom(props: {
         </svg>
       </div>
       <div className="absolute right-2 top-2 flex gap-1">
-        <button className="rounded border border-neutral-700 bg-neutral-900/80 px-2 py-0.5 text-note"
+        <button className="btn btn-ghost"
                 onClick={doFit}>适应窗口</button>
-        <button className="rounded border border-neutral-700 bg-neutral-900/80 px-2 py-0.5 text-note"
+        <button className="btn btn-ghost"
                 title="缩放回 100%（保住当前视图中心）"
                 onClick={() => setVp((v) => zoomAtPoint(v, size.w / 2, size.h / 2, 1 / v.scale))}
         >1:1</button>

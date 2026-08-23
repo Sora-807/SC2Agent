@@ -9,6 +9,7 @@
  * started→completed 的配对沿用「同类型最早未闭合 started」语义（数值排序，不是字典序）。
  */
 import type { ProjectionFrame } from "../contract";
+import { isAssignId } from "./projection-data";
 
 export interface StallMark {
   t: number;
@@ -53,6 +54,8 @@ function pairEvents(frame: ProjectionFrame): PairedBar[] {
   const pairs: PairedBar[] = [];
   for (const e of frame.events) {
     if (e.kind === "stalled") continue;
+    // assign 是瞬时目标值动作（无工期）：不占泳道 —— 曲线上画黄虚线（projection-data）
+    if (isAssignId(e.stable_id)) continue;
     const key = e.stable_id ?? "?";
     if (e.kind === "started") {
       open.set(key + ":" + e.t, e.t);
@@ -130,9 +133,10 @@ export function sharedDomain(frame: ProjectionFrame): TimeDomain {
 
 /* ---------------- 时间轴缩放（F15：滚轮调宽度、中心跟顶层时间轴） ---------------- */
 
-/** 视窗宽度上下限（秒）：再窄读不出一个建造周期，再宽全是空 */
+/** 视窗宽度上下限（秒）：再窄读不出一个建造周期，再宽全是空。
+ *  二十七轮用户拍板：默认窗口 5 分钟（10 分钟拖得还是快 + 事件挤）。 */
 export const ZOOM_SPAN_MIN = 20;
-export const ZOOM_SPAN_MAX = 600;
+export const ZOOM_SPAN_MAX = 300;
 
 export function zoomSpan(span: number, factor: number): number {
   const next = span * factor;

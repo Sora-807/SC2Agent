@@ -18,7 +18,7 @@ from enum import Enum
 from pathlib import Path
 
 # 稳定 ID 的族前缀（两段式 race/name 的第一段；加族 = 架构级变更，不是数据变更）
-KNOWN_RACES: frozenset[str] = frozenset({"terran", "protoss", "zerg"})
+KNOWN_RACES: frozenset[str] = frozenset({"terran", "protoss", "zerg", "neutral"})
 
 # 能力标签词表（代码按标签查询，如 where(capability=...)；未知标签加载时报错，防拼写漂移）
 # 加新能力 = 这里登记一条 + JSON 使用上（引入新查询语义时动代码是合理的）
@@ -221,4 +221,39 @@ def load_terran() -> Catalog:
         data = json.load(f)
     for stable_id, entry_data in data.items():
         cat.register(stable_id, entry_data)
+    return cat
+
+
+def _load_race(cat: Catalog, race: str) -> None:
+    """从 data/{race}.json 追加加载一个种族（加载失败直接抛）。"""
+    data_path = Path(__file__).parent / "data" / f"{race}.json"
+    with data_path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    for stable_id, entry_data in data.items():
+        cat.register(stable_id, entry_data)
+
+
+def load_protoss() -> Catalog:
+    """从 data/protoss.json 加载 Protoss catalog。"""
+    cat = Catalog()
+    _load_race(cat, "protoss")
+    return cat
+
+
+def load_zerg() -> Catalog:
+    """从 data/zerg.json 加载 Zerg catalog。"""
+    cat = Catalog()
+    _load_race(cat, "zerg")
+    return cat
+
+
+def load_all() -> Catalog:
+    """加载三族 catalog（terran + protoss + zerg）。
+
+    对手是 Computer(Race.Random)，catalog 加载时还不知道对手种族，
+    必须三族同时加载才能 by_burnysc2_name 查到任意种族的单位。
+    """
+    cat = Catalog()
+    for race in KNOWN_RACES:
+        _load_race(cat, race)
     return cat

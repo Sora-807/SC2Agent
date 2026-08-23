@@ -25,6 +25,11 @@ from planner.slots import is_tech_unit, reactor_map, slot_capacity, techlab_map
 SUPPLY_MAX = 200
 
 
+#: until_complete 的封顶（秒）：越过 until 之后最多再跑这么久 —— 队列死局时
+#: 「永远仿真不到」的部分在此停住（1 小时足够任何真开局跑完）
+COMPLETION_CAP = 3600.0
+
+
 class Planner:
     """生产投影器：planner(GameState, production_sequence) → 投影曲线。"""
 
@@ -37,21 +42,41 @@ class Planner:
         self._reactor_of = reactor_map(catalog)
         self._tech_units = {e.stable_id for e in catalog.where() if is_tech_unit(e, catalog)}
 
-    def project(self, gs: GameState, seq: list, until: float) -> ProjectionCurve:
-        """从 gs 快照 + production_sequence 投影到 until 秒。"""
+    def project(self, gs: GameState, seq: list, until: float, *,
+                until_complete: bool = False, tail: float = 0.0) -> ProjectionCurve:
+        """从 gs 快照 + production_sequence 投影到 until 秒。
+
+        until_complete（2026-08-22 二十三轮用户拍板）：跑到**队列完成**为止 ——
+        队列/在途还有货就继续越过 until，曲线不再在生产中途截断；死局（前置永建
+        不出）会推到 COMPLETION_CAP 封顶为止（「永远仿真不到」的部分不无限跑）。
+        live 投影（窗口语义）不传这个标志，行为不变。
+
+        tail（2026-08-23 二十七轮用户拍板）：队列跑空后再多跑 N 秒 —— 曲线末端
+        留一小段尾巴（最后一个事件完成后还能看到经济的余势），仿真范围与
+        「最后事件 + 30s」对齐，前端右缘钳制才有个自然的数据末端。
+        """
         st = derive_from(gs, self._catalog)
         queue = expand(seq) if seq else []
         curve = ProjectionCurve()
         stalled_recorded: set[int] = set()   # 已记卡点事件的 op id（每 op 只记首次卡）
-        while st.t < until:
+        hard_cap = until + COMPLETION_CAP
+        done_at: float | None = None         # 队列+在途首次双双清空的时刻（tail 起点）
+        while True:
+            if not (st.t < until
+                    or (until_complete and st.t < hard_cap
+                        and (queue or st.in_flight
+                             # tail：队列跑空后再留 N 秒经济的余势（二十七轮）
+                             or (done_at is not None and st.t < done_at + tail)))):
+                break
             # 1. 收入（气收入按精炼厂数量封顶：3 工/精炼厂；无精炼厂→气工空转 0 收入）
             st.minerals += st.mineral_workers * self._econ.mineral_per_scv_per_sec
             refineries = st.buildings.get("terran/refinery", 0)
             effective_gas = min(st.gas_workers, refineries * 3)
             st.gas += effective_gas * self._econ.gas_per_scv_per_sec
-            # 2. 推进在途
-            for f in st.in_flight:
-                f.progress += 1
+            # 2. 推进在途 —— train 按产槽排队（I10）：同产建筑每秒最多推进
+            #    normal_cap+tech_cap 条（进度最高的先走 = 正在训的先完成、排队的原地等），
+            #    与 B15 的队列侧槽模型 / WorldSim 的产槽语义三方一致。
+            self._advance_in_flight(st)
             # 3. 落成
             done = [f for f in st.in_flight if f.progress >= f.build_time]
             if done:
@@ -77,6 +102,9 @@ class Planner:
             # 5. 记快照
             curve.points.append(st.to_point())
             st.t += 1
+            # tail 的记账点：本帧结束后队列与在途都空了 → 这是「最后一个事件完成」时刻
+            if until_complete and done_at is None and not queue and not st.in_flight:
+                done_at = st.t
         return curve
 
     # ---- 供给守卫：队首即将卡人口 / 缺 depot 前置 → 自动插补给站（尽可能晚插入）----
@@ -119,6 +147,32 @@ class Planner:
     # 前置或收入在途）——顺序队列的常态，不构成警报；只有 `wait=False` 的**死局**
     # 才会被主循环记成 stalled 事件（真前瞻警报）。判据只看当前 SimState：
     # 顺序语义下，排在本项后面的 op 永远救不了卡住的队首。
+
+    def _advance_in_flight(self, st: SimState) -> None:
+        """在途推进（每仿真秒 progress+1），train 侧带产槽排队。
+
+        旧版所有 in_flight 并行 +1 —— 快照里同产建筑的**排队中**单位会在同一秒
+        一起"完成"（90 秒夹具的泳道因此堆出矿量撑不住的假并行，ISSUES I10）。
+        排队判定与 _feasible 共用 B15 的 slot_capacity：同一产建筑每秒最多
+        normal_cap+tech_cap 条在推进，取进度最高的先走。build 与无 producer
+        的在途照旧并行（多建筑同时盖不需要 builder 槽语义）。
+        """
+        used: dict[str, int] = {}
+        order = sorted(range(len(st.in_flight)), key=lambda i: -st.in_flight[i].progress)
+        for i in order:
+            f = st.in_flight[i]
+            if f.kind != "train" or not f.producer:
+                f.progress += 1
+                continue
+            techlab_sid = self._techlab_of.get(f.producer)
+            normal_cap, tech_cap = slot_capacity(
+                f.producer, st.buildings, st.addons, techlab_sid)
+            cap = max(1, normal_cap + tech_cap)
+            n = used.get(f.producer, 0)
+            if n >= cap:
+                continue
+            used[f.producer] = n + 1
+            f.progress += 1
 
     def _feasible(self, op: Op, st: SimState) -> tuple[bool, str | None, bool]:
         if isinstance(op, Build):

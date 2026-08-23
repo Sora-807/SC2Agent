@@ -18,12 +18,12 @@ export function MapPage() {
     >
       <Card title="该页数据已到位">
         {map ? (
-          <ul className="list-inside list-disc text-neutral-300">
+          <ul className="list-inside list-disc text-dim">
             <li>地图 {map.map_name} {map.size[0]}×{map.size[1]}，出生 {map.spawn}</li>
             <li>大区 {map.regions.big.length} 个 / 叶区 {map.regions.leaf.length} 个</li>
             <li>建造槽位 {map.build_slots.length} 个（br/build_point/reported_position 已由后端算好）</li>
             <li>标记点 {map.pos_marks.length} 个 / 资源点 {map.resource_nodes.length} 个</li>
-            <li className={map.terrain ? "" : "text-amber-400"}>
+            <li className={map.terrain ? "" : "text-[color:var(--warn-fg)]"}>
               地形 {map.terrain ? "已下发" : "null —— 需后端 B4，届时从纯色底升级为真地形"}
             </li>
             <li>当前帧可见单位 {world?.units.length ?? 0} 个</li>

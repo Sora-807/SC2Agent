@@ -10,10 +10,8 @@ import type { AlignedData } from "uplot";
 import type { ProjectionFrame } from "../contract";
 import { fmtMMSS, toMarkers, type EventMarker } from "./projection-data";
 import { UPlotChart, type ChartOptions } from "./UPlotChart";
+import { chartColors, seriesColors } from "./chart-theme";
 
-const CUR = "#94a3b8";      // 当前：灰虚线
-const NEW_M = "#34d399";    // 提案后：矿
-const NEW_G = "#38bdf8";    // 提案后：气
 
 export function ProjectionPairChart(props: {
   current: ProjectionFrame;
@@ -36,21 +34,23 @@ export function ProjectionPairChart(props: {
   }, [current, proposed]);
 
   const options = useMemo<ChartOptions>(
-    () => ({
+    () => {
+      const C = { ...seriesColors(), ...chartColors() };
+      return ({
       scales: { x: { time: false } },
       padding: [8, 8, 0, 0],
       series: [
         { label: "游戏时间", value: (_u, v) => (v == null ? "--" : fmtMMSS(v)) },
-        { label: "矿·当前", stroke: CUR, width: 1.2, dash: [4, 3] },
-        { label: "矿·提案后", stroke: NEW_M, width: 1.8 },
-        { label: "气·当前", stroke: CUR, width: 1, dash: [2, 3] },
-        { label: "气·提案后", stroke: NEW_G, width: 1.4 },
+        { label: "矿·当前", stroke: C.current, width: 1.2, dash: [4, 3] },
+        { label: "矿·提案后", stroke: C.minerals, width: 1.8 },
+        { label: "气·当前", stroke: C.current, width: 1, dash: [2, 3] },
+        { label: "气·提案后", stroke: C.gas, width: 1.4 },
       ],
       axes: [
-        { stroke: "#6b7280", grid: { stroke: "#1f2937" }, ticks: { stroke: "#1f2937" },
+        { stroke: C.axis, grid: { stroke: C.grid }, ticks: { stroke: C.grid },
           font: "11px ui-sans-serif", space: 64,
           values: (_u, ticks) => ticks.map((t) => fmtMMSS(t)) },
-        { stroke: "#6b7280", grid: { stroke: "#1f2937" }, ticks: { stroke: "#1f2937" },
+        { stroke: C.axis, grid: { stroke: C.grid }, ticks: { stroke: C.grid },
           font: "11px ui-sans-serif", size: 46,
           values: (_u, ticks) => ticks.map((v) => (v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v)))) },
       ],
@@ -63,8 +63,8 @@ export function ProjectionPairChart(props: {
             const { ctx } = u;
             ctx.save();
             ctx.setLineDash([3, 3]);
-            ctx.strokeStyle = "#f87171";
-            ctx.fillStyle = "#f87171";
+            ctx.strokeStyle = C.stalled;
+            ctx.fillStyle = C.stalled;
             ctx.font = "10px ui-sans-serif";
             for (const m of markersRef.current) {
               const x = u.valToPos(m.t, "x", true);
@@ -79,7 +79,8 @@ export function ProjectionPairChart(props: {
           },
         ],
       },
-    }),
+      });
+    },
     [],
   );
 
@@ -114,7 +115,7 @@ export function ProjectionPairChart(props: {
                 <td>{get(current)}</td>
                 <td>{get(proposed)}</td>
                 <td className={delta === 0 ? "text-ghost"
-                  : (label === "卡点数" ? delta < 0 : delta > 0) ? "text-emerald-400" : "text-amber-400"}>
+                  : (label === "卡点数" ? delta < 0 : delta > 0) ? "text-[color:var(--ok-fg)]" : "text-[color:var(--warn-fg)]"}>
                   {delta === 0 ? "—" : (delta > 0 ? "+" : "") + delta}
                 </td>
               </tr>
