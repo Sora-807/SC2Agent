@@ -384,6 +384,87 @@
   同源：让 Agent"看懂地图"是可观测性的空间半边。实现量中（thin 工具 + thin 端点 + 一个
   渲染器 ~80-120 行 + 几条测试）。
 
+## I19 Agent 跨会话记忆：结构化分文件 + 自反思/改进建议流
+
+- **现状**（Agent 自述 + 代码核对 2026-08-23）：Agent 记忆 = 单个 ad-hoc `memory.md`
+  scratch（`agent/spec.py` 提示词："你的自留地：memory.md…开局先 read 它"）+ `analysis-*.md`，
+  无结构无约定。混了不同生命周期的东西（用户偏好长期稳定 vs 对局复盘只增 vs 策略经验
+  会修正），grep 一词同时命中策略经验和对局复盘，噪音大；矛盾/膨胀无机制控制。Agent 自述
+  这"直接决定跨会话的智商上限"。
+- **核查发现**（三处，影响方案）：
+  1. **scratch 持久跨会话**——`modules/api/app.py:126` 把 `workspace_root=
+     Path("runtime/agent-talk/workspace")` 传给 AgentTalk，磁盘稳定路径 → 4 文件记忆结构
+     **可行**，`memory.md` 已在那儿持久化，只缺结构/约定。
+  2. **孤儿基础设施**——后端已有一套 `agent_notes.jsonl` append-only 流（`agent/client.py:132
+     note_save()` + `app.py:464-474` 后端端点 + `app.py:129` 路径装配），但 **Agent 工具集
+     没有 note 工具**（`agent/tools.py` make_tools 无 note）→ `note_save` 是死的 client 方法，
+     基础设施和 Agent 断了。一条本可用的反思通道没接上。
+  3. **`system-capabilities` 数据源现成**——`write_surface` 调 `agent_tools()` 返回的
+     `unsupported` 清单（含待建谓词/操作）就是能力的实时真相 → 应**派生而非手维护**。
+- **影响**：跨会话学习断裂——单 `memory.md` 越长越难维护，每个新会话要么"失忆"要么被噪音
+  淹没；孤儿 `notes.jsonl` = 反思通道空接；无自反思流 = Agent 撞墙/缺功能的发现无法沉淀回
+  开发 backlog。
+- **候选方案**（Agent 提 4 文件 + replays；本条补 3 点）：
+  1. **结构化记忆（分文件，按生命周期隔离）**——Agent 方案合理，落地：
+     - `memory/user-preferences.md`（短、稳定、开局 read）
+     - `memory/strategy-notes.md`（带 ID `[E1]`/`[B2]`、≤2 行/条、定期合并去重；矛盾改旧条
+       不新写；验证过的标"实测"）
+     - `memory/system-capabilities.md`（可用/不可用/怪癖；**从 `write_surface` 派生/对账，
+       非手维护**——系统更新自动反映，正解"系统更新后会变"）
+     - `memory/replays/replay-NNN.yaml`（结构化复盘，只增；lesson 验证后迁移到 strategy-notes
+       带 ID）
+     - **开局只 read 前两个短文件**；strategy/replays/improvement 按需 grep——控 token。
+  2. **新增 `improvement-notes.md`（Agent 自反思/改进建议流）**——用户要、Agent 没提：遇
+     繁杂问题/撞墙/发现缺功能时写一条"撞了什么墙 + 系统该补什么"。**这是 Agent → 开发
+     backlog 的反馈回路**：定期由人扫，该立项的进 ISSUES.md（I17/I18 即此回路促成）。格式
+     同 strategy-notes（ID + ≤2 行）。
+  3. **决定孤儿 `notes.jsonl` 去留**——要么给它接个 `remember` 工具（Agent 显式记反思），
+     要么退役让结构化 scratch 文件统一承载。别留着断着。
+  4. **搜索能力**——grep + glob + read + 分文件 = 精准隔离，无需新搜索工具。Agent 的搜索
+     映射表（read 偏好/grep 经验/grep 复盘）成立。
+- **建议归属**：记忆结构化是 Agent 自治范畴（scratch 文件约定 + 提示词指引，**不改后端**）；
+  `system-capabilities` 派生 + `improvement` 流可在提示词 + 工具面落地；`notes.jsonl` 去留是
+  小决策。与开放任务清单 #1（常驻监听）强相关——常驻循环靠记忆才有连续性，常驻前记忆要
+  到位。**本轮只立项不写代码**（用户拍板）。
+
+## I20 文件契约闭环：运行时产物（对局录像等）挂成 Agent 可读文件树
+
+- **现状**（Agent 自述 + 代码核对 2026-08-23）：Agent 自述"不能追溯上一局，工作区无
+  replay/session/history 目录，原始数据会话后消失"。**核对后部分纠正**——原始数据其实
+  **已存在**：I13（二十六轮）已让 LiveSession 落盘 `runtime/recordings/rec-<stamp>-<driver>.jsonl`
+  + meta 侧车（`modules/api/live.py:87,235`；`app.py:61 DEFAULT_RECORDINGS_DIR=runtime/recordings`），
+  录像 = 完整帧 JSONL = 观察包序列/事件时间线的原始数据；且有 REST 端点 `GET /api/recordings`
+  （清单，`app.py:705`）+ `GET /api/recordings/{rid}/jsonl`（完整帧流，`app.py:749`）。
+- **真缺口不是"数据没有"，是"Agent 够不着"**（三处证据）：`agent/client.py` 无 recordings
+  方法、`agent/tools.py` 无 recording/replay 工具、`agent/workspace.py` 的 `ApiWorkspace._split`
+  只挂 `plans/`+`map-plans/`+scratch → `runtime/recordings/` **不在虚拟文件树**，Agent 的
+  ls/read/grep 根本看不见录像。
+- **同一模式第三次出现**：后端有数据+端点、Agent 工具面没接 → 孤儿。I19 的 `notes.jsonl`
+  （`client.note_save` 有、agent 无工具）是第二次；recordings 是第三次。**根因 = 文件契约
+  没闭环**：Agent 的文件世界是运行时文件世界的 ad-hoc 部分子集。
+- **影响**：Agent 想复盘上一局（"t=251 二矿开建、t=300 被压制"这种精确数据）只能靠压缩前
+  的对话记忆——压缩后丢。系统明明存了完整帧流，Agent read 不到。"看懂过去"和 I18"看懂
+  地图"一样是断的。用户判断：**整个文件系统没嵌合**——模块各自以文件交付交互
+  （plans/strategies/scratch 是 Agent 能碰的；recordings/notes/traces/history 是后端有但
+  Agent 看不见的），没有"闭环的契约"让 Agent 浏览全部运行时产物。
+- **候选方案**：
+  1. **把运行时产物挂成 Agent 可读的虚拟文件树（推荐，契"Agent 以文件交互"愿景）**——在
+     `ApiWorkspace` 加只读虚拟区：`recordings/`（ls 列清单、read 看 meta+帧摘要、grep 跨
+     录像搜事件）、`notes/`、`traces/`。Agent 用现有 ls/read/grep 翻，**不新增 bespoke 工具**。
+     这是"闭环"正解：文件契约统一承载，而非每个产物一个工具。
+  2. **thin 工具兜底（次选）**——若挂文件树改动大，先加 `list_recordings`/
+     `read_recording(rid, kind=summary|frames)` 工具 + client 方法。但 bespoke 会碎片化
+     （跟 I19 notes 一样）。
+  3. **`session/current.md` 短期层（归 I19 记忆栈，交叉引用）**——压缩前覆盖写"当前在
+     干什么/改了什么/下一步"，下局开局 read 恢复连续性。是 I19 长期记忆之上缺的一层；
+     I20 文件树做成后它自然落在 scratch 区。
+  4. **统一原则**：Agent 的文件世界 = 运行时文件世界的可读视图（plans/strategies 可写，
+     recordings/notes/traces 只读），而非 ad-hoc 部分子集。
+- **建议归属**：I13 已建数据层；I20 是"把它接到 Agent"。挂虚拟只读区在 `agent/workspace.py`
+  （+ 后端给录像 meta/帧摘要，或直接 read jsonl 文件）。与 I19（notes 孤儿同模式）、I18
+  （Agent 触达数据同主题）同源——三件事都是"Agent 能不能够着系统已有的数据"，建议作为
+  一批"文件契约闭环"一起做。`session/current.md` 标 I19 扩展。**本轮只立项不写代码**。
+
 
 ## 开放任务清单（2026-08-23 二十七轮末快照；处理一条关一条）
 
@@ -414,10 +495,11 @@
    待用户确认执行（会删 ~55 份 superseded 文档）。
 10. **[P3] live 投影窗口语义**——live 仍是 120s 窗口投影；要不要像试算一样
     until_complete？（涉及 live 帧大小，需拍板）
-11. **[P1] modules/ 代码债（I15 / [`REFACTOR.md`](REFACTOR.md)）**——god files
-    拆分（`app.py`/`runtime.py`/`manifest.py`）+ P0 bug（producer 网格陈旧 / progress=0 /
-    wall_ms 伪造 / observe 状态脱同步 / CC 供给矛盾）+ 死代码清理。P0 bug 可即时修不
-    依赖重构；god file 拆分建议作为执行轮后的独立重构批次，一次一个 file 跑回归。
+11. **[P1] modules/ 代码债（I15 / [`REFACTOR.md`](REFACTOR.md)）**——**P0 bug 批
+    （B1 网格 diff/B2 progress/B3 wall_ms/B4 observe 常量/B5 CC 供给单源/B8）已修完
+    （2026-08-23，WORKLOG §0.32）**；剩：god files 拆分（`app.py`/`runtime.py`/
+    `manifest.py`）+ B6（planner 仍 Terran-only）+ B7（命令返回 shape 不一致）+
+    死代码清理 + 去重。god file 拆分建议作为独立重构批次，一次一个 file 跑回归。
 12. **[P1] 对局可观测性深度（I17）**——警报加 `remediation_zh` 字段（"怎么修"）+
     采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）
     + 装配缺口时序化/live 化 + observe 队列在建项映射。1/2/5 低难可插队先做。
@@ -429,3 +511,19 @@
     直接"看图"而非心算拼布局。数据齐备（terrain 栅格 + reserved_boxes + BuildSlot
     + PosMark），净新增：thin 工具 + thin 端点 + 渲染器（下沉 tactical_map，不进 app.py
     god file）。与 I8 互补、I17 同源。
+15. **[P1] Agent 跨会话记忆（I19）**——结构化分文件（user-preferences /
+    strategy-notes[带ID] / system-capabilities[从 `write_surface` 派生] / replays/）
+    + 新增 `improvement-notes`（Agent 自反思 → 开发 backlog 反馈回路）+ 决定孤儿
+    `notes.jsonl` 去留。scratch 持久化已确认（`runtime/agent-talk/workspace/`），不改
+    后端，靠提示词约定 + 工具面落地。与 #1 常驻监听强相关——常驻前记忆要到位。
+16. **[P1] 文件契约闭环（I20）**——运行时产物（对局录像 `runtime/recordings/`、
+    `notes.jsonl`、traces）后端已存但 Agent 够不着（无 client 方法/无工具/不在虚拟文件树）。
+    推荐：挂成 `ApiWorkspace` 只读虚拟区（`recordings/`/`notes/`/`traces/`），Agent 用
+    现有 ls/read/grep 翻，不新增 bespoke 工具。与 I19（notes 孤儿）、I18（触达数据）
+    同模式——一批"文件契约闭环"一起做。注：录像数据 I13 已建，本条只是"接到 Agent"。
+17. **[P2] 开局工人口径：真机 8 工 vs 种子 12 工（B5 附带发现）**——2026-08-23
+    真机录像首帧是 **8 工/13 cap**（1 CC），而种子口径（planner.opening /
+    worldsim.bootstrap / session 默认）全是 12 工。供给值已单源修正为 13（WORKLOG
+    §0.32），但工人数是另一处 sim/真机偏差：干跑投影的经济曲线会比真机乐观。
+    需拍板：把种子改成 8 对齐本机，还是先确认真机地图/模式是否非标准开局（改动会
+    波及全部干跑数字与夹具，宜单独一批）。

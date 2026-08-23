@@ -17,6 +17,47 @@
 | `6c1abbe` | F14 切片 2b：槽位拖动 + 审批叠加画布 |
 | `2e51f46` | docs：工作记录 WORKLOG.md + ISSUES I3 留档 |
 | `7c5fe0e` | 执行轮 §0.1–§0.12 一并提交：P0/P1/P2 规划域重构（生产规划文件+干跑 / 导航按模式 / 真地形+全图资源+预留区命名+双下拉）+ 实时驾驶整改（假世界拔除 / 400 显式化 / 两段式确认 / 关闭真机）+ 真机地形修复（driver 顺序 + store 乱序合并）|
+| `ba8ceb5` | 执行轮 §0.13–§0.31 一并提交：P3 agent 接入 + 聊天/外壳改版 + 策略文件免审 + 三族目录 + 录像（未提交批次一次落库）|
+
+## 0.32 二十八轮：REFACTOR P0 bug 批（B1-B5+B8）+ §0.13-0.31 落库（2026-08-23，未提交）
+
+用户拍板「先提交，然后修基础问题」。本轮 = 落库 + 修 [`REFACTOR.md`](REFACTOR.md) §1
+的假数据 bug 批（god file 拆分等结构性债**不在本轮**，见开放清单 #11）：
+
+1. **落库 `ba8ceb5`**：§0.13–§0.31 十几轮（167 文件）一次入库；工作区清零后
+   bug 批才有干净基线。
+2. **B1 网格只发第一帧 → 内容指纹 diff**：`FrameProducer` 对 creep/visibility
+   栅格按编码后内容做指纹，**变了才随本帧下发**，没变带 null —— 这是契约里
+   `grids` 字段注释承诺的「仅变化时下发」，旧实现是"第一帧发一次之后永远不发"
+   （菌毯/视野整局陈旧）。配套前端：store 的 world 帧是整帧替换，改为
+   `grids: 新帧值 ?? 上一份`（与 static/terrain 的 pendingTerrain 同型，A5）。
+   `adapt.world_frame` 的 `include_grids` 开关改为 `grids=` 注入（`grids_of` 提取）。
+   **注意**：`include_grids` 仍无会话默认开启（live 下发量 ≈100KB/帧的性能与
+   产品决策，等真机需要视野层时再拍）—— 本轮修的是"休眠实现也是错的"。
+3. **B2 生产进度假 0.0 → None（REV 12→13）**：SC2 订单**不带进度**（协议无此
+   字段，真机拿不到），原先 `ProducingView(progress=0.0)` 写死等于把"未知"伪装
+   成"刚开始"。改为 `progress=None`；sim 侧被训单位自身的 `build_progress` 已
+   承载真值（I10 排队语义就是靠它呈现的）。前端 zod 同步 nullable（前端只读
+   producing 的长度/名字，无渲染影响）；夹具重生成（rev 13）。
+4. **B3 wall_ms 伪造 → 注入真时钟**：`FrameProducer` 增 `clock`（默认
+   `time.time`），`_env` 不再用 `1.7e12 + game_time*1000` 伪装墙钟；`live.py`
+   地形合成帧的 `wall_ms: 0` 同步真墙钟。测试传固定 lambda 拿确定性输出。
+5. **B4 observe 状态硬编码 → 常量**：6 处 `"待审批"/"已拒绝"/"已失效"` 字面量
+   全部改 `proposals.STATUS_*` —— 改常量时 observe 过滤静默失效的隐患拔除。
+6. **B5 CC 供给三份拷贝 → 单源 = 13**：worldsim `bases*15` / opening
+   `CC_SUPPLY=15` / economy `13` 互相矛盾。收敛到 `planner.economy.supply_provided`
+   单一真相源（opening 与 worldsim 都 import 它），加跨模块一致性测试锁死。
+   **取值依据**：本机 `docs/game_data_dump.json` 的 `food_provided`
+   （CommandCenter=13、SupplyDepot=8）+ 真机录像对照（2026-08-23 那局首帧
+   1 CC + 0 补给站 → supply_cap=13）。审计原文「真实 LotV 是 11」经查**不适用
+   于本机环境** —— 按仓库「不信 wiki、以真机校准」哲学取 13。
+   **附带发现（未动，立案）**：该局真机起始 **8 工/13 cap**，而种子口径
+   （opening/worldsim/session 默认）是 12 工 —— 开局工人口径是另一处 sim/真机
+   偏差，见开放清单 #15。
+7. **B8 encode 双 docstring 合并**：`grid_to_b64` 两个相邻 `"""`，解释 uint8
+   截断理由的这段一直被当无效表达式吞掉，合并成一份。
+- 回归：后端 **761/1s**（+3 锁：grids diff 语义 / wall_ms 跟注入时钟 /
+  供给单源一致），前端 **361/26** + tsc 0 + build 0 warning；夹具重生成（rev 13）。
 
 ## 0.31 二十七轮补：开放写策略（免审落地）+ 开放任务清单立案（2026-08-23，未提交）
 

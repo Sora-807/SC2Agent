@@ -216,8 +216,13 @@ export const useFrames = create<FramesStore>((set, get) => {
       unsubs = [
         // 动态帧经 offer() 合并（见 FRAME_FLUSH_MS 注释）；static/* 直通
         src.subscribe("frame/session", (e) => offer("session", () => set({ session: e.payload }))),
-        // world 帧的 seq 就是"这一刻的世界版本"，命令拿它当 based_on_seq
-        src.subscribe("frame/world", (e) => offer("world", () => set({ world: e.payload, seq: e.seq }))),
+        // world 帧的 seq 就是"这一刻的世界版本"，命令拿它当 based_on_seq。
+        // grids 是「仅变化时下发」（rev 13 起按内容指纹）：本帧没带 = 沿用上一份 ——
+        // 与 static/terrain 的 pendingTerrain 同型（帧序无关的合并，A5）。
+        src.subscribe("frame/world", (e) => offer("world", () => set((s2) => ({
+          world: { ...e.payload, grids: e.payload.grids ?? s2.world?.grids ?? null },
+          seq: e.seq,
+        })))),
         src.subscribe("frame/flow", (e) => offer("flow", () => set({ flow: e.payload }))),
         src.subscribe("frame/production", (e) => offer("production", () => set({ production: e.payload }))),
         src.subscribe("frame/economy", (e) => offer("economy", () => set({ economy: e.payload }))),

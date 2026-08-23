@@ -9,6 +9,8 @@ import { z } from "zod";
 
 /**
  * 契约版本。
+ * rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度
+ *   （协议没有该字段），后端原先恒发 `0.0` 是把「未知」伪装成「刚开始」，改为 null。
  * rev 10：B12+B13 一轮两字段（F11 地图视觉语言需要）：
  *   ① `frame/economy.nodes[]` 增 `base_tag`（节点归属基地 = 最近的己方 dropoff 建筑 tag）——
  *     与 frame/world.units 按 tag 直接 join，主基地标签写「矿 12/16 气 3/6」不需要空间匹配；
@@ -56,7 +58,7 @@ import { z } from "zod";
  *   strategy 增 display_name_zh/description_zh（策略级与 step 级）、reasons、group_names。
  *   新字段全部 `.default()` 容错：旧夹具/旧缓存帧缺字段时退回 identifier，不炸整页。
  */
-export const REV = 12 as const;
+export const REV = 13 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -372,7 +374,7 @@ export const zWorldFrame = z.object({
       /** 建筑 footprint 矩形；后端算好，前端只画（红线 C2） */
       footprint: z.object({ tl: zCell, br: zCell }).nullable(),
       producing: z
-        .array(z.object({ stable_id: z.string(), progress: z.number() }))
+        .array(z.object({ stable_id: z.string(), progress: z.number().nullable() }))
         .nullable(),
       addon: z.enum(["reactor", "techlab"]).nullable(),
       carrying: z.enum(["minerals", "vespene"]).nullable(),

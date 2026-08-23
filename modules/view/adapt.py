@@ -88,17 +88,27 @@ def session_frame(
     )
 
 
+def grids_of(gs: GameState) -> GridsView:
+    """GameState 的菌毯/可见性栅格 → GridsView。
+
+    契约里 `grids` 是「仅变化时下发」——**是否**随本帧下发由 caller（FrameProducer）
+    按内容指纹决定，这里只负责编码。
+    """
+    return GridsView(creep=grid_to_b64(gs.creep), visibility=grid_to_b64(gs.visibility))
+
+
 def world_frame(
     gs: GameState,
     catalog: Catalog,
     *,
     group_of: dict[int, str] | None = None,
-    include_grids: bool = False,
+    grids: GridsView | None = None,
 ) -> WorldFrame:
     """GameState → frame/world。
 
     `group_of`：unit_tag → group_id（由 B1 从 Allocator 读模型 join 进来）。
     B0 传 None，前端的分组图层就为空 —— 不猜，不用"离得近就算一组"糊过去。
+    `grids`：调用方决定要不要带栅格（`grids_of(gs)`；None = 本帧不带，前端保留上一份）。
     """
     groups = group_of or {}
     units = [_unit_view(u, catalog, groups.get(u.tag)) for u in gs.units]
@@ -111,9 +121,7 @@ def world_frame(
         # 聚类算法未实现（flow.vocab 的 forbidden.spatial_tools 里有登记）→ None，前端降级
         enemy_clusters=None,
         resource_state=_resource_state(gs),
-        grids=GridsView(creep=grid_to_b64(gs.creep), visibility=grid_to_b64(gs.visibility))
-        if include_grids
-        else None,
+        grids=grids,
     )
 
 
@@ -253,6 +261,9 @@ def _producing(u: Unit, catalog: Catalog) -> list[ProducingView] | None:
 
     只对**已建成的建筑**给列表（在建建筑的订单是它自己的建造过程）。
     认不出的订单不猜：跳过，宁可少显示。
+    `progress` 一律 None：SC2 订单不带进度（协议就没这个字段，真机拿不到）；
+    sim 侧被训单位自身的 `build_progress` 已承载真值。发假 0.0 会让 UI/agent
+    把"未知"读成"刚开始"。
     """
     if u.build_progress < 1.0:
         return None
@@ -264,7 +275,7 @@ def _producing(u: Unit, catalog: Catalog) -> list[ProducingView] | None:
         target = catalog.by_burnysc2_name((o.ability or "").upper())
         if target is None:
             continue
-        out.append(ProducingView(stable_id=target.stable_id, progress=0.0))
+        out.append(ProducingView(stable_id=target.stable_id, progress=None))
     return out
 
 

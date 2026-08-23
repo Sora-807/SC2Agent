@@ -18,16 +18,19 @@
 
 ## §1 真实 bug（P0/P1，会出错误数据——优先修）
 
+> **2026-08-23 进展（WORKLOG §0.32）：B1/B2/B3/B4/B5/B8 已修**，下表留档 + 标注修法。
+> B6（planner 只认 Terran）/ B7（命令返回 shape）仍在。
+
 | # | 位置 | 问题 | 级别 |
 |---|---|---|---|
-| B1 | `view/producer.py:112-117` | 网格**只第一帧发、之后永不刷新**。`_grids_sent` 置一次永久 True；注释自承"真实现要 diff，先保守"。creep/可见性整局是第一帧陈旧值，UI 显示假数据。 | P0 |
-| B2 | `view/adapt.py:267` | 生产进度永远 `0.0`。`ProducingView(progress=0.0)` 写死，schema 字段在、UI 永远画 0% 进度条。 | P0 |
-| B3 | `view/producer.py:206` | `wall_ms` 伪造：`1.7e12 + game_time*1000` 而非真实时钟。名/类型都标 wall-clock ms，任何算延迟的诊断是假的。`view/port.py:60` 已有 `clock` 注入机制，没用上。 | P1 |
-| B4 | `view/observe.py:99,101,223,232,238,242` | 提案状态字符串硬编码（`"待审批"/"已拒绝"/"已失效"`），而 `view/proposals.py:35` 有同值 `STATUS_*` 常量。改常量时 observe 过滤**静默失效**，agent 拿到错的 pending 列表——直接违反全仓"不静默"红线。 | P1 |
-| B5 | `planner/opening.py:17` vs `planner/economy.py:24` | 指挥中心供给**自相矛盾**：种子态设 `supply_cap=15`，模拟建 CC 加 13，真实 LotV 是 11。早期人口节奏前后不一致。 | P1 |
+| B1 | `view/producer.py:112-117` | 网格**只第一帧发、之后永不刷新**。`_grids_sent` 置一次永久 True；注释自承"真实现要 diff，先保守"。creep/可见性整局是第一帧陈旧值，UI 显示假数据。**已修**：内容指纹 diff（变了才发，前端 store 保留上一份）；`include_grids` 默认仍关（下发量决策）。 | P0 |
+| B2 | `view/adapt.py:267` | 生产进度永远 `0.0`。`ProducingView(progress=0.0)` 写死，schema 字段在、UI 永远画 0% 进度条。**已修**：SC2 订单不带进度（协议无此字段）→ `progress=None`（rev 13），sim 侧被训单位 `build_progress` 已是真值。 | P0 |
+| B3 | `view/producer.py:206` | `wall_ms` 伪造：`1.7e12 + game_time*1000` 而非真实时钟。名/类型都标 wall-clock ms，任何算延迟的诊断是假的。`view/port.py:60` 已有 `clock` 注入机制，没用上。**已修**：`FrameProducer.clock`（默认 `time.time`）+ live.py 地形帧同步真墙钟。 | P1 |
+| B4 | `view/observe.py:99,101,223,232,238,242` | 提案状态字符串硬编码（`"待审批"/"已拒绝"/"已失效"`），而 `view/proposals.py:35` 有同值 `STATUS_*` 常量。改常量时 observe 过滤**静默失效**，agent 拿到错的 pending 列表——直接违反全仓"不静默"红线。**已修**：6 处全换 `STATUS_*`。 | P1 |
+| B5 | `planner/opening.py:17` vs `planner/economy.py:24` | 指挥中心供给**自相矛盾**：种子态设 `supply_cap=15`，模拟建 CC 加 13，真实 LotV 是 11。早期人口节奏前后不一致。**已修**：三份拷贝（含 worldsim `bases*15`）收敛到 `economy.supply_provided` 单源 = **13** —— 审计原文"真实 LotV 是 11"经查不适用于本机：本机 game_data_dump `food_provided=13` + 真机录像首帧 1CC/0depot → cap 13。附带发现真机起始 8 工 vs 种子 12 工（开放清单 #15）。 | P1 |
 | B6 | `planner/planner.py:73,131,138` + `planner/sim_state.py:71-72` + `planner/economy.py:23-26` | **三族 catalog 扩到 174 条了，planner 还是只认 Terran**。气矿写死 `terran/refinery`、人口写死 `terran/supplydepot`、检测 `type_name=="REFINERY"`、`supply_provided` 只列 Terran。I9 只解了数据层，投影器消费不了非人族。 | P1 |
 | B7 | `api/session.py:312` vs `api/live.py:340` | 命令返回 shape 不一致：`queue_op` 一个返回 `items` 一个返回 `dispatched`，`set_worker_target` 同样只在 live 多 `dispatched`。`CommandResult.detail: dict[str,Any]` 兜不住。 | P1 |
-| B8 | `view/encode.py:21-26` | 双 docstring：两个相邻 `"""`，Python 只留第一个当 `__doc__`，更长那个解释（值裁剪/uint8 截断理由）被当无效表达式吞掉。 | P2 |
+| B8 | `view/encode.py:21-26` | 双 docstring：两个相邻 `"""`，Python 只留第一个当 `__doc__`，更长那个解释（值裁剪/uint8 截断理由）被当无效表达式吞掉。**已修**：合并成一份。 | P2 |
 
 **修法要点**：B1/B2 先修（UI 直接假数据）；B4 改成 `from view.proposals import STATUS_*`；
 B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气矿/人口建筑 + 中央化
@@ -113,7 +116,9 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 
 ## §7 优先级与拆分顺序
 
-1. **P0 修 bug**（§1 B1/B2/B4/B5）——producer 网格陈旧、progress=0.0、observe 状态脱同步、CC 供给矛盾。不是清理是修 bug，UI/agent 现在在拿假数据。
+1. ~~**P0 修 bug**（§1 B1/B2/B4/B5）~~ —— **已完成（2026-08-23，WORKLOG §0.32，
+   含 B3/B8）**：producer 网格 diff、progress=None、wall_ms 真时钟、observe 常量化、
+   CC 供给单源=13。
 2. **P1 god file 拆分**（§2 G1/G2/G3）——`app.py` 按路由组拆、`runtime.py` 抽 build-flights + placement、`manifest.py` 拆 validate。到不改以后没人敢碰。
 3. **P1 三族只到 catalog 没到 planner**（§1 B6）——race-agnostic 或老实标 Terran-only。
 4. **P2 死代码清理**（§3）——一串死导出/死函数，删一遍纯减负；顺带把 `constraint/__init__` 倒挂的公开面正过来。

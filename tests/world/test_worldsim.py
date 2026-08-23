@@ -40,6 +40,25 @@ def test_train_queues_per_producer_not_parallel():
     assert finishes == [bt, 2 * bt, 3 * bt], "三条 train 应链式排队（I10）"
 
 
+def test_supply_cap_single_source_matches_economy():
+    """供给增量单一真相源 = planner.economy.supply_provided（本机 dump+录像：CC=13）。
+
+    REFACTOR B5：worldsim 曾写死 bases*15、opening 种子写 15、economy 写 13 ——
+    三份拷贝互相矛盾。这里锁"开局 1 CC 的 cap 就是 economy 给的值"，
+    谁再写死一份拷贝当场红。
+    """
+    from planner.economy import DEFAULT_ECON
+    from planner.opening import CC_SUPPLY, opening_game_state
+
+    cc = DEFAULT_ECON.supply_provided["terran/commandcenter"]
+    assert CC_SUPPLY == cc, "opening 种子必须取自 economy（不许第二份拷贝）"
+    assert opening_game_state(CAT).supply_cap == cc
+
+    w = WorldSim(catalog=CAT)
+    w.bootstrap(workers=6)
+    assert w.game_state().supply_cap == cc
+
+
 def test_queued_unit_progress_stays_low_until_its_turn():
     """排队中的单位进度停在低位：第二条 train 在第一条训完前不该爬进度。"""
     w, rax = _barracks_world()

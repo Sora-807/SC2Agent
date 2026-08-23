@@ -59,7 +59,9 @@ from typing import Any
 #:     `steps[].display_name_zh`/`description_zh`（step 级）、`reasons`（reason 标识符→中文，
 #:     edges 切换原因与 exit 终局原因共用）、`group_names`（group_id→中文，来自 assembly）。
 #:     目的：`formup/advance/G_INF` 这类裸标识符读不出意图（用户原话），zh 单一真相源在后端（C4）。
-REV = 12
+#: rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度（协议没有该
+#:   字段），原先恒发 `0.0` 是把"未知"伪装成"刚开始"；改为 None（前端 zod 同步 nullable）。
+REV = 13
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -361,7 +363,7 @@ class FootprintView:
 @dataclass(slots=True)
 class ProducingView:
     stable_id: str
-    progress: float
+    progress: float | None    # SC2 订单不带进度 → None（rev 13；曾恒发假 0.0）
 
 
 @dataclass(slots=True)

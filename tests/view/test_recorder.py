@@ -181,6 +181,43 @@ def test_producer_works_with_only_catalog():
     assert topics <= {"frame/world", "frame/alerts"}, f"多出了 {topics}"
 
 
+def test_producer_grids_sent_only_on_change():
+    """栅格「仅变化时下发」是内容指纹，不是"只第一帧"（REFACTOR B1）。
+
+    旧实现 `_grids_sent` 置一次永久 True：菌毯蔓延/视野移动整局都读第一帧的
+    陈旧值。契约注释承诺的是"变化才重发，没变带 null（前端保留上一份）"。
+    """
+    world = WorldSim(catalog=CAT)
+    world.bootstrap(workers=4)
+    p = FrameProducer(catalog=CAT, include_grids=True)
+
+    def _world(envelopes):
+        return next(e for e in envelopes if e["topic"] == "frame/world")["payload"]
+
+    assert _world(p.on_game_state(world.game_state()))["grids"] is not None, "首帧必带"
+    assert _world(p.on_game_state(world.game_state()))["grids"] is None, "没变就不带"
+
+    gs = world.game_state()
+    gs.visibility.data[0][0] = 1      # 视野变了（单位移动/侦察）
+    assert _world(p.on_game_state(gs))["grids"] is not None, "变了才重发"
+
+
+def test_producer_wall_ms_follows_injected_clock_not_game_time():
+    """wall_ms 是真墙钟（REFACTOR B3）：此前伪造为 1.7e12 + game_time*1000，
+    任何按它算延迟的诊断都是假的。game_time 仍是唯一语义时间基准。"""
+    world = WorldSim(catalog=CAT)
+    world.bootstrap(workers=4)
+    fake = [1_700_000_000.0]
+    p = FrameProducer(catalog=CAT, clock=lambda: fake[0])
+
+    def _wall_ms(envelopes):
+        return next(e for e in envelopes if e["topic"] == "frame/world")["wall_ms"]
+
+    assert _wall_ms(p.on_game_state(world.game_state())) == 1_700_000_000_000
+    fake[0] += 0.5   # 墙钟走了 0.5s，世界没 tick（game_time 不动）
+    assert _wall_ms(p.on_game_state(world.game_state())) == 1_700_000_000_500
+
+
 # ---------------- ViewRecorder ----------------
 
 def test_recorder_writes_valid_jsonl_with_statics_first(tmp_path: Path):

@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -193,7 +194,8 @@ class LiveSession:
                     "rev": REV,
                     "seq": terrain_seq,
                     "game_time": terrain_time,
-                    "wall_ms": 0,
+                    # 诊断字段给真墙钟（此前恒 0，任何算延迟的诊断都是假的）
+                    "wall_ms": int(time.time() * 1000),
                     "payload": obj.get("terrain"),
                 }
                 need_frame = True

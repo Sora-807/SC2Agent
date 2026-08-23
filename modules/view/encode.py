@@ -18,10 +18,10 @@ from view.schema import REV, TOPICS, Envelope, GridB64
 
 
 def grid_to_b64(grid: Grid | None) -> GridB64 | None:
-    """None 进 None 出 —— 缺哪张图发 null，别伪造全 0 网格。"""
-    """Grid（data[y][x] 的 int）→ 行主序 uint8 + base64。
+    """None 进 None 出 —— 缺哪张图发 null，别伪造全 0 网格。
 
-    值域超 uint8 会被截断，所以这里显式夹到 0..255：creep/visibility/区域标签都远小于 255，
+    Grid（data[y][x] 的 int）→ 行主序 uint8 + base64。值域超 uint8 会被截断，
+    所以这里显式夹到 0..255：creep/visibility/区域标签都远小于 255，
     真超了说明上游语义变了，宁可看到夹紧后的异常也不要静默产生错位的位图。
     """
     if grid is None:

@@ -18,6 +18,8 @@ from typing import Any
 
 from game.catalog import Catalog
 
+from view.proposals import STATUS_PENDING, STATUS_REJECTED, STATUS_STALE
+
 #: 投影摘要只看未来这么久（ADR-0009 §1 的"30 秒投影"量级）。
 #: 更远的以后还会重算，写进 prompt 只是噪声。
 PROJECTION_LOOKAHEAD = 30.0
@@ -96,9 +98,9 @@ def observation_packet(
         "active_step": ((flow or {}).get("strategies") or [{}])[0].get("active_step"),
         "alert_kinds": sorted({a["kind"] for a in (alerts or {}).get("alerts", [])}),
         "pending_proposals": [p["id"] for p in (proposals or {}).get("proposals", [])
-                              if p["status"] == "待审批"],
+                              if p["status"] == STATUS_PENDING],
         "rejected_titles": [p["title_zh"] for p in (proposals or {}).get("proposals", [])
-                            if p["status"] == "已拒绝"],
+                            if p["status"] == STATUS_REJECTED],
     }
     return ObservationPacket(seq=seq, game_time=round(game_time, 3), supersedes=supersedes,
                              sections={k: v for k, v in sections.items() if v}, facts=facts)
@@ -220,7 +222,7 @@ def _proposals_text(proposals: dict | None) -> str:
         return ""
     # **被拒的和待审批的永远带上**，不受"最近 N 条"窗口限制：
     # 它们是最需要影响下一步决策的两类，被窗口截掉就等于回流失效（实测踩过）。
-    must = [p for p in rows if p["status"] in ("已拒绝", "待审批")]
+    must = [p for p in rows if p["status"] in (STATUS_REJECTED, STATUS_PENDING)]
     recent = [p for p in rows[-RECENT_PROPOSALS:] if p not in must]
     shown = must[-RECENT_PROPOSALS:] + recent
     out: list[str] = []
@@ -229,17 +231,17 @@ def _proposals_text(proposals: dict | None) -> str:
         decision = p.get("decision") or {}
         if decision.get("comment_zh"):
             line += f" —— 用户说：{decision['comment_zh']}"
-        if p["status"] == "已失效":
+        if p["status"] == STATUS_STALE:
             line += "（基于的世界已经过去了，要重提就基于当前状态）"
         if (p.get("validation") or {}).get("ok") is False:
             errs = "；".join(e.get("text_zh", "") for e in p["validation"].get("errors", []))
             line += f"（校验未通过：{errs}）"
         out.append(line)
-    pending = [p for p in rows if p["status"] == "待审批"]
+    pending = [p for p in rows if p["status"] == STATUS_PENDING]
     if pending:
         out.append(f"**还有 {len(pending)} 条在等审批** —— 别重复提同一件事，"
                    "也别提与它冲突的改动。")
-    rejected = [p for p in rows if p["status"] == "已拒绝"]
+    rejected = [p for p in rows if p["status"] == STATUS_REJECTED]
     if rejected:
         out.append("被拒过的方向不要原样再提；要提就针对用户给的理由做调整。")
     return "\n".join(out)

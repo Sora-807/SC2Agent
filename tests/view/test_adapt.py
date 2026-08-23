@@ -10,7 +10,7 @@ from planner.build_order import ProductionModuleInstance
 from planner.planner import Planner
 from tactical_map.base import instantiate_spawn, load_ladder_map
 
-from view.adapt import projection_frame, session_frame, world_frame
+from view.adapt import grids_of, projection_frame, session_frame, world_frame
 from view.encode import to_json
 
 
@@ -114,8 +114,9 @@ def test_producing_listed_for_ready_building():
     rax = _unit(20, "BARRACKS", 40.5, 40.5, hp=1000, hp_max=1000,
                 orders=[Order(ability="MARINE")])
     f = world_frame(_state([rax]), CAT)
+    # progress 恒 None（rev 13）：SC2 订单不带进度，发假 0.0 等于把"未知"读成"刚开始"
     assert f.units[0].producing == [
-        type(f.units[0].producing[0])(stable_id="terran/marine", progress=0.0)
+        type(f.units[0].producing[0])(stable_id="terran/marine", progress=None)
     ]
 
 
@@ -151,7 +152,7 @@ def test_resource_state_counts_harvesters_by_target_tag():
 def test_grids_omitted_unless_requested():
     gs = _state([_unit(1, "MARINE", 10, 10)])
     assert world_frame(gs, CAT).grids is None
-    g = world_frame(gs, CAT, include_grids=True).grids
+    g = world_frame(gs, CAT, grids=grids_of(gs)).grids
     assert g is not None and g.visibility is not None
     assert list(base64.b64decode(g.visibility.data_b64))[:4] == [2, 2, 2, 2]
 

@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,11 +73,14 @@ class FrameProducer:
     #: 否则每帧一条会把 WS 刷满（提案是事件驱动的，不是周期性的）。
     proposals: Any = None
     include_grids: bool = False
+    #: 墙钟（秒）—— `wall_ms` 诊断字段用。真机/live 装配传 `time.time`（默认）；
+    #: 测试传固定 lambda 拿确定性输出。game_time 仍是唯一语义时间基准，见 Envelope。
+    clock: Callable[[], float] = time.time
 
     _seq: int = 0
     _proj_at: float = field(default=-1e18)
     _ops_at: float = field(default=-1e18)
-    _grids_sent: bool = False
+    _grids_fp: tuple[str | None, str | None] | None = None
     _proposals_fingerprint: str = ""
 
     def __post_init__(self) -> None:
@@ -109,12 +114,19 @@ class FrameProducer:
         flow_snap = self.engine.snapshot() if self.engine is not None else None
         group_of = adapt.group_of_from_flow(flow_snap) if flow_snap else None
 
-        # 栅格只在第一帧发一次（仅变化时下发；真实现要 diff，这里先保守）
-        grids = self.include_grids and not self._grids_sent
-        if grids:
-            self._grids_sent = True
+        # 栅格「仅变化时下发」（契约里 grids 字段承诺的语义）：按内容指纹比对，
+        # 变了才带在本帧里，没变带 None —— 前端 store 对 world 帧保留上一份 grids。
+        # 旧实现是"只第一帧发"：菌毯蔓延/视野移动整局都读第一帧的陈旧值。
+        grids = None
+        if self.include_grids:
+            candidate = adapt.grids_of(gs)
+            fp = (candidate.creep.data_b64 if candidate.creep is not None else None,
+                  candidate.visibility.data_b64 if candidate.visibility is not None else None)
+            if fp != self._grids_fp:
+                self._grids_fp = fp
+                grids = candidate
         out.append(self._env("frame/world", gs, adapt.world_frame(
-            gs, self.catalog, group_of=group_of, include_grids=grids)))
+            gs, self.catalog, group_of=group_of, grids=grids)))
 
         if flow_snap is not None:
             out.append(self._env("frame/flow", gs, adapt.flow_frame(flow_snap, gs)))
@@ -203,7 +215,7 @@ class FrameProducer:
         """
         self._seq += 1   # 仅用于内部计数与诊断，不进信封
         return envelope(topic, seq=gs.seq, game_time=gs.game_time, payload=payload,
-                        wall_ms=1_700_000_000_000 + int(gs.game_time * 1000))
+                        wall_ms=int(self.clock() * 1000))
 
 
 def _plan_id(plan: list) -> str:

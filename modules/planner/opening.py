@@ -11,10 +11,14 @@ from game import GameState, Order, Owner, Unit
 from game.catalog import Catalog
 from game.geometry import Grid, Point2
 
-#: 标准开局常量（SC2 人族：50 矿起步、12 农民、指挥中心供给 +15）
+from planner.economy import DEFAULT_ECON
+
+#: 标准开局常量（SC2 人族：50 矿起步、12 农民）。指挥中心供给不再单独写死 ——
+#: 与 worldsim/planner 同用 planner.economy 的单一真相源（本机 dump+录像校准 = 13；
+#: 此前这里写 15，与 economy 的 13 自相矛盾）。
 START_MINERALS = 50
 START_WORKERS = 12
-CC_SUPPLY = 15
+CC_SUPPLY = DEFAULT_ECON.supply_provided["terran/commandcenter"]
 
 
 def opening_game_state(catalog: Catalog, *, minerals: int = START_MINERALS,
