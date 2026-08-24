@@ -58,7 +58,22 @@ Placement(
 - 单位位置取整后参与距离判定。
 - 核心模块写 `if size % 2 == 0` 这类奇偶特判。
 - 重叠判断用中心距离而不是 footprint 闭区间。
-- placement 为 null 的 build 通过编译。
+- ~~placement 为 null 的 build 通过编译。~~（2026-08-24 修订，见下）
+
+## 修订（2026-08-24，PLAN-V2 批 2 决议先行）：placement null = auto
+
+「null 的 build 不通过」在本 ADR 是 V1 反例；地图规划双分支 + 会话图层合并
+（ADR-0033）落地后它变成了不必要的作者负担：
+
+- **语义**：`placement: null` 的 build = **自动放置**（默认图层按声明序消耗
+  槽位，类别/尺寸过滤与显式 in_region 相同）；无位可放 = skip
+  `placement_collision`（ADR-0032），不是作者错误。
+- **显式引用不受影响**：`PlacementExact`/`PlacementInRegion` 语义不变；
+  标记不存在仍是作者错误 dropped（D6）。
+- **仿真侧**：planner 无图层，用默认规划槽位集合做近似消耗模型（批 3），
+  近似处如实标注。
+- 落地在批 2（`production/placement.py` 的 null 拒绝改为默认 in_region("home")
+  语义 + 图层序），本节先记语义避免实现时再议。
 
 ## 验收标准
 

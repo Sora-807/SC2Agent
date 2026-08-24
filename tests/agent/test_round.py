@@ -58,7 +58,7 @@ PROPOSAL_ARGS = {
     "rationale_zh": "队首在等气而队列里没有气的来源，先插精炼厂，否则整队一直冻结。",
     "target": {"queue": "main"},
     "hunks": [{"id": "h1", "kind": "insert", "text_zh": "队首插精炼厂",
-               "payload": {"index": 0,
+               "payload": {"before_uid": "q01",
                            "item": {"op": "build", "type": "terran/refinery", "count": 1}}}],
 }
 
@@ -203,9 +203,9 @@ def test_invalid_proposal_comes_back_with_the_reason_not_silence(api: TestClient
     tools_ = {t.name: t for t in make_tools(_client_for(api))}
     out = asyncio.run(tools_["propose"].function({
         **PROPOSAL_ARGS,
-        "hunks": [{"id": "h1", "kind": "delete", "text_zh": "删第 9 项",
-                   "payload": {"index": 9}}]}))
-    assert "校验未通过" in out and "越界" in out
+        "hunks": [{"id": "h1", "kind": "delete", "text_zh": "删不存在的项",
+                   "payload": {"uid": "q99"}}]}))
+    assert "校验未通过" in out and "不在队列里" in out
     assert "对历史可见" in out
     assert api.get("/api/proposals").json()[0]["validation"]["ok"] is False
 

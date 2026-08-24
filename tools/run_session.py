@@ -379,8 +379,7 @@ class Session:
         elif kind == "prepend":
             self.runtime.prepend(name, items)
         elif kind == "insert":
-            index = int(cmd["index"])
-            self.runtime.insert(name, index, items)
+            self.runtime.insert(name, cmd.get("before_uid"), items)
         elif kind == "replace_head":
             if not items:
                 raise ValueError("replace_head：缺 items（要换上的新队首；清空请用 clear）")
@@ -388,15 +387,20 @@ class Session:
         elif kind == "clear":
             self.runtime.clear(name)
         elif kind == "remove":
-            index = int(cmd["index"])
-            if q is None or not (0 <= index < len(q.items)):
-                raise ValueError(f"remove：队列 {name!r} 没有下标 {index}")
-            self.runtime.remove(name, q.items[index])
+            uid = str(cmd.get("uid") or "")
+            target = self.runtime.item_by_uid(name, uid) if uid else None
+            if q is None or target is None:
+                raise ValueError(f"remove：队列 {name!r} 没有 uid={uid!r} 的项")
+            self.runtime.remove(name, target)
         elif kind == "reorder":
-            order = [int(x) for x in cmd["order"]]
-            if q is None or sorted(order) != list(range(len(q.items))):
-                raise ValueError(f"reorder：order 必须是 0..{len(q.items) if q else 0}-1 的排列")
-            self.runtime.reorder(name, [q.items[i] for i in order])
+            order = [str(x) for x in (cmd.get("order") or [])]
+            if q is None:
+                raise ValueError(f"reorder：队列 {name!r} 不存在")
+            uids = [it.uid for it in q.items]
+            if sorted(order) != sorted(uids) or len(set(order)) != len(order):
+                raise ValueError(f"reorder：order 必须是全部 uid（{uids}）的一个排列")
+            by_uid = {it.uid: it for it in q.items}
+            self.runtime.reorder(name, [by_uid[u] for u in order])
 
 
 # ---------------- 两种驱动 ----------------

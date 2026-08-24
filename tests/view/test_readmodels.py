@@ -202,7 +202,7 @@ def _runtime():
 
 
 def test_blocked_head_freezes_queue_and_reports_reason():
-    """队首缺矿 → 队首阻塞 + 原因；后续项一律"未处理"（队首门控语义）。"""
+    """队首缺矿 → pending 等待 + 原因；后续项不越序（顺序门控，ADR-0032 账本）。"""
     rt = _runtime()
     rt.submit_queue("main", [
         QueueItem(op=QueueOp.BUILD, type="terran/barracks", placement=PlacementExact(mark="rax_1")),
@@ -212,9 +212,9 @@ def test_blocked_head_freezes_queue_and_reports_reason():
     snap = rt.snapshot()
     q = snap["queues"][0]
     assert q["head_status"] == "阻塞"
-    assert q["items"][0]["status"] == "队首阻塞"
+    assert q["items"][0]["status"] == "pending"
     assert "晶体矿" in q["items"][0]["block_reason"]
-    assert q["items"][1]["status"] == "未处理"
+    assert q["items"][1]["status"] == "pending"
     assert q["items"][1]["block_reason"] is None
     assert q["blocked"]["since"] == 100.0 and q["blocked"]["warned"] is False
 

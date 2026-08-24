@@ -67,14 +67,7 @@ def main() -> None:
     for t, ty in completed:
         print(f"  t={t:.0f}  {ty}")
 
-    # 自动补给站事件
-    auto_supply = [e for e in curve.events if e.kind == "started"
-                   and e.type == "terran/supplydepot"]
-    print(f"自动插入补给站: {len(auto_supply)} 次")
-    for e in auto_supply:
-        print(f"  t={e.t:.0f}  {e.reason}")
-
-    # 卡点
+    # 卡点（供给守卫已删 D7：卡人口会真实浮出为 stalled，不再自动插 depot）
     stalls = curve.stalls()
     if stalls:
         print(f"卡点（{len(stalls)}）:")

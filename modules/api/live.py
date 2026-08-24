@@ -377,7 +377,8 @@ class LiveSession:
                 f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
     def queue_op(self, op: str, name: str, *, items: list | None = None,
-                 index: int | None = None, order: list[int] | None = None) -> dict:
+                 before_uid: str | None = None, uid: str | None = None,
+                 order: list[str] | None = None) -> dict:
         from view.proposals import item_to_json
 
         if op not in QUEUE_OPS:
@@ -385,7 +386,7 @@ class LiveSession:
         self._send({
             "op": "queue", "kind": op, "name": name,
             "items": [item_to_json(i) for i in (items or [])],
-            "index": index, "order": order,
+            "before_uid": before_uid, "uid": uid, "order": order,
         })
         # 命令在**下一个帧边界**生效，所以这里回报的是"已送达"而不是"已生效"。
         # 前端据此显示 pending，等下一帧的 frame/production 确认。
@@ -463,6 +464,10 @@ class LiveSession:
                         "count": it.get("count"),
                         "placement": it.get("placement"),
                         "task": it.get("task"),
+                        # 账本字段一并往返（ADR-0032）：丢 status 会让已完成项被重跑
+                        "uid": it.get("uid"),
+                        "status": it.get("status"),
+                        "reason": it.get("reason"),
                     }))
                 return out
         return []

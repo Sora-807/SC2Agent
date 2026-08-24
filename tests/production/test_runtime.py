@@ -93,9 +93,9 @@ def test_build_head_blocked_by_minerals_then_emits():
     assert op.params["type"] == "terran/supplydepot"  # stable ID 直达 driver（catalog 解析）
     assert op.params["position"] == [1.5, 1.5]  # pos_mark spot
     assert len(rt._build_flights.get("open", [])) == 1  # 在途确认中（flight 在列表里）
-    # 实体出现 → 确认建造开始 → flight 出列表
+    # 实体出现（0.1 进度）→ flight 锁定实体等完工；项留账本标 in_progress（ADR-0032）
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"), _u(3, "SUPPLYDEPOT", x=1.5, y=1.5, progress=0.1)], minerals=100))
-    assert rt.queue("open").items == []
+    assert rt.queue("open").items[0].status == "in_progress"
 
 
 def test_build_placement_failure_retries_next_slot():
@@ -132,14 +132,15 @@ def test_build_confirm_matches_position_not_type_count():
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
                           _u(9, "SUPPLYDEPOT", x=2.5, y=2.5, progress=0.1)], minerals=400))
     assert len(rt._build_flights.get("q", [])) == 1  # 仍在途（flight 在列表里）
-    # s2 位置实体出现 → 位置匹配 → 确认出列表
+    # s2 位置实体出现 → 位置匹配 → flight 确认；项留账本 in_progress（ADR-0032）
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
                           _u(10, "SUPPLYDEPOT", x=6.0, y=3.0, progress=0.1)], minerals=400))
-    assert rt.queue("q").items == []
+    assert rt.queue("q").items[0].status == "in_progress"
 
 
 def test_build_dropped_when_candidates_exhausted():
-    """唯一候选（PlacementExact）放置失败 → 出队记入 dropped，不卡死整队。"""
+    """唯一候选（PlacementExact）放置失败重试耗尽 → 留账本标 skipped(placement_collision)，
+    不卡死整队、不进 dropped（ADR-0032：执行期失败 vs 作者错误的分工）。"""
     port = _Port()
     rt = _runtime(port)
     rt.submit_queue("open", [
@@ -151,7 +152,9 @@ def test_build_dropped_when_candidates_exhausted():
     assert len(port.submitted) == 2  # build + train（贪心并行：都发出了）
     for _ in range(92):
         rt.on_game_state(gs)  # 放置失败（第 90 帧判定，重试时候选耗尽）
-    assert any("耗尽" in r for _, r in rt.dropped)
+    assert rt.dropped == []
+    item = rt.queue("open").items[0]
+    assert item.status == "skipped" and item.reason == "placement_collision"
     assert len(port.submitted) == 2 and port.submitted[1].action == "train"  # 后续项继续
 
 
@@ -183,7 +186,8 @@ def test_train_count_multiple_frames():
     assert len(port.submitted) == 3
     assert all(op.action == "train" and op.unit_tags == [1] for op in port.submitted)
     assert all(op.params["type"] == "terran/scv" for op in port.submitted)
-    assert rt.queue("open").items == []
+    it = rt.queue("open").items[0]
+    assert it.count == 0 and it.status == "in_progress"  # 发完在训（账本淘汰后转 completed）
 
 
 def test_train_blocked_by_supply_then_resumes():
@@ -314,7 +318,7 @@ def test_unknown_queue_op_dropped_not_silently_skipped():
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER")], minerals=200))
     assert len(rt.dropped) == 1 and "未知 QueueOp" in rt.dropped[0][1]
     assert len(port.submitted) == 1 and port.submitted[0].action == "train"  # 后续项继续
-    assert rt.queue("open").items == []
+    assert rt.queue("open").items[0].status == "in_progress"  # 好项留账本在训（ADR-0032）
 
 
 def test_assign_workers_immediate_and_expanded():
@@ -327,7 +331,7 @@ def test_assign_workers_immediate_and_expanded():
     assert len(port.submitted) == 2
     assert all(op.action == "gather" for op in port.submitted)
     assert {op.params["target_unit"] for op in port.submitted} == {10, 11}
-    assert rt.queue("open").items == []  # 当帧消费
+    assert rt.queue("open").items[0].status == "completed"  # 当帧消费，留账本（ADR-0032）
 
 
 def test_research_dropped_with_reason():
@@ -437,11 +441,11 @@ def test_addon_built_by_parent_not_scv():
     assert op.params["type"] == "terran/reactor"
     assert op.params["position"] is None  # 挂件无目标能力：SC2 吸附母建筑右下 2×2（真机教训）
     assert len(rt._build_flights.get("q", [])) == 1  # 在途确认（flight 在列表里）
-    # BARRACKSREACTOR 实体出现 → 确认 → flight 出列表
+    # BARRACKSREACTOR 实体出现（0.1）→ flight 锁定等完工；项留账本 in_progress
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
                           _u(3, "BARRACKS", x=8.0, y=8.0), _u(4, "BARRACKSREACTOR", x=10.0, y=7.0, progress=0.1)],
                          minerals=150, vespene=150))
-    assert rt.queue("q").items == []
+    assert rt.queue("q").items[0].status == "in_progress"
 
 
 def test_addon_blocked_when_parent_has_addon():
@@ -623,7 +627,7 @@ def test_assign_workers_queue_item_writes_target_when_keeper_present():
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")]))
     assert keeper.policy.gas_workers == 3, "队列项应把目标写进维持器"
     assert port.submitted == [], "写目标不该立刻发命令（扇出是维持器的事）"
-    assert rt.queue("q").items == [], "写完即出队（幂等，不需要门控）"
+    assert rt.queue("q").items[0].status == "completed", "写完即完成（幂等，不需要门控）"
     assert rt.dropped == [], "更不该被当成失败丢弃"
 
 
@@ -752,9 +756,10 @@ def test_flight_drop_releases_builder_reservation():
     rt.on_game_state(gs)
     assert res.tags() == frozenset({2}), "发出 build 即征用"
     for _ in range(92):
-        rt.on_game_state(gs)   # 放置失败 → 重试 → 候选耗尽丢弃
-    assert any("耗尽" in r for _, r in rt.dropped)
-    assert res.tags() == frozenset(), "丢弃后征用必须释放（工兵回候选池）"
+        rt.on_game_state(gs)   # 放置失败 → 重试 → 候选耗尽 skip（ADR-0032：不再 dropped）
+    item = rt.queue("q").items[0]
+    assert item.status == "skipped" and item.reason == "placement_collision"
+    assert res.tags() == frozenset(), "skip 后征用必须释放（工兵回候选池）"
     # 释放后下一项 build 能立刻抽到同一个 SCV（候选没被占死）
     rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
                                    placement=PlacementExact("spot"))])
@@ -848,7 +853,7 @@ def test_training_ledger_records_start_and_expires():
     assert len(port.submitted) == 1
     snap = rt.snapshot()
     assert snap["training"] == [{"stable_id": "terran/marine",
-                                 "producer_tag": 7, "started_at": 50.0}]
+                                 "producer_tag": 7, "started_at": 50.0, "uid": "q01"}]
     # 订单还没落地（orders 空）但没超时长 → 保留（emit→订单落地的间隙）
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")],
                          minerals=200, game_time=51.0))
@@ -857,3 +862,147 @@ def test_training_ledger_records_start_and_expires():
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")],
                          minerals=200, game_time=200.0))
     assert rt.snapshot()["training"] == []
+
+
+# ---------------- ADR-0032（PLAN-V2 批 1）：执行账本 + skip-and-continue ----------------
+
+def _uid_states(rt, name="open"):
+    return [(it.uid, it.status) for it in rt.queue(name).items]
+
+
+def test_uid_assigned_on_submit_and_stable_across_reorder():
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="train", type="terran/marine"),
+        QueueItem(op="train", type="terran/marine"),
+    ])
+    a, b = rt.queue("open").items
+    assert (a.uid, b.uid) == ("q01", "q02")
+    rt.reorder("open", [b, a])  # 重排不变 uid
+    assert [it.uid for it in rt.queue("open").items] == ["q02", "q01"]
+    rt.append("open", [QueueItem(op="train", type="terran/marine")])
+    assert rt.queue("open").items[-1].uid == "q03"
+
+
+def test_insert_before_uid_and_remove_by_uid():
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="train", type="terran/marine"),
+        QueueItem(op="train", type="terran/marine"),
+    ])
+    rt.insert("open", "q02", [QueueItem(op="train", type="terran/scv")])
+    assert [it.uid for it in rt.queue("open").items] == ["q01", "q03", "q02"]
+    rt.remove("open", rt.item_by_uid("open", "q01"))
+    assert [it.uid for it in rt.queue("open").items] == ["q03", "q02"]
+    try:
+        rt.insert("open", "q99", [QueueItem(op="train", type="terran/scv")])
+        raise AssertionError("未知 uid 必须报错")
+    except ValueError:
+        pass
+
+
+def test_uid_not_reused_after_clear():
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="train", type="terran/marine")])
+    rt.clear("open")
+    rt.submit_queue("open", [QueueItem(op="train", type="terran/marine")])
+    assert rt.queue("open").items[0].uid == "q02"
+
+
+def test_executed_train_item_retained_with_status():
+    """账本核心行为：train 发单 → in_progress；训练账本淘汰 → completed；项不出队。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="train", type="terran/marine")])
+    gs0 = _gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")], minerals=200, game_time=10.0)
+    rt.on_game_state(gs0)
+    item = rt.queue("open").items[0]
+    assert item.status == "in_progress" and item.count == 0 and item.started_at == 10.0
+    # 订单间隙帧：仍 in_progress
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")],
+                         minerals=200, game_time=11.0))
+    assert item.status == "in_progress"
+    # 训练时长过了 → completed，且项还在队列里（不再摘除）
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")],
+                         minerals=200, game_time=200.0))
+    assert item.status == "completed" and item.completed_at == 200.0
+    assert len(rt.queue("open").items) == 1
+
+
+def test_skip_does_not_freeze_queue():
+    """skip-and-continue：缺产出建筑的 train 被标 skipped，后续 build 照常执行。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="train", type="terran/marine"),          # 没兵营：skip
+        QueueItem(op="build", type="terran/supplydepot",
+                  placement=PlacementExact("spot")),           # 照常执行
+    ])
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs)
+    items = rt.queue("open").items
+    assert items[0].status == "skipped" and items[0].reason == "prereq_missing"
+    assert items[1].status == "in_progress"
+    assert len(port.submitted) == 1 and port.submitted[0].action == "build"
+
+
+def test_pending_head_still_gates_later_items():
+    """pending 等待仍保序：队首缺矿时后续项不越序执行。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="build", type="terran/supplydepot", placement=PlacementExact("spot")),
+        QueueItem(op="build", type="terran/supplydepot", placement=PlacementExact("spot")),
+    ])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=50))
+    assert port.submitted == []
+    items = rt.queue("open").items
+    assert items[0].status == "pending" and items[1].status == "pending"
+    assert rt.blocked["open"]["item"] is items[0]
+
+
+def test_build_placement_exhaustion_marks_skip_not_drop():
+    """槽位全被占 → skip(placement_collision) 留账本，不是 dropped。"""
+    port = _Port()
+    rt = _runtime(port)
+    # spot 被 CC 占住（同位）：放置校验不通过 → skip
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/supplydepot",
+                                       placement=PlacementExact("spot"))])
+    gs = _gs([_u(1, "COMMANDCENTER", x=1.5, y=1.5), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs)
+    item = rt.queue("open").items[0]
+    assert item.status == "skipped" and item.reason == "placement_collision"
+    assert rt.dropped == []
+
+
+def test_unknown_type_is_dropped_not_retained():
+    """D6 分工：作者错误（catalog 不认）→ dropped 摘除，不进账本。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/nonsense",
+                                       placement=PlacementExact("spot"))])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400))
+    assert rt.queue("open").items == []
+    assert rt.dropped and "未知类型" in rt.dropped[0][1]
+
+
+def test_snapshot_items_carry_uid_status_reason():
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="train", type="terran/marine"),
+        QueueItem(op="build", type="terran/supplydepot", placement=PlacementExact("spot")),
+    ])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=400))
+    snap = rt.snapshot()
+    q = snap["queues"][0]
+    its = q["items"]
+    assert its[0]["uid"] == "q01" and its[0]["status"] == "skipped"
+    assert its[0]["reason"] == "prereq_missing"
+    assert its[1]["status"] in ("in_progress",) and its[1]["reason"] is None
+    assert q["head_status"] in ("可执行", "空")
+    # 在途带 uid（observe/警报的引用锚点）
+    assert snap["in_flight"] and snap["in_flight"][0]["uid"] == "q02"

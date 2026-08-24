@@ -113,14 +113,14 @@ def test_queue_submit_then_append_then_reorder(client: TestClient):
     assert len(sess.runtime.queue("main").items) == 3
 
     r = client.post("/api/commands/queue/reorder", json={
-        "based_on_seq": sess.seq, "name": "main", "order": [2, 0, 1]})
+        "based_on_seq": sess.seq, "name": "main", "order": ["q03", "q01", "q02"]})
     assert r.status_code == 200
     assert [i.type for i in sess.runtime.queue("main").items] == [
         "terran/barracks", "terran/supplydepot", "terran/marine"]
 
 
-def test_queue_remove_by_index(client: TestClient):
-    """用下标而不是对象引用 —— HTTP 传不了引用，而下标是前端在同一帧看到的东西。"""
+def test_queue_remove_by_uid(client: TestClient):
+    """引用走 uid（ADR-0032）：下标会随执行区保留漂移，uid 是稳定锚点。"""
     _start(client)
     sess: OfflineSession = client.app.state.session
     client.post("/api/commands/queue/submit", json={
@@ -129,7 +129,7 @@ def test_queue_remove_by_index(client: TestClient):
                   {"op": "train", "type": "terran/scv"}],
     })
     r = client.post("/api/commands/queue/remove",
-                    json={"based_on_seq": sess.seq, "name": "main", "index": 0})
+                    json={"based_on_seq": sess.seq, "name": "main", "uid": "q01"})
     assert r.status_code == 200
     assert [i.type for i in sess.runtime.queue("main").items] == ["terran/scv"]
 
@@ -178,7 +178,7 @@ def test_bad_reorder_permutation_rejected(client: TestClient):
         "items": [{"op": "train", "type": "terran/marine"}],
     })
     r = client.post("/api/commands/queue/reorder",
-                    json={"based_on_seq": sess.seq, "name": "main", "order": [0, 1]})
+                    json={"based_on_seq": sess.seq, "name": "main", "order": ["q01", "q02"]})
     assert r.status_code == 400 and "排列" in r.json()["detail"]
 
 

@@ -60,8 +60,31 @@ import { z } from "zod";
  * rev 12：策略可读性（I1/I2/I4）—— schema 的 predicates/operators/actions 每项加 name_zh；
  *   strategy 增 display_name_zh/description_zh（策略级与 step 级）、reasons、group_names。
  *   新字段全部 `.default()` 容错：旧夹具/旧缓存帧缺字段时退回 identifier，不炸整页。
+ * rev 18（ADR-0032，PLAN-V2 批 1）队列执行账本：
+ *   ① `items[]` 增 `uid`（q01…，命令/hunk 引用的稳定锚点）、`reason`（skipped 的
+ *     闭集原因 key）、`producer_ever_ready`（skipped 项「曾被摧毁 vs 从没建过」）；
+ *   ② `items[].status` 扩为四值闭集 pending/in_progress/completed/skipped ——
+ *     已执行项**保留在队列里**不再摘除；旧录像里还有 队首阻塞/未处理 两个旧值
+ *     （枚举保留旧值做回放兼容，显示层用 QUEUE_STATUS_ZH 映射新值）；
+ *   ③ `in_flight[]`/`training[]` 增 `uid`；`blocked` 增 `uid`。
  */
-export const REV = 17 as const;
+export const REV = 18 as const;
+
+/** 队列项状态中文（显示层映射；键是后端闭集，旧值给旧词 —— 回放优先） */
+export const QUEUE_STATUS_ZH: Record<string, string> = {
+  pending: "等待中",
+  in_progress: "执行中",
+  completed: "已完成",
+  skipped: "已跳过",
+  "队首阻塞": "队首阻塞",
+  "未处理": "未处理",
+};
+
+/** skip 原因中文（后端 SKIP_REASON_ZH 的镜像；键是闭集） */
+export const SKIP_REASON_ZH: Record<string, string> = {
+  prereq_missing: "前置缺失（不在场、不在途、也不在队列）",
+  placement_collision: "放置失败（无可用槽位/候选耗尽）",
+};
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -502,10 +525,14 @@ export const zProductionFrame = z.object({
           since: z.number(),
           waited: z.number(),
           warned: z.boolean(),
+          /** 被阻塞项的账本 ID（rev 18）：警报建议 before_uid 用 */
+          uid: z.string().nullable().default(null),
         })
         .nullable(),
       items: z.array(
         z.object({
+          /** 账本 ID（rev 18）：命令/hunk 引用走 uid，下标会随执行区漂移 */
+          uid: z.string().nullable().default(null),
           index: z.number().int(),
           op: z.enum(["build", "train", "research", "cancel", "assign_workers"]),
           stable_id: z.string().nullable(),
@@ -522,11 +549,19 @@ export const zProductionFrame = z.object({
             .nullable(),
           task: z.enum(["mineral", "gas", "idle"]).nullable(),
           /**
-           * 只有两种：队首门控语义下，已发出的项已出队或进了 `in_flight`，
-           * 所以队列里不可能出现"已发出/在途"（rev 4 校准）。后端给，前端不推断（红线 C3）。
+           * 四值闭集（rev 18，ADR-0032）：已执行项保留在队列里；旧值（队首阻塞/
+           * 未处理）只出现在历史录像 —— 枚举保留旧值做回放兼容，显示层映射。
+           * 后端给，前端不推断（红线 C3）。
            */
-          status: z.enum(["队首阻塞", "未处理"]),
+          status: z.enum([
+            "pending", "in_progress", "completed", "skipped",
+            "队首阻塞", "未处理",
+          ]),
+          /** skipped 的闭集原因 key（rev 18）：prereq_missing / placement_collision */
+          reason: z.string().nullable().default(null),
           block_reason: z.string().nullable(),
+          /** skipped 项：true=相关建筑曾有现无（被摧毁）/false=从没建过（rev 18） */
+          producer_ever_ready: z.boolean().nullable().default(null),
         }),
       ),
     }),
@@ -548,6 +583,8 @@ export const zProductionFrame = z.object({
       attempted_slots: z.array(z.string()),
       /** emit 时的剩余队列下标（rev 16）：observe 答"执行到第几项"；null = 未知 */
       from_index: z.number().int().nullable().default(null),
+      /** 来源队列项的账本 ID（rev 18） */
+      uid: z.string().nullable().default(null),
     }),
   ),
   dropped: z.array(
@@ -569,6 +606,8 @@ export const zProductionFrame = z.object({
       stable_id: z.string(),
       producer_tag: z.number().int(),
       started_at: z.number(),
+      /** 来源队列项的账本 ID（rev 18）：完成扫账把项转 completed 的关联键 */
+      uid: z.string().nullable().default(null),
     }),
   ).default([]),
 });

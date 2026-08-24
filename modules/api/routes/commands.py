@@ -27,7 +27,8 @@ def queue_command(op: str, body: QueueCommand, request: Request) -> CommandResul
         raise HTTPException(status_code=400, detail=ref_err)
     try:
         detail = sess.queue_op(op, body.name, items=items,
-                               index=body.index, order=body.order)
+                               before_uid=body.before_uid, uid=body.uid,
+                               order=body.order)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return CommandResult(ok=True, detail=detail, accepted_seq=sess.seq)

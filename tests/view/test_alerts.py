@@ -91,21 +91,42 @@ def test_resource_wait_never_escalates_to_error():
         assert a.severity == "info", reason
 
 
-def test_supply_block_predicted_from_projection_with_eta():
+def test_supply_capped_from_dry_run_curve_with_eta():
+    """干跑前瞻（D1/D7：supply_block → supply_capped）：规划里没排供给建筑 →
+    卡人口点带 eta + 手动插 depot 建议。"""
     svc = AlertService(catalog=CAT)
     curve = _curve(points=[_point(100.0, 10, 15), _point(112.0, 15, 15)])
-    alerts = svc.evaluate(_gs(100.0), curve=curve)
-    supply = [a for a in alerts if a.kind == "supply_block"]
+    supply = [a for a in svc.from_curve(curve, now=100.0) if a.kind == "supply_capped"]
     assert len(supply) == 1
     assert supply[0].eta == 12.0
-    assert "12" in supply[0].text_zh
+    assert "12" in supply[0].text_zh and "补给站" in supply[0].text_zh
 
 
-def test_supply_block_ignores_maxed_cap():
+def test_supply_capped_ignores_maxed_cap():
     """cap 已满 200 时 used>=cap 不是"卡人口"（不误报）。"""
     svc = AlertService(catalog=CAT)
     curve = _curve(points=[_point(101.0, 200, 200)])
-    assert not [a for a in svc.evaluate(_gs(100.0), curve=curve) if a.kind == "supply_block"]
+    assert not [a for a in svc.from_curve(curve, now=100.0) if a.kind == "supply_capped"]
+
+
+def test_supply_capped_live_only_when_no_supply_queued():
+    """live 面（D1）：已卡人口且队列/在途没排供给建筑才报；排了就闭嘴等它。"""
+    svc = AlertService(catalog=CAT)
+    gs = _gs(100.0, supply_used=15, supply_cap=15)  # 已卡人口
+    prod = {"queues": [{"name": "main", "items": [
+        {"uid": "q01", "op": "train", "stable_id": "terran/marine", "count": 2,
+         "status": "pending"}]}], "in_flight": []}
+    fired = [a for a in svc.evaluate(gs, production=prod) if a.kind == "supply_capped"]
+    assert len(fired) == 1 and fired[0].payload["before_uid"] == "q01"
+    # 队列里排了 depot → 不报（等它建好）
+    prod2 = {"queues": [{"name": "main", "items": [
+        {"uid": "q01", "op": "build", "stable_id": "terran/supplydepot", "count": 1,
+         "status": "pending"},
+        {"uid": "q02", "op": "train", "stable_id": "terran/marine", "count": 2,
+         "status": "pending"}]}], "in_flight": []}
+    assert not [a for a in svc.evaluate(_gs(101.0, supply_used=15, supply_cap=15),
+                                        production=prod2)
+                if a.kind == "supply_capped"]
 
 
 def test_prereq_missing_reason_passed_through_not_invented():

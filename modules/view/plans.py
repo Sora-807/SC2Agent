@@ -51,7 +51,10 @@ class Plan:
             "id": self.id, "title_zh": self.title_zh, "map": self.map,
             "spawn": self.spawn, "locked": self.locked,
             "updated_at": self.updated_at,
-            "queue": [item_to_json(i) for i in self.queue],
+            # 规划是 authoring 数据：账本字段（uid/status/reason）不落盘（ADR-0032）——
+            # uid 是会话内执行轨迹，规划文件跨会话复用
+            "queue": [{k: v for k, v in item_to_json(i).items()
+                       if k not in ("uid", "status", "reason")} for i in self.queue],
         }
 
     def meta(self) -> dict:

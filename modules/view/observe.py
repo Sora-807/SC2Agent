@@ -317,33 +317,56 @@ def _regions_text(world: dict | None, econ: dict | None, catalog: Catalog, zh) -
 
 
 def _production_text(prod: dict | None, zh) -> str:
-    """B3 收口：队首状态 + 剩余队列 + 在途（带原序号）——「跑到哪了」一眼可读。"""
+    """ADR-0032 账本：uid + 四态状态（等待中/执行中/已完成/已跳过）+ skip 原因。
+
+    agent 的 propose hunk 用 before_uid 引用 —— uid 必须在这里可见；
+    已完成/已跳过的历史项折叠成一行计数，执行细节留给前 N 项未完成项。
+    """
     if not prod:
         return ""
+    from production.semantics import SKIP_REASON_ZH, STATUS_ZH
+
     out = []
     for q in prod.get("queues", []):
-        head = f"队列 {q['name']}（队首 {q['head_status']}，剩余 {len(q.get('items', []))} 项）"
+        items = q.get("items", [])
+        todo = [it for it in items if it.get("status") not in ("completed", "skipped")]
+        done = sum(1 for it in items if it.get("status") == "completed")
+        skip = sum(1 for it in items if it.get("status") == "skipped")
+        head = (f"队列 {q['name']}（待执行 {len(todo)} 项"
+                + (f"，已完成 {done}" if done else "")
+                + (f"，已跳过 {skip}" if skip else "") + "）")
         if q.get("blocked"):
             b = q["blocked"]
-            head += f" —— 已阻塞 {b['waited']:.0f}s：{b['reason']}"
+            who = f"uid={b['uid']} " if b.get("uid") else ""
+            head += f" —— {who}已阻塞 {b['waited']:.0f}s：{b['reason']}"
         out.append(head)
-        for it in q["items"][:8]:
+        for it in todo[:8]:
             what = (f"维持 {it['task']}" if it["op"] == "assign_workers" else zh(it["stable_id"]))
             n = f" ×{it['count']}" if it["count"] > 1 else ""
-            out.append(f"  {it['index']}. {it['op']} {what}{n} [{it['status']}]")
-        if len(q["items"]) > 8:
-            out.append(f"  …还有 {len(q['items']) - 8} 项")
+            uid = it.get("uid") or it["index"]
+            st = STATUS_ZH.get(it["status"], it["status"])
+            why = (f"（{SKIP_REASON_ZH.get(it['reason'], it['reason'])}）"
+                   if it.get("reason") else "")
+            wait = f" —— {it['block_reason']}" if it.get("block_reason") else ""
+            out.append(f"  {uid}. {it['op']} {what}{n} [{st}]{why}{wait}")
+        if len(todo) > 8:
+            out.append(f"  …还有 {len(todo) - 8} 项待执行")
+        for it in items:
+            if it.get("status") == "skipped":
+                what = zh(it.get("stable_id"))
+                out.append(f"  {it.get('uid') or it['index']}. {what}"
+                           f" [已跳过]（{SKIP_REASON_ZH.get(it['reason'], it['reason'])}）")
     if prod.get("in_flight"):
         parts = []
-        for f in prod["in_flight"]:
-            origin = f"原第 {f['from_index']} 项，" if f.get("from_index") is not None else ""
+        for f in prod.get("in_flight", []):
+            origin = f"来源 {f['uid']}，" if f.get("uid") else ""
             seg = f"{zh(f['stable_id'])}（{origin}等待 {f['frames_waited']} 帧"
             if f["retries"]:
                 seg += f"，重试 {f['retries']}"
             parts.append(seg + "）")
         out.append("在途：" + "，".join(parts))
     if prod.get("dropped"):
-        out.append("被丢弃：" + "；".join(
+        out.append("被丢弃（作者错误）：" + "；".join(
             f"{d['op']} {zh(d['stable_id'])} —— {d['reason']}" for d in prod["dropped"][-3:]))
     return "\n".join(out)
 

@@ -50,8 +50,8 @@ def _propose_body(**over) -> dict:
         "title_zh": "先出兵",
         "rationale_zh": "队首缺气阻塞，先把无气需求的兵提前",
         "target": {"queue": "main"},
-        "hunks": [{"id": "h1", "kind": "reorder", "text_zh": "把 #0 移到最后",
-                   "payload": {"order": [1, 0]}}],
+        "hunks": [{"id": "h1", "kind": "reorder", "text_zh": "把 q01 移到最后",
+                   "payload": {"order": ["q02", "q01"]}}],
     }
     body.update(over)
     return body
@@ -64,51 +64,62 @@ def _propose(client: TestClient, **over) -> dict:
 # ---------------- hunk 应用（纯函数） ----------------
 
 def _items(*specs) -> list[QueueItem]:
-    return [parse_item(s) for s in specs]
+    """带 uid 的队列（ADR-0032：hunk 引用走 uid，没 uid 的项引用不到）。"""
+    out = [parse_item(s) for s in specs]
+    for i, it in enumerate(out, start=1):
+        it.uid = f"q{i:02d}"
+    return out
 
 
 def test_apply_hunks_insert_delete_modify_reorder():
     base = _items({"op": "train", "type": "terran/marine"},
                   {"op": "build", "type": "terran/barracks"})
-    out = apply_hunks(base, [Hunk("h", "insert", "", {"index": 0,
-                                                      "item": {"op": "train", "type": "terran/scv"}})])
+    out = apply_hunks(base, [Hunk("h", "insert", "",
+                                  {"before_uid": "q01",
+                                   "item": {"op": "train", "type": "terran/scv"}})])
     assert [i.type for i in out] == ["terran/scv", "terran/marine", "terran/barracks"]
     assert [i.type for i in base] == ["terran/marine", "terran/barracks"], "不改入参"
 
-    assert [i.type for i in apply_hunks(base, [Hunk("h", "delete", "", {"index": 0})])] == [
+    assert [i.type for i in apply_hunks(base, [Hunk("h", "delete", "", {"uid": "q01"})])] == [
         "terran/barracks"]
-    assert [i.type for i in apply_hunks(base, [Hunk("h", "reorder", "", {"order": [1, 0]})])] == [
+    assert [i.type for i in apply_hunks(base, [Hunk("h", "reorder", "",
+                                                    {"order": ["q02", "q01"]})])] == [
         "terran/barracks", "terran/marine"]
     mod = apply_hunks(base, [Hunk("h", "modify", "",
-                                  {"index": 1, "item": {"op": "train", "type": "terran/medivac"}})])
+                                  {"uid": "q02",
+                                   "item": {"op": "train", "type": "terran/medivac"}})])
     assert [i.type for i in mod] == ["terran/marine", "terran/medivac"]
 
 
-def test_apply_hunks_is_sequential_so_partial_accept_keeps_index_meaning():
-    """按顺序逐个应用（而不是先算总位移）：部分接受时下标语义才和用户看到的一致。"""
+def test_apply_hunks_is_sequential_so_partial_accept_keeps_uid_meaning():
+    """按顺序逐个应用：部分接受时 uid 语义才和用户看到的一致。"""
     base = _items({"op": "train", "type": "terran/marine"},
                   {"op": "train", "type": "terran/scv"})
     out = apply_hunks(base, [
-        Hunk("a", "delete", "", {"index": 0}),
-        Hunk("b", "insert", "", {"index": 0, "item": {"op": "build", "type": "terran/barracks"}}),
+        Hunk("a", "delete", "", {"uid": "q01"}),
+        Hunk("b", "insert", "", {"before_uid": "q02",
+                                 "item": {"op": "build", "type": "terran/barracks"}}),
     ])
     assert [i.type for i in out] == ["terran/barracks", "terran/scv"]
 
 
-def test_apply_hunks_rejects_out_of_range_and_bad_permutation():
+def test_apply_hunks_rejects_unknown_uid_and_bad_permutation():
     base = _items({"op": "train", "type": "terran/marine"})
-    with pytest.raises(ValueError, match="越界"):
-        apply_hunks(base, [Hunk("h", "delete", "", {"index": 3})])
+    with pytest.raises(ValueError, match="不在队列里"):
+        apply_hunks(base, [Hunk("h", "delete", "", {"uid": "q99"})])
     with pytest.raises(ValueError, match="排列"):
-        apply_hunks(base, [Hunk("h", "reorder", "", {"order": [0, 1]})])
+        apply_hunks(base, [Hunk("h", "reorder", "", {"order": ["q01", "q02"]})])
     with pytest.raises(ValueError, match="未知 kind"):
         apply_hunks(base, [Hunk("h", "frobnicate", "", {})])
 
 
 def test_item_json_roundtrip():
     raw = {"op": "build", "type": "terran/barracks", "count": 1,
-           "placement": {"kind": "in_region", "region": "home", "index": None}, "task": None}
-    assert item_to_json(parse_item(raw)) == raw
+           "placement": {"kind": "in_region", "region": "home", "index": None}, "task": None,
+           "uid": "q07", "status": "completed", "reason": None}
+    it = parse_item(raw)
+    assert (it.uid, it.status) == ("q07", "completed"), "账本字段必须往返（否则已完成项被重跑）"
+    assert item_to_json(it) == raw
 
 
 def test_parse_item_rejects_unknown_op_and_placement():
@@ -131,10 +142,10 @@ def test_proposal_requires_a_rationale(client: TestClient):
 def test_invalid_proposal_is_stored_and_visible_p2(client: TestClient):
     """P2：校验不通过也要存、要可见 —— agent 要学，用户要诊断。"""
     _queue(client, [{"op": "train", "type": "terran/marine"}])
-    p = _propose(client, hunks=[{"id": "h1", "kind": "delete", "text_zh": "删第 9 项",
-                                 "payload": {"index": 9}}])
+    p = _propose(client, hunks=[{"id": "h1", "kind": "delete", "text_zh": "删不存在的项",
+                                 "payload": {"uid": "q99"}}])
     assert p["validation"]["ok"] is False
-    assert "越界" in p["validation"]["errors"][0]["text_zh"]
+    assert "不在队列里" in p["validation"]["errors"][0]["text_zh"]
     assert any(x["id"] == p["id"] for x in client.get("/api/proposals").json())
 
     r = client.post(f"/api/proposals/{p['id']}/accept")
@@ -215,9 +226,9 @@ def test_partial_accept_marks_partial(client: TestClient):
     _queue(client, [{"op": "train", "type": "terran/marine"}])
     pid = client.app.state.proposals.create(_propose_body(hunks=[
         {"id": "h1", "kind": "insert", "text_zh": "加农民",
-         "payload": {"index": 0, "item": {"op": "train", "type": "terran/scv"}}},
+         "payload": {"before_uid": "q01", "item": {"op": "train", "type": "terran/scv"}}},
         {"id": "h2", "kind": "insert", "text_zh": "加医疗机",
-         "payload": {"index": 0, "item": {"op": "train", "type": "terran/medivac"}}},
+         "payload": {"before_uid": "q01", "item": {"op": "train", "type": "terran/medivac"}}},
     ])).id
     r = client.post(f"/api/proposals/{pid}/accept", json={"hunk_ids": ["h1"]})
     assert r.status_code == 200 and r.json()["status"] == "部分接受"
@@ -298,7 +309,7 @@ def test_stopping_the_session_detaches_proposals(client: TestClient):
         "kind": "production_queue", "title_zh": "x", "rationale_zh": "理由",
         "target": {"queue": "main"},
         "hunks": [{"id": "h1", "kind": "insert", "text_zh": "加",
-                   "payload": {"index": 0, "item": {"op": "train", "type": "terran/marine"}}}]})
+                   "payload": {"item": {"op": "train", "type": "terran/marine"}}}]})
     assert r.status_code == 200
     assert r.json()["anchor"] is None, "没有会话 → 没有 anchor（而不是一个假的）"
     # 而且不能应用（没有会话可改）

@@ -8,7 +8,7 @@
  */
 import { useMemo, useState } from "react";
 import { sendCommand, type CommandResult } from "../api/commands";
-import type { ProjectionFrame } from "../contract";
+import { QUEUE_STATUS_ZH, SKIP_REASON_ZH, type ProjectionFrame } from "../contract";
 import { createPlan, savePlan } from "../api/plans";
 import { ProjectionBoard } from "../charts/ProjectionBoard";
 import { packBars } from "../charts/gantt-data";
@@ -351,17 +351,23 @@ export function ProductionPage() {
                   <table className="w-full text-left">
                     <thead className="sticky top-0 z-10 bg-panel text-faint">
                       <tr>
-                        <th className="w-8">#</th><th className="w-28">op</th>
+                        <th className="w-12">uid</th><th className="w-28">op</th>
                         <th>目标</th><th className="w-12">数量</th>
-                        <th className="w-40">放置</th><th className="w-24">状态</th>
+                        <th className="w-40">放置</th><th className="w-28">状态</th>
                         <th className="w-16" />
                       </tr>
                     </thead>
                     <tbody>
                       {q.items.map((it) => (
-                        <tr key={it.index}
-                            className={it.status === "队首阻塞" ? "text-[color:var(--warn-fg)]" : ""}>
-                          <td>{it.index}</td>
+                        <tr key={it.uid ?? it.index}
+                            className={it.status === "skipped"
+                              ? "text-[color:var(--err-fg)]"
+                              : it.status === "completed"
+                                ? "text-ghost"
+                                : it.block_reason
+                                  ? "text-[color:var(--warn-fg)]"
+                                  : ""}>
+                          <td className="font-mono text-note">{it.uid ?? it.index}</td>
                           <td>{it.op}</td>
                           <td>
                             {it.op === "assign_workers"
@@ -377,21 +383,29 @@ export function ProductionPage() {
                                   (it.placement.index === null ? "（自动找位）" : " #" + it.placement.index)
                               : "—"}
                           </td>
-                          <td>{it.status}</td>
+                          <td title={it.reason ? SKIP_REASON_ZH[it.reason] ?? it.reason : undefined}>
+                            {QUEUE_STATUS_ZH[it.status] ?? it.status}
+                            {it.reason && (
+                              <span className="text-note text-faint">
+                                （{(SKIP_REASON_ZH[it.reason] ?? it.reason).slice(0, 4)}…）
+                              </span>
+                            )}
+                          </td>
                           <td className="text-right">
-                            {cmd.writable && (
+                            {cmd.writable && it.status !== "completed" && it.uid && (
                               <>
-                                {it.index > 0 && (
+                                {it.status === "pending" && (
                                   <button
                                     className="btn btn-ghost mr-1 px-1"
                                     title="上移一位"
                                     onClick={() => {
-                                      const n = q.items.length;
-                                      const order = [...Array(n).keys()];
-                                      const i = it.index;
-                                      [order[i - 1], order[i]] = [order[i]!, order[i - 1]!];
+                                      const uids = q.items.map((x) => x.uid).filter((u): u is string => !!u);
+                                      if (uids.length !== q.items.length) return; // 旧帧无 uid：不动
+                                      const i = uids.indexOf(it.uid!);
+                                      if (i <= 0) return;
+                                      [uids[i - 1], uids[i]] = [uids[i]!, uids[i - 1]!];
                                       void cmd.run({ kind: "queue", op: "reorder",
-                                        body: { name: q.name, order } });
+                                        body: { name: q.name, order: uids } });
                                     }}
                                   >↑</button>
                                 )}
@@ -399,7 +413,7 @@ export function ProductionPage() {
                                   className="btn btn-danger px-1"
                                   title="从队列移除"
                                   onClick={() => void cmd.run({ kind: "queue", op: "remove",
-                                    body: { name: q.name, index: it.index } })}
+                                    body: { name: q.name, uid: it.uid } })}
                                 >×</button>
                               </>
                             )}

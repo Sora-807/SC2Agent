@@ -130,25 +130,26 @@ def _scv():
     return {"op": "train", "type": "terran/scv", "count": 1}
 
 
-def test_insert_positions_in_remaining_queue(client: TestClient):
+def test_insert_positions_before_uid(client: TestClient):
     sess = _offline(client)
     assert _cmd(client, "submit", {"items": [_depot(), _depot(), _scv()]}).status_code == 200
-    assert _cmd(client, "insert", {"index": 1, "items": [_scv()]}).status_code == 200
+    assert _cmd(client, "insert", {"before_uid": "q02", "items": [_scv()]}).status_code == 200
     q = sess.runtime.queue("main")
-    assert q.items[1].op.value == "train", "index=1 插在剩余队列位置 1（下一执行的第二项）"
+    assert q.items[1].op.value == "train", "before_uid=q02 插在 q02 之前（下一执行的第二项）"
+    assert [it.uid for it in q.items] == ["q01", "q04", "q02", "q03"], "新项拿新 uid，旧 uid 不变"
 
 
-def test_insert_out_of_range_400(client: TestClient):
+def test_insert_unknown_uid_400(client: TestClient):
     _offline(client)
     assert _cmd(client, "submit", {"items": [_depot()]}).status_code == 200
-    r = _cmd(client, "insert", {"index": 5, "items": [_scv()]})
-    assert r.status_code == 400 and "index" in r.json()["detail"]
+    r = _cmd(client, "insert", {"before_uid": "q99", "items": [_scv()]})
+    assert r.status_code == 400 and "q99" in r.json()["detail"]
 
 
-def test_insert_at_zero_is_next_to_execute(client: TestClient):
+def test_insert_before_first_uid_is_next_to_execute(client: TestClient):
     sess = _offline(client)
     assert _cmd(client, "submit", {"items": [_depot(), _depot()]}).status_code == 200
-    assert _cmd(client, "insert", {"index": 0, "items": [_scv()]}).status_code == 200
+    assert _cmd(client, "insert", {"before_uid": "q01", "items": [_scv()]}).status_code == 200
     assert sess.runtime.queue("main").items[0].op.value == "train"
 
 

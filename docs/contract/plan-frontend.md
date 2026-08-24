@@ -45,6 +45,7 @@
 
 | rev | 变更 | 原因 |
 |---|---|---|
+| 18 | ADR-0032 队列执行账本(PLAN-V2 批 1):`frame/production.queues[].items[]` 增 `uid`(q01…,命令/hunk 引用锚点)/`reason`(skipped 闭集原因)/`producer_ever_ready`(曾被摧毁 vs 从没建);`items[].status` 扩四值闭集 `pending/in_progress/completed/skipped`(**已执行项保留在队列里**不再摘除;旧值 队首阻塞/未处理 保留枚举做回放兼容,显示层映射);`in_flight[]`/`training[]`/`blocked` 增 `uid` | ① 队首冻结把 skip 类失败放大成全队瘫痪(兵营被拆后整队停摆);② 下标引用天然不稳 —— 已执行项出队后 index 持续漂移,agent「看到帧→提提案」间隙队列一动就指错项,uid 是稳定锚点;③ rev 4 的"队列里不可能有已发出/在途"在账本化后不再成立(in_progress 就在队列里) |
 | 10 | B12+B13 一轮两字段(F11 地图视觉语言需要):`frame/economy.nodes[]` 增 `base_tag`(节点归属基地 = 最近的己方 dropoff 建筑 tag,null = 无基地);`static/catalog.entries[]` 增 `short_name_zh`(≤2 字短名) | ① 主基地 footprint 内标签要写「矿 12/16 气 3/6」——前端拿 base_tag 与 frame/world.units 按 tag 直接 join,不需要在 TS 里做空间匹配(派生量后端算);② footprint 标签与聚类 chip 的字形需要短名——后端加字段而不是前端截断 display_name_zh(zh 文案一律来自后端,U6/C4;前端截断会在别的词上出洋相) |
 | 1 | 初版 | DSL v0.2 之前,签名表尚不存在,`static/schema` 降级为空参数表 |
 | 7 | 新增 topic `static/strategy`(steps/branches/edges/声明节) | F4 的图**不在任何帧里**:`frame/flow` 只有"现在在哪个 step",图本身从来没下发过。只靠转移历史推图会看不见"一次都没走过的 step"。归静态面(每个 flow 版本只变一次);hot-edit(S8)落地后改事件驱动。`branches` 原样带值树 —— F4 只要 step/edge,但 F9 的 AST 编辑器要完整结构,摊平一次就得再补通道 |
@@ -234,7 +235,7 @@ interface ProductionFrame {
       placement: { kind: "exact"; mark: string }
                 | { kind: "in_region"; region: string; index: number | null } | null
       task: "mineral" | "gas" | "idle" | null
-      status: "队首阻塞" | "未处理" | "已发出" | "在途"       // 后端给,前端不推断(DSL-T4 队首门控语义)
+      status: "pending" | "in_progress" | "completed" | "skipped" | "队首阻塞" | "未处理"  // rev 18 四值闭集(ADR-0032 账本:已执行项保留);旧值只在历史录像里。后端给,前端不推断(红线 C3)
       block_reason: string | null                            // 缺矿/缺气/缺供给/前置没/无产槽/无builder
       resolved_point: Pt | null                              // placement 解析后落点(摆放叠加用)
     }[]

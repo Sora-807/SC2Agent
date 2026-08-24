@@ -16,6 +16,7 @@ from game import GameState, Owner, Point2, QueueItem
 from constraint.checks import check_addon, check_build, check_gas, occupied_cells
 from tactical_map.placement import BuildSlot
 
+from production.semantics import SKIP_PLACEMENT_COLLISION, Verdict, VerdictKind
 from production.worker import Emission, NODE_RADIUS
 
 
@@ -123,7 +124,10 @@ class BuildFlightsMixin:
             head, gs, attempted=frozenset(flight["attempted"])
         )
         if pos is None or slot_name is None:
-            self._drop(head, reason or f"放置失败：候选位耗尽（已试 {sorted(flight['attempted'])}）")
+            # ADR-0032：候选耗尽 = 执行期失败 → 留账本标 skipped（不摘除），继续后续项
+            self._mark_skip(head, Verdict(
+                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
+                reason or f"放置失败：候选位耗尽（已试 {sorted(flight['attempted'])}）"), gs)
             self._release_flight(flight)
             return False
         res = check_build(gs, self._catalog, head.type, pos)
@@ -154,7 +158,10 @@ class BuildFlightsMixin:
         """
         head = flight["item"]
         if flight.get("retries", 0) >= 6:
-            self._drop(head, "挂件重发超过 6 次（母建筑候选耗尽）")
+            # ADR-0032：母建筑候选耗尽 = 执行期失败 → skipped 留账本（不摘除）
+            self._mark_skip(head, Verdict(
+                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
+                "挂件重发超过 6 次（母建筑候选耗尽）"), gs)
             return False
         res = check_addon(gs, self._catalog, head.type)
         parent = self._pick_parent_for_addon(gs, head.type) if res.ok else None
@@ -240,6 +247,7 @@ class BuildFlightsMixin:
         self._charge(head.type)  # P3
         self._build_flights.setdefault(q_name, []).append({
             "item": head,
+            "uid": head.uid,
             "type": head.type,
             "builder": parent.tag,
             "frames": 0,
@@ -263,7 +271,10 @@ class BuildFlightsMixin:
         res = check_gas(gs, self._catalog, head.type)
         geyser = self._pick_free_geyser(gs, exclude=tried) if res.ok else None
         if geyser is None and res.ok:
-            self._drop(head, f"气矿放置失败：气井候选耗尽（已试 {sorted(tried)}）")
+            # ADR-0032：气井候选耗尽 = 执行期失败 → skipped 留账本（不摘除）
+            self._mark_skip(head, Verdict(
+                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
+                f"气矿放置失败：气井候选耗尽（已试 {sorted(tried)}）"), gs)
             self._release_flight(flight)
             return False
         builder = self._pick_builder(gs, near=geyser.position)
@@ -342,6 +353,7 @@ class BuildFlightsMixin:
         self._charge(head.type)  # P3
         flight = {
             "item": head,
+            "uid": head.uid,
             "type": head.type,
             "builder": builder.tag,
             "frames": 0,

@@ -21,7 +21,8 @@ from planner.economy import DEFAULT_ECON, EconomyParams
 from planner.sim_state import InFlight, SimState, derive_from
 from planner.slots import is_tech_unit, reactor_map, slot_capacity, techlab_map
 
-#: SC2 人口上限（真实规则）—— 供给守卫与「缺供给」死局判定的分界
+#: SC2 人口上限（真实规则）——「缺供给」等待与死局判定的分界（D7 删供给守卫后：
+#: cap<200 时缺供给算等待——人可以插 depot；顶满 200 才是死局）
 SUPPLY_MAX = 200
 
 
@@ -43,8 +44,7 @@ class Planner:
         self._tech_units = {e.stable_id for e in catalog.where() if is_tech_unit(e, catalog)}
 
     def project(self, gs: GameState, seq: list, until: float, *,
-                until_complete: bool = False, tail: float = 0.0,
-                auto_supply: bool = False) -> ProjectionCurve:
+                until_complete: bool = False, tail: float = 0.0) -> ProjectionCurve:
         """从 gs 快照 + production_sequence 投影到 until 秒。
 
         until_complete（2026-08-22 二十三轮用户拍板）：跑到**队列完成**为止 ——
@@ -56,9 +56,9 @@ class Planner:
         留一小段尾巴（最后一个事件完成后还能看到经济的余势），仿真范围与
         「最后事件 + 30s」对齐，前端右缘钳制才有个自然的数据末端。
 
-        auto_supply（H 批 2026-08-24 用户拍板：**默认关**）：供给守卫只在显式
-        要求时插 depot —— 投影不再替用户补供给：卡人口要真实浮出（配合
-        audit_queue 的体检建议手动插），「一切尽可能手动」。
+        供给守卫（auto_supply）已删（PLAN-V2 D7）：投影不替人补供给 —— 卡人口
+        真实浮出，由警报层 supply_capped + audit_queue 给「插 depot before_uid」
+        的建议，一切尽可能手动。
         """
         st = derive_from(gs, self._catalog)
         queue = expand(seq) if seq else []
@@ -87,9 +87,6 @@ class Planner:
             if done:
                 self._apply_completed(st, done, curve)
                 st.in_flight = [f for f in st.in_flight if f.progress < f.build_time]
-            # 3b. 供给守卫（H 批：默认关 —— 只有显式 auto_supply 才插 depot）
-            if auto_supply:
-                self._supply_guard(queue, st, curve)
             # 4. 消费队列（可行性门控）
             while queue:
                 ok, reason, wait = self._feasible(queue[0], st)
@@ -112,40 +109,6 @@ class Planner:
             if until_complete and done_at is None and not queue and not st.in_flight:
                 done_at = st.t
         return curve
-
-    # ---- 供给守卫：队首即将卡人口 / 缺 depot 前置 → 自动插补给站（尽可能晚插入）----
-    def _supply_guard(self, queue: list, st: SimState, curve: ProjectionCurve) -> None:
-        """两种触发条件（都只在无在途 depot 时插，避免重复）：
-
-        1) Train 即将卡人口：supply_used + supply_cost > supply_cap → 插 depot（尽可能晚）
-        2) Build 前置含 supplydepot 但未建：插 depot（barracks/factory 等需 depot 前置）
-        depot 自身不消耗 supply（cost.supply=0），不会自激递归。
-        """
-        if not queue:
-            return
-        if st.supply_cap >= SUPPLY_MAX:
-            return   # 顶满 200：depot/CC 也不涨人口，插了纯烧钱 —— 让「缺供给」浮出为死局
-        op = queue[0]
-        need_inject = False
-        if isinstance(op, Train):
-            e = self._catalog.by_stable_id(op.type)
-            if e is not None and e.cost.supply > 0:
-                if st.supply_used + e.cost.supply > st.supply_cap and st.supply_cap < 200:
-                    need_inject = True
-        elif isinstance(op, Build):
-            e = self._catalog.by_stable_id(op.type)
-            if e is not None and "terran/supplydepot" in e.prerequisites:
-                if st.buildings.get("terran/supplydepot", 0) < 1:
-                    need_inject = True
-        if not need_inject:
-            return
-        if any(f.type == "terran/supplydepot" for f in st.in_flight):
-            return  # 已有在途 depot → 等
-        depot_entry = self._catalog.by_stable_id("terran/supplydepot")
-        if depot_entry is None or st.minerals < depot_entry.cost.minerals:
-            return  # 攒矿后下帧再插
-        queue.insert(0, Build("terran/supplydepot"))
-        curve.events.append(ProjectionEvent("started", "terran/supplydepot", st.t, "auto-supply"))
 
     # ---- 可行性门控（资源/前置/产槽/builder）----
     #
@@ -205,8 +168,8 @@ class Planner:
             if st.gas < e.cost.vespene:
                 return (False, "缺气", self._gas_coming(st))
             if st.supply_used + e.cost.supply > st.supply_cap:
-                # supply_guard 会自动插 depot（cap<200 时必然能解）；
-                # 顶到 200 上限补给站也救不了 —— 这才是用户要的「不能继续往后生产」警报
+                # 供给守卫已删（D7）：cap<200 时缺供给算等待（人可以插 depot ——
+                # 警报层 supply_capped 给建议）；顶满 200 才是死局
                 return (False, "缺供给", st.supply_cap < 200)
             for p in e.prerequisites:
                 if st.buildings.get(p, 0) < 1:

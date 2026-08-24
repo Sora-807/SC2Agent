@@ -55,16 +55,18 @@ export function draftFromSessionQueues(
   queues: readonly {
     items: readonly {
       index: number; op: string; stable_id: string | null; count: number;
-      placement?: unknown; task?: string | null;
+      placement?: unknown; task?: string | null; status?: string;
     }[];
   }[],
 ): DraftItem[] {
   const rows = queues
     .flatMap((q) => q.items)
     .filter((it) => it.op !== "cancel")
+    // 账本化（rev 18）后队列含已完成/已跳过的历史项 —— 草稿只提取还没执行的
+    .filter((it) => it.status !== "completed" && it.status !== "skipped")
     .sort((a, b) => a.index - b.index);
   return draftFromJson(rows.map((it) => ({
-    op: it.op, type: it.stable_id, count: it.count,
+    op: it.op, type: it.stable_id, count: Math.max(1, it.count),
     placement: it.placement ?? null, task: it.task ?? null,
   })));
 }

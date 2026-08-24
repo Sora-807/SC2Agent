@@ -50,13 +50,25 @@ PlacementSpec = PlacementExact | PlacementInRegion
 
 @dataclass(slots=True)
 class QueueItem:
-    """生产队列项（生产运行时 drain 这个队列发 build/train/research/assign_workers op）。"""
+    """生产队列项（生产运行时 drain 这个队列发 build/train/research/assign_workers op）。
+
+    执行账本字段（ADR-0032）：uid 由 runtime 入队时分配（per-queue 递增 q01…，
+    重排/插入不变 —— before_uid 引用的稳定锚点）；status 四值闭集
+    （production.semantics.QUEUE_STATUSES），已执行项**保留在队列里**不再摘除；
+    reason 只在 skipped 时有值（SKIP_REASONS 闭集 key）。规划文件/草稿里的项
+    这些字段全是默认值（pending/None）。
+    """
 
     op: QueueOp  # 操作类型（闭集枚举；构造时可传字符串，__post_init__ 归一化）
     type: str | None = None  # 目标类型稳定 ID（build/train/research 用，如 "terran/barracks"）
     count: int = 1  # 数量（≥1；train 5 个则 count=5）
     placement: PlacementSpec | None = None  # 建造位置抽象标记；queue 处理层转 TL+BR 坐标（ADR-0027）
     task: WorkerTask | None = None  # assign_workers 用：mineral/gas/idle（闭集枚举）
+    uid: str | None = None  # runtime 分配的稳定 ID（未入队 = None）
+    status: str = "pending"  # pending / in_progress / completed / skipped
+    reason: str | None = None  # skipped 时的闭集原因 key（prereq_missing/placement_collision）
+    started_at: float | None = None  # 首次发出命令的游戏时刻（runtime 记）
+    completed_at: float | None = None  # 全部执行完成的游戏时刻（runtime 记）
     # 注：条件项（原 when: "supply>=16"）无消费方，已删（T3/D5：死字段是虚假承诺）。
     # 生产 authoring 统一轮再以结构化 AST 条件回归（与 flow 的 when 同一套词表/求值器）。
 

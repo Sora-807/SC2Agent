@@ -51,13 +51,20 @@ class PlacementIn(BaseModel):
 
 
 class QueueItemIn(BaseModel):
-    """一条生产队列项。字段名与契约 `frame/production.items[]` 对齐，前端可原样回传。"""
+    """一条生产队列项。字段名与契约 `frame/production.items[]` 对齐，前端可原样回传。
+
+    `uid`/`status`/`reason`（ADR-0032 账本）：从帧反解回灌时带上可以保住执行状态
+    （否则已完成项会被重跑）；新建项不填。status 只认闭集四值。
+    """
 
     op: str
     type: str | None = None
     count: int = Field(default=1, ge=1)
     placement: PlacementIn | None = None
     task: str | None = None
+    uid: str | None = None
+    status: str | None = None
+    reason: str | None = None
 
     def to_item(self) -> QueueItem:
         try:
@@ -77,24 +84,35 @@ class QueueItemIn(BaseModel):
                 raise ValueError(
                     f"未知 worker task {self.task!r}（合法值 {[t.value for t in WorkerTask]}）"
                 ) from None
+        from production.semantics import QUEUE_STATUSES
+        status = self.status or "pending"
+        if status not in QUEUE_STATUSES:
+            raise ValueError(f"未知队列项 status {self.status!r}（合法值 {list(QUEUE_STATUSES)}）")
         return QueueItem(
             op=op, type=self.type, count=self.count,
             placement=self.placement.to_spec() if self.placement else None,
-            task=task,
+            task=task, uid=self.uid, status=status, reason=self.reason,
         )
 
 
 class QueueCommand(BaseModel):
-    """队列工具 op（S11：轻量，不走 validate/compile；执行时按 constraint 门控）。"""
+    """队列工具 op（S11：轻量，不走 validate/compile；执行时按语义门控）。
+
+    引用一律走 **uid**（ADR-0032）：已执行项保留在队列里，下标会随执行区增长漂移。
+    `before_uid`：insert 插到哪项之前（None = 追加到末尾）；`uid`：remove 删哪项；
+    `order`：reorder 的目标顺序（当前队列全部 uid 的一个排列）。
+    """
 
     #: R8 的落点：UI 用当前帧 seq 填，agent 用 ObservationPacket 的 seq 填
     based_on_seq: int
     name: str = "main"
     items: list[QueueItemIn] = Field(default_factory=list)
-    #: remove 用；下标是前端在同一帧看到的位置
-    index: int | None = None
-    #: reorder 用；必须是 0..n-1 的一个排列
-    order: list[int] | None = None
+    #: insert 用：插到该 uid 之前（None = 追加）
+    before_uid: str | None = None
+    #: remove 用：删该 uid
+    uid: str | None = None
+    #: reorder 用：当前队列全部 uid 的一个排列
+    order: list[str] | None = None
 
     def to_items(self) -> list[QueueItem]:
         return [i.to_item() for i in self.items]

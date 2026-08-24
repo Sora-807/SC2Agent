@@ -161,8 +161,11 @@ def make_tools(client: ApiClient, *, source: str = "live",
                         "type": "array",
                         "description": ("可应用的改动。每条："
                                         '{"id","kind":"insert|delete|modify|reorder","text_zh","payload"}；'
-                                        'payload：insert/modify 用 {"index","item"}，'
-                                        'delete 用 {"index"}，reorder 用 {"order":[…]}（0..n-1 的排列）。'
+                                        'payload：insert 用 {"before_uid","item"}（before_uid 省略=追加），'
+                                        'modify 用 {"uid","item"}，delete 用 {"uid"}，'
+                                        'reorder 用 {"order":[…]}（当前全部 uid 的排列）。'
+                                        'uid 取自 observe 生产段的 q01/q02… 编号 —— 已执行项保留在队列里，'
+                                        '下标会漂移，引用必须走 uid。'
                                         'item 形如 {"op":"build|train|assign_workers",'
                                         '"type":"terran/xxx","count":1,'
                                         '"placement":{"kind":"in_region","region":"home"}}'),
@@ -295,8 +298,7 @@ def make_planning_tools(client: ApiClient,
             return "拒绝：horizon 必须是秒数（1..600）"
         try:
             r = client.plans_simulate({"items": items, "horizon": horizon,
-                                       "plan_id": pid or "draft",
-                                       "auto_supply": bool(args.get("auto_supply", False))})
+                                       "plan_id": pid or "draft"})
         except ApiError as exc:
             return f"干跑失败：{_err(exc)}"
         pts = r.get("points") or []
@@ -351,9 +353,11 @@ def make_planning_tools(client: ApiClient,
             if q is None:
                 have = [x.get("name") for x in qs]
                 return f"拒绝：在线队列 {name!r} 不存在（现有：{have or '无'}）"
+            # 账本化（ADR-0032）后帧里含已完成/已跳过的历史项 —— 体检只看还没执行的
             items = [{"op": it.get("op"), "type": it.get("stable_id"),
-                      "count": it.get("count") or 1}
-                     for it in (q.get("items") or [])]
+                      "count": it.get("count") or 1, "uid": it.get("uid")}
+                     for it in (q.get("items") or [])
+                     if it.get("status") in (None, "pending", "in_progress")]
         if not isinstance(items, list) or not items:
             return "拒绝：没有可体检的队列（queue/plan_id 至少给一个；在线模式先入队）"
 
@@ -385,6 +389,11 @@ def make_planning_tools(client: ApiClient,
         issues: list[str] = []
         queued_builds: dict[str, int] = {}
         planned_cap = 0.0
+
+        def _ref(i: int, it: dict) -> str:
+            """建议的插入锚点：在线有 uid 用 uid（账本引用），离线用序号。"""
+            return f"uid={it['uid']}" if it.get("uid") else f"#{i}"
+
         for i, it in enumerate(items):
             op = str(it.get("op") or "")
             sid = str(it.get("type") or "")
@@ -401,8 +410,8 @@ def make_planning_tools(client: ApiClient,
                 req_e = catalog.by_stable_id(req)
                 if req != sid and ready.get(req, 0) + queued_builds.get(req, 0) < 1:
                     issues.append(
-                        f"[warn] #{i} {zh}：前置 {req_e.display_name_zh if req_e else req}"
-                        f" 既不在场、队列更早处也没有 —— 建议在 #{i} 前插入其建造项")
+                        f"[warn] {_ref(i, it)} {zh}：前置 {req_e.display_name_zh if req_e else req}"
+                        f" 既不在场、队列更早处也没有 —— 建议在 {_ref(i, it)} 前插入其建造项")
             if op == "build":
                 queued_builds[sid] = queued_builds.get(sid, 0) + count
                 planned_cap += DEFAULT_ECON.supply_provided.get(sid, 0) * count
@@ -411,15 +420,15 @@ def make_planning_tools(client: ApiClient,
                 if pb and ready.get(pb, 0) + queued_builds.get(pb, 0) < 1:
                     pb_e = catalog.by_stable_id(pb)
                     issues.append(
-                        f"[error] #{i} {zh}：产出建筑"
+                        f"[error] {_ref(i, it)} {zh}：产出建筑"
                         f"{pb_e.display_name_zh if pb_e else pb}不在场、队列里也没排"
-                        f" —— 先建它，否则整队会冻结在这")
+                        f" —— 先建它，否则该项会被跳过（skipped/prereq_missing）")
                 used += entry.cost.supply * count
                 if used > cap + planned_cap and cap + planned_cap < 200:
                     deficit = used - cap - planned_cap
                     issues.append(
-                        f"[error] #{i} {zh}×{count}：累计要人口 {used:.0f} >"
-                        f" 可用 {cap + planned_cap:.0f} —— 建议在 #{i} 前插补给站"
+                        f"[error] {_ref(i, it)} {zh}×{count}：累计要人口 {used:.0f} >"
+                        f" 可用 {cap + planned_cap:.0f} —— 建议在 {_ref(i, it)} 前插补给站"
                         f"（还差 {deficit:.0f} 人口，一座 +8）")
                     planned_cap += DEFAULT_ECON.supply_provided["terran/supplydepot"]
         target = (f"在线队列 {args.get('name') or 'main'}" if online
@@ -428,7 +437,7 @@ def make_planning_tools(client: ApiClient,
         if issues:
             out.append(f"发现 {len(issues)} 处：")
             out += [f"- {s}" for s in issues]
-            out.append("按建议手动插（在线走 propose hunk insert，index = 剩余队列下标；"
+            out.append("按建议手动插（在线走 propose hunk insert，before_uid = 目标项的 qXX uid；"
                        "离线直接 edit 规划文件），插完 audit_queue 复查。")
         else:
             out.append("通过：没发现卡补给 / 前置缺失 / 产出建筑缺失。")
@@ -611,17 +620,13 @@ def make_planning_tools(client: ApiClient,
                          "properties": {"queue": {"type": "array", "items": {"type": "object"}},
                                         "plan_id": {"type": "string"},
                                         "horizon": {"type": "number",
-                                                    "description": "干跑秒数，1..600，默认 300"},
-                                        "auto_supply": {"type": "boolean",
-                                                        "description": ("默认 false：投影不替你补"
-                                                                        "供给，卡人口真实浮出（配 audit_queue"
-                                                                        " 体检后手动插）")}},
+                                                    "description": "干跑秒数，1..600，默认 300"}},
                          "additionalProperties": False},
              function=simulate_plan),
         Tool(name="audit_queue",
              description=("队列体检（只诊断+给建议，不自动改）：检测卡补给/卡科技（前置不在场"
-                          "也不在队列）/产出建筑缺失，每条建议给「插什么、插在剩余队列哪个"
-                          "下标前」。对象三选一：不给参数=当前会话在线队列（name 选队列名）、"
+                          "也不在队列）/产出建筑缺失，每条建议给「插什么、插到哪个 uid 之前」。"
+                          "对象三选一：不给参数=当前会话在线队列（name 选队列名，只看未执行项）、"
                           "plan_id=离线规划文件、queue=显式草稿。改法自己动手"
                           "（在线 propose hunk insert / 离线 edit 规划文件），插完复查。"),
              parameters={"type": "object",

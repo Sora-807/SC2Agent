@@ -91,45 +91,58 @@ class Proposal:
 def apply_hunks(items: list[QueueItem], hunks: list[Hunk]) -> list[QueueItem]:
     """把选中的 hunk 按顺序作用到队列上，返回**新列表**（不改入参）。
 
-    每个 hunk 的 payload 形态：
-    - insert  `{index, item}`   在 index 处插入
-    - delete  `{index}`         删除 index
-    - modify  `{index, item}`   替换 index
-    - reorder `{order}`         order 必须是当前长度的一个排列
+    每个 hunk 的 payload 形态（ADR-0032：引用走 uid，下标会随执行区漂移）：
+    - insert  `{before_uid, item}`   插到该 uid 之前（before_uid 省略 = 追加）
+    - delete  `{uid}`                删该 uid
+    - modify  `{uid, item}`          替换该 uid（新项不带旧 uid = 新身份）
+    - reorder `{order}`              order 必须是当前全部 uid 的一个排列
 
-    刻意**按顺序逐个应用**而不是先算总位移：部分接受时下标语义才和用户看到的一致。
+    刻意**按顺序逐个应用**而不是先算总位移：部分接受时 uid 语义才和用户看到的一致。
     """
     out = list(items)
     for h in hunks:
         p = h.payload
         if h.kind == "insert":
-            idx = int(p.get("index", len(out)))
-            if not 0 <= idx <= len(out):
-                raise ValueError(f"hunk {h.id}: insert 下标 {idx} 越界（0..{len(out)}）")
-            out.insert(idx, parse_item(p.get("item") or {}))
+            item = parse_item(p.get("item") or {})
+            bu = p.get("before_uid")
+            if bu is None:
+                out.append(item)
+                continue
+            idx = next((i for i, it in enumerate(out) if it.uid == bu), None)
+            if idx is None:
+                raise ValueError(f"hunk {h.id}: insert 的 before_uid {bu!r} 不在队列里")
+            out.insert(idx, item)
         elif h.kind == "delete":
-            idx = int(p["index"])
-            if not 0 <= idx < len(out):
-                raise ValueError(f"hunk {h.id}: delete 下标 {idx} 越界（0..{len(out) - 1}）")
+            uid = p.get("uid")
+            idx = next((i for i, it in enumerate(out) if it.uid == uid), None)
+            if idx is None:
+                raise ValueError(f"hunk {h.id}: delete 的 uid {uid!r} 不在队列里")
             out.pop(idx)
         elif h.kind == "modify":
-            idx = int(p["index"])
-            if not 0 <= idx < len(out):
-                raise ValueError(f"hunk {h.id}: modify 下标 {idx} 越界（0..{len(out) - 1}）")
+            uid = p.get("uid")
+            idx = next((i for i, it in enumerate(out) if it.uid == uid), None)
+            if idx is None:
+                raise ValueError(f"hunk {h.id}: modify 的 uid {uid!r} 不在队列里")
             out[idx] = parse_item(p.get("item") or {})
         elif h.kind == "reorder":
-            order = [int(x) for x in p["order"]]
-            if sorted(order) != list(range(len(out))):
+            order = [str(x) for x in p["order"]]
+            uids = [it.uid for it in out]
+            if sorted(order) != sorted(uids) or len(set(order)) != len(order):
                 raise ValueError(
-                    f"hunk {h.id}: reorder 的 order 必须是 0..{len(out) - 1} 的排列，收到 {order}")
-            out = [out[i] for i in order]
+                    f"hunk {h.id}: reorder 的 order 必须是全部 uid（{uids}）的排列，收到 {order}")
+            by_uid = {it.uid: it for it in out}
+            out = [by_uid[u] for u in order]
         else:
             raise ValueError(f"hunk {h.id}: 未知 kind {h.kind!r}（insert|delete|modify|reorder）")
     return out
 
 
 def parse_item(raw: dict) -> QueueItem:
-    """JSON → QueueItem。未知 op / 未知 task 直接报错（不静默丢字段）。"""
+    """JSON → QueueItem。未知 op / 未知 task 直接报错（不静默丢字段）。
+
+    账本字段（uid/status/reason）一并往返（ADR-0032）：live 会话的 queue_items
+    从帧反解 → hunk 加工 → submit 回灌，丢 status 会让已完成项被重跑。
+    """
     try:
         op = QueueOp(str(raw.get("op")))
     except ValueError:
@@ -150,8 +163,13 @@ def parse_item(raw: dict) -> QueueItem:
             placement = PlacementInRegion(region=str(p["region"]), index=p.get("index"))
         else:
             raise ValueError(f"未知 placement.kind {p.get('kind')!r}（exact|in_region）")
+    from production.semantics import QUEUE_STATUSES
+    status = str(raw.get("status") or "pending")
+    if status not in QUEUE_STATUSES:
+        status = "pending"  # 旧值（队首阻塞/未处理）归一到 pending —— 语义等价
     return QueueItem(op=op, type=raw.get("type"), count=int(raw.get("count", 1)),
-                     placement=placement, task=task)
+                     placement=placement, task=task,
+                     uid=raw.get("uid"), status=status, reason=raw.get("reason"))
 
 
 def item_to_json(item: QueueItem) -> dict:
@@ -165,6 +183,7 @@ def item_to_json(item: QueueItem) -> dict:
         "op": item.op.value if isinstance(item.op, QueueOp) else str(item.op),
         "type": item.type, "count": item.count, "placement": placement,
         "task": item.task.value if isinstance(item.task, WorkerTask) else item.task,
+        "uid": item.uid, "status": item.status, "reason": item.reason,
     }
 
 

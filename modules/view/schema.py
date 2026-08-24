@@ -69,7 +69,15 @@ from typing import Any
 #:   可选 `display_name_zh` 键（分支中文别名 —— 值树是 unknown record，契约形状不变）。
 #: rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度（协议没有该
 #:   字段），原先恒发 `0.0` 是把"未知"伪装成"刚开始"；改为 None（前端 zod 同步 nullable）。
-REV = 17
+#: rev 18（ADR-0032，PLAN-V2 批 1）队列执行账本：
+#:   ① `frame/production.queues[].items[]` 增 `uid`（q01… per-queue 递增，重排不变 ——
+#:     before_uid 引用的稳定锚点）与 `reason`（skipped 时的闭集原因 key）；
+#:   ② `items[].status` 从 队首阻塞/未处理 两值扩为四值闭集
+#:     pending/in_progress/completed/skipped（已执行项**保留在队列里**，不再摘除；
+#:     旧值仍出现在历史录像里，前端 zod 枚举保留旧值、显示层映射新值）；
+#:   ③ `items[]` 增 `producer_ever_ready`（skipped 项的「曾被摧毁 vs 从没建过」判据，
+#:     D1 情形②③ live 面警报用）；`in_flight[]`/`training[]` 增 `uid`；`blocked` 增 `uid`。
+REV = 18
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -516,16 +524,19 @@ class FlowFrame:
 
 @dataclass(slots=True)
 class QueueItemView:
+    uid: str | None           # 账本 ID（ADR-0032）：命令/hunk 引用的稳定锚点
     index: int
     op: str
     stable_id: str | None
     count: int
     placement: dict | None    # {kind:"exact",mark} | {kind:"in_region",region,index}
     task: str | None
-    # 只有两种：队首阻塞 / 未处理。队首门控语义下，已发出的项已出队或进了 in_flight，
-    # 所以"已发出/在途"不会出现在队列里（rev 4 校准）。
+    # 四值闭集（rev 18）：pending/in_progress/completed/skipped —— 已执行项保留在队列里；
+    # 历史录像里还有旧值（队首阻塞/未处理），前端显示层做映射。
     status: str
-    block_reason: str | None
+    reason: str | None        # skipped 时的闭集原因（prereq_missing/placement_collision）
+    block_reason: str | None  # 本帧 pending 等待的队首项才有：等待原因（zh 文本）
+    producer_ever_ready: bool | None  # skipped 项：True=曾有现无（被摧毁）/False=从没建过
 
 
 @dataclass(slots=True)
@@ -539,6 +550,7 @@ class BlockedView:
     since: float
     waited: float
     warned: bool
+    uid: str | None   # 被阻塞项的账本 ID（rev 18：警报建议 before_uid 用）
 
 
 @dataclass(slots=True)
@@ -562,6 +574,7 @@ class InFlightView:
     queue: str
     stable_id: str
     kind: str                 # build / addon / gas
+    uid: str | None           # 来源队列项的账本 ID（rev 18）
     builder_tag: int | None
     expect_pos: Pt | None
     radius: float
@@ -589,6 +602,7 @@ class TrainingView:
     stable_id: str
     producer_tag: int
     started_at: float
+    uid: str | None   # 来源队列项的账本 ID（rev 18：完成扫账把项转 completed 的关联键）
 
 
 @dataclass(slots=True)

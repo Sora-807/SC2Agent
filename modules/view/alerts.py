@@ -29,6 +29,9 @@ GAS_FLOAT = 400
 #: 投影里多久内会卡人口才值得报（更远的以后还会重算）
 SUPPLY_LOOKAHEAD = 45.0
 
+#: skipped 家族警报（D1）：一次性（同一 uid 只报一次，状态不会自己变回去）
+_SKIP_ALERT_KINDS = frozenset({"prereq_missing", "placement_collision", "queue_skipped"})
+
 #: 敌方踪迹有效窗（游戏秒，D 批 2026-08-24 用户设计）：observe 只看得到**当前帧**，
 #: 离开视野就蒸发 —— 所以在警报层留滚动记忆：窗内统计「见过多少个不同敌兵 +
 #: 峰值同屏多少 + 最后出现在哪」
@@ -53,6 +56,8 @@ class AlertService:
     _contact_frames: list[tuple[float, int]] = field(default_factory=list)
     #: id → 最近一次**报出**的警报（活跃面用：sleep 轮询问「现在有没有正在响的」）
     _fired: dict[str, AlertView] = field(default_factory=dict)
+    #: 已报过一次的 skipped 家族警报 id（D1：一次性，防刷屏）
+    _skip_fired: set[str] = field(default_factory=set)
 
     def evaluate(
         self,
@@ -61,15 +66,25 @@ class AlertService:
         production: dict | None = None,
         curve=None,
     ) -> list[AlertView]:
-        """产出本帧应当报的警报（已过冷却过滤）。"""
+        """产出本帧应当报的警报（已过冷却过滤）。
+
+        skipped 家族（prereq_missing/placement_collision，D1）是**一次性**的：
+        项的状态不会自己变回去，重复报只会刷屏 —— 同一 uid 只报一次；
+        修复后重提的新项是新 uid，自然会有新警报。
+        """
         out: list[AlertView] = []
         out.extend(self._queue_alerts(gs, production))
+        out.extend(self._supply_alerts(gs, production))
         out.extend(self._projection_alerts(gs, curve))
         out.extend(self._economy_alerts(gs))
         out.extend(self._contact_alerts(gs))
+        out = [a for a in out
+               if a.kind not in _SKIP_ALERT_KINDS or a.id not in self._skip_fired]
         passed = [a for a in out if self._pass_cooldown(a, gs.game_time)]
         for a in passed:
             self._fired[a.id] = a
+            if a.kind in _SKIP_ALERT_KINDS:
+                self._skip_fired.add(a.id)
         return passed
 
     def active_alerts(self, now: float, *, min_severity: str = "info",
@@ -132,19 +147,27 @@ class AlertService:
     def _queue_alerts(self, gs: GameState, production: dict | None) -> list[AlertView]:
         if not production:
             return []
+        from production.semantics import CAPACITY_WARN_SECS, is_capacity_wait
+
         out: list[AlertView] = []
         for q in production["queues"]:
+            # D1②③ live 面：skipped 项进警报（一次性），带 uid 与整改建议
+            out.extend(self._skipped_alerts(gs, q))
             blocked = q.get("blocked")
             if not blocked:
                 continue
             waited = round(gs.game_time - blocked["since"], 1)
-            head = q["items"][0] if q["items"] else None
+            blocked_items = [it for it in q.get("items", [])
+                             if it.get("uid") == blocked.get("uid")] or q.get("items", [])
+            head = blocked_items[0] if blocked_items else None
             what = _zh(self.catalog, head.get("stable_id") if head else None)
             reason = blocked["reason"] or ""
             # 顺序执行的资源等待（攒矿/攒气）是队列的常态，不是事件（用户拍板
-            # 2026-08-22：不标红）。只有结构性卡死（前置永不来/供给/放置）才按
-            # warned 阈值升级 error —— 那才是真警报。
-            if _is_resource_wait(reason):
+            # 2026-08-22：不标红）。训练槽满（production_capacity）也是瞬态等待，
+            # 但超 60s 该有人知道（PLAN-V2 §7 拍板）。结构性卡死才按 warned 阈值升 error。
+            if is_capacity_wait(reason):
+                severity = "warn" if waited >= CAPACITY_WARN_SECS else "info"
+            elif _is_resource_wait(reason):
                 severity = "info"
             else:
                 # warned = 后端判定已超 STALL_WARN_SECS → 升级为 error（阈值判断在后端，不在前端）
@@ -157,43 +180,110 @@ class AlertService:
                 hint = "；产出建筑曾建成、现在不在 —— 大概率被摧毁：重排队首或重建"
             elif ever is False:
                 hint = "；产出建筑从没建成过 —— 检查建造项是否被卡/掉单"
+            who = f"uid={blocked.get('uid')} " if blocked.get("uid") else ""
             out.append(AlertView(
                 id=f"queue_blocked/{q['name']}",
                 kind="queue_blocked",
                 severity=severity,
                 at=gs.game_time,
                 eta=None,
-                text_zh=(f"生产队列「{q['name']}」队首阻塞 {waited:g}s："
+                text_zh=(f"生产队列「{q['name']}」{who}阻塞 {waited:g}s："
                          f"{what}{blocked['reason']}{hint}"),
                 source="production",
                 payload={"queue": q["name"], "waited": waited, "reason": blocked["reason"],
-                         "producer_ever_ready": ever},
+                         "producer_ever_ready": ever, "uid": blocked.get("uid")},
             ))
         return out
+
+    def _skipped_alerts(self, gs: GameState, q: dict) -> list[AlertView]:
+        """skipped 项（ADR-0032 账本）：prereq_missing 家族（D1②③）+ placement_collision。
+
+        `producer_ever_ready`（runtime `_ever_ready` 判「曾有现无」）：True = 相关建筑
+        被摧毁（error，要重建）；False/None = 从没建/前置没排（warn，给 before_uid 建议）。
+        """
+        out: list[AlertView] = []
+        for it in q.get("items", []):
+            if it.get("status") != "skipped":
+                continue
+            uid = it.get("uid") or f"#{it.get('index')}"
+            what = _zh(self.catalog, it.get("stable_id")).strip() or str(it.get("op"))
+            reason = it.get("reason")
+            if reason == "prereq_missing":
+                ever = it.get("producer_ever_ready")
+                if ever is True:
+                    kind, severity = "prereq_missing", "error"
+                    hint = "相关建筑曾建成、现在不在 —— 大概率被摧毁：重建或换路径"
+                else:
+                    kind, severity = "prereq_missing", "warn"
+                    hint = f"前置不在场也不在队列 —— 在 {uid} 前插建造项，或 remove uid={uid}"
+            elif reason == "placement_collision":
+                kind, severity = "placement_collision", "warn"
+                hint = "放置无可用位 —— 扩图层槽位/换 placement 后重提"
+            else:
+                kind, severity = "queue_skipped", "warn"
+                hint = reason or "执行失败"
+            out.append(AlertView(
+                id=f"{kind}/{q['name']}/{uid}",
+                kind=kind,
+                severity=severity,
+                at=gs.game_time,
+                eta=None,
+                text_zh=f"队列「{q['name']}」uid={uid} {what} 已跳过：{hint}",
+                source="production",
+                payload={"queue": q["name"], "uid": it.get("uid"),
+                         "stable_id": it.get("stable_id"), "reason": reason,
+                         "producer_ever_ready": it.get("producer_ever_ready")},
+            ))
+        return out
+
+    def _supply_alerts(self, gs: GameState, production: dict | None) -> list[AlertView]:
+        """supply_capped（D1 live 面，替代已删除的 supply_block 前瞻）：
+        已卡人口 **且** 队列/在途没有任何供给建筑 —— 建议插 depot，带 before_uid。
+        队列里已排就闭嘴（等它建成就好）。"""
+        from planner.economy import DEFAULT_ECON
+        from production.semantics import STATUS_IN_PROGRESS, STATUS_PENDING
+
+        if gs.supply_used < gs.supply_cap or gs.supply_cap >= 200:
+            return []
+        supply_types = {t for t, n in DEFAULT_ECON.supply_provided.items() if n > 0}
+        head_uid: str | None = None
+        if production:
+            for q in production.get("queues", []):
+                for it in q.get("items", []):
+                    if it.get("status") not in (STATUS_PENDING, STATUS_IN_PROGRESS):
+                        continue
+                    if it.get("op") == "build" and it.get("stable_id") in supply_types:
+                        return []  # 已排供给：等它
+                    if head_uid is None and it.get("status") == STATUS_PENDING:
+                        head_uid = it.get("uid")
+            for f in production.get("in_flight", []):
+                if f.get("stable_id") in supply_types:
+                    return []
+        before = f"（before_uid={head_uid}）" if head_uid else ""
+        return [AlertView(
+            id="supply_capped",
+            kind="supply_capped",
+            severity="warn",
+            at=gs.game_time, eta=None,
+            text_zh=(f"已卡人口（{gs.supply_used:g}/{gs.supply_cap:g}）且队列/在途"
+                     f"没有供给建筑 —— 建议插 build 补给站{before}"),
+            source="production",
+            payload={"supply_used": gs.supply_used, "supply_cap": gs.supply_cap,
+                     "before_uid": head_uid},
+        )]
 
     # ---- 投影 ----
 
     def _projection_alerts(self, gs: GameState, curve) -> list[AlertView]:
+        """live 窗口投影的前瞻警报。
+
+        卡人口前瞻（旧 supply_block）已删（PLAN-V2 D1/D7）：投影替人补供给的
+        「前瞻」与手动哲学冲突 —— live 面由 `_supply_alerts`（真实队列有没有排
+        供给建筑）接管，规划面由 `from_curve` 的 supply_capped 给建议。
+        """
         if curve is None:
             return []
         out: list[AlertView] = []
-        # 卡人口：投影里第一个 supply_used >= supply_cap 的点（cap 已满 200 不算）
-        for p in curve.points:
-            if p.t - gs.game_time > SUPPLY_LOOKAHEAD:
-                break
-            if p.supply_cap < 200 and p.supply_used >= p.supply_cap:
-                eta = round(p.t - gs.game_time, 1)
-                out.append(AlertView(
-                    id="supply_block",
-                    kind="supply_block",
-                    severity="warn" if eta > 5 else "error",
-                    at=gs.game_time, eta=eta,
-                    text_zh=(f"约 {eta:g}s 后卡人口（{p.supply_used}/{p.supply_cap}）"
-                             if eta > 0 else f"已经卡人口（{p.supply_used}/{p.supply_cap}）"),
-                    source="projection",
-                    payload={"supply_used": p.supply_used, "supply_cap": p.supply_cap},
-                ))
-                break
         # 缺前置：投影里 stalled 事件的原因由 planner 给（不在这里编）
         for e in curve.events:
             if e.kind != "stalled" or e.reason is None:
@@ -226,11 +316,13 @@ class AlertService:
             if p.supply_cap < 200 and p.supply_used >= p.supply_cap:
                 eta = round(p.t - now, 1)
                 out.append(AlertView(
-                    id="supply_block", kind="supply_block",
+                    id="supply_capped", kind="supply_capped",
                     severity="warn" if eta > 5 else "error",
                     at=now, eta=eta,
-                    text_zh=(f"约 {eta:g}s 后卡人口（{p.supply_used}/{p.supply_cap}）"
-                             if eta > 0 else f"已经卡人口（{p.supply_used}/{p.supply_cap}）"),
+                    text_zh=(f"约 {eta:g}s 后卡人口（{p.supply_used}/{p.supply_cap}）—— "
+                             "队列里没有供给建筑，插 build 补给站"
+                             if eta > 0 else f"已经卡人口（{p.supply_used}/{p.supply_cap}）—— "
+                             "队列里没有供给建筑，插 build 补给站"),
                     source="projection",
                     payload={"supply_used": p.supply_used, "supply_cap": p.supply_cap},
                 ))

@@ -193,7 +193,7 @@ def test_double_projection_works_on_live_via_subprocess(client: TestClient):
         "rationale_zh": "重工厂缺前置会一直卡住，把补给站提前",
         "target": {"queue": "main"},
         "hunks": [{"id": "h1", "kind": "reorder", "text_zh": "换序",
-                   "payload": {"order": [1, 0]}}]}
+                   "payload": {"order": ["q02", "q01"]}}]}
     pid = client.app.state.proposals.create(body).id
     pair = client.get(f"/api/proposals/{pid}/preview").json()
     assert pair["proposed"]["points"][-1]["supply_cap"] > pair["current"]["points"][-1]["supply_cap"]

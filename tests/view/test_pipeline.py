@@ -196,7 +196,7 @@ def test_assign_workers_writes_a_persistent_quota_p9_fixed():
     runtime.on_game_state(gs)
 
     snap = runtime.snapshot()
-    assert snap["queues"][0]["items"] == [], "写完目标就出队（不占住队首）"
+    assert snap["queues"][0]["items"][0]["status"] == "completed", "写完目标即完成（账本保留，ADR-0032）"
     assert snap["dropped"] == [], "不是掉项"
 
     econ = economy_frame(keeper.snapshot(gs))

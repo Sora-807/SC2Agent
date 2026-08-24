@@ -302,6 +302,51 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.59 五十二轮：PLAN-V2 批 1 落地 —— 队列执行账本 + skip 语义（ADR-0032，2026-08-24）
+
+批 1 六件套全部落地，后端 **942 passed / 4 skipped**（基线 915，净增 27 行为锁）、
+前端 **386 passed + tsc 绿**、契约 **REV 17→18**（一次 +1）：
+
+- **执行账本**（`game/production.QueueItem` + runtime）：项带 `uid`（q01… per-queue
+  递增，clear 不重置、重排不变）与 `status` 四值闭集
+  （pending/in_progress/completed/skipped）；**已执行项保留在队列里不再摘除**。
+  BUILD 完成 = flight 确认实体 `build_progress>=1`；TRAIN 完成 = `_trainings`
+  账本淘汰（账本条目带 uid 关联）。帧反解回灌（live queue_items → hunk →
+  submit）往返 uid/status —— 丢 status 会让已完成项被重跑；`_check_items`
+  对带 uid 的账本往返项放开 count=0（已完成项的合法状态）。
+- **共享分类器** `production/semantics.classify(item, catalog, view)`（纯函数，
+  表驱动 17 测锁语义）：ready / pending（矿/气/人口/前置在途或在队列/产出建筑
+  在途或在队列/**训练槽满 production_capacity**）/ skip（`prereq_missing`｜
+  `placement_collision`）。production_capacity 归 pending（PLAN-V2 §7 拍板，偏离
+  agent 文档——槽满是瞬态）+ 超 60s 警报升级 warn。消费方：runtime 已接，
+  planner 仿真/健康检查批 3 接入。
+- **drain = skip-and-continue**（队首冻结只对 pending 保留）：skip 标记后继续
+  下一项（不级联）；pending 队首等待不越序（顺序语义）。放置位耗尽/重试耗尽
+  （含挂件母建筑/气井）从 dropped 改为 skip(placement_collision) 留账本；
+  作者错误（catalog 不认/标记不存在/未知 op）仍 dropped 摘除（D6 分工）。
+- **命令面换 uid**：`insert(before_uid)`/`remove(uid)`/`reorder(order=uid 排列)`
+  贯穿 commands.py → OfflineSession/LiveSession → run_session 子进程；提案
+  hunks 同步（insert 用 before_uid、delete/modify 用 uid）；agent propose schema
+  与 audit_queue 建议文案改 uid 锚点（在线体检只看未执行项）。
+- **D1 警报**：删 supply_block 前瞻；live 面新 `supply_capped`（已卡人口**且**
+  队列/在途没排供给建筑才报，建议带 before_uid）；skipped 项进警报
+  （prereq_missing 家族用 `_ever_ready` 分「被摧毁 error / 从没建 warn+插建
+  议」，一次性防刷屏）；capacity 等待 info→60s→warn。**D7：`_supply_guard`
+  与 auto_supply 参数彻底删除**（planner/routes/tools/probes 四处）。
+- **契约 rev 18**：items[] +uid/reason/producer_ever_ready，status 扩四值
+  （旧值保留枚举做回放兼容，前端 QUEUE_STATUS_ZH/SKIP_REASON_ZH 映射），
+  in_flight/training/blocked +uid；ProductionPage 队列表换 uid 列 + 四态渲染
+  + uid 命令；draftFromSessionQueues 过滤已执行历史项；规划文件持久化剥账本
+  字段（uid 是会话内轨迹，不落 authoring 数据）。
+- ADR-0032（队列执行账本与 skip 语义，取代 S11 队首冻结拍板）+ ADR-0027 修订
+  （placement null = auto，语义先记、批 2 落地）。
+- 工程小事故 1 起：heredoc 传大中文补丁串被 bash 截断，`open(p,"w")` 先截断后
+  崩 → alerts.py 清空 —— git checkout 恢复后改走脚本文件方式（大改一律不再走
+  heredoc）。
+
+**执行时确认点**（PLAN-V2 §7 预告的两处之一，已按推荐值落地待用户复核）：
+production_capacity → pending + 60s 升级 warn（§7 拍板）。
+
 ## 0.58 五十一轮：PLAN-V2 立项 —— 执行模型/地图规划/观测面大重构（2026-08-24，本轮只立项不执行）
 
 需求源 = agent 自己梳理的文档（runtime/agent-talk/workspace/improvement-notes.md

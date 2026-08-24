@@ -417,12 +417,16 @@ def production_frame(snap: dict, catalog: Catalog) -> ProductionFrame:
                 since=q["blocked"]["since"],
                 waited=0.0,  # 由 caller 用当前 game_time 覆写，见 with_waited()
                 warned=q["blocked"]["warned"],
+                uid=q["blocked"].get("uid"),
             ),
             items=[
                 QueueItemView(
-                    index=it["index"], op=it["op"], stable_id=it["stable_id"],
+                    uid=it.get("uid"), index=it["index"], op=it["op"],
+                    stable_id=it["stable_id"],
                     count=it["count"], placement=it["placement"], task=it["task"],
-                    status=it["status"], block_reason=it["block_reason"],
+                    status=it["status"], reason=it.get("reason"),
+                    block_reason=it["block_reason"],
+                    producer_ever_ready=it.get("producer_ever_ready"),
                 )
                 for it in q["items"]
             ],
@@ -434,6 +438,7 @@ def production_frame(snap: dict, catalog: Catalog) -> ProductionFrame:
             queue=f["queue"],
             stable_id=f["stable_id"],
             kind=_flight_kind(f["stable_id"], catalog),
+            uid=f.get("uid"),
             from_index=f.get("from_index"),
             builder_tag=f["builder_tag"],
             expect_pos=None if f["expect_pos"] is None
@@ -451,7 +456,7 @@ def production_frame(snap: dict, catalog: Catalog) -> ProductionFrame:
     ]
     training = [
         TrainingView(stable_id=t["stable_id"], producer_tag=t["producer_tag"],
-                     started_at=t["started_at"])
+                     started_at=t["started_at"], uid=t.get("uid"))
         for t in snap.get("training") or []
     ]
     return ProductionFrame(queues=queues, in_flight=in_flight, dropped=dropped,
