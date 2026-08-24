@@ -38,6 +38,7 @@ from agent.readonly import ReadOnlyArea
 
 PLAN_PREFIX = "plans/"
 MAP_PREFIX = "map-plans/"
+INITIAL_STATE_PREFIX = "initial-states/"
 STRATEGY_PREFIX = "strategies/"
 
 
@@ -96,6 +97,10 @@ def _split(path: str) -> tuple[str, str]:
         sid = path[len(STRATEGY_PREFIX):-len(".yaml")]
         if sid and "/" not in sid:
             return "strategy", sid
+    if path.startswith(INITIAL_STATE_PREFIX) and path.endswith(".yaml"):
+        sid = path[len(INITIAL_STATE_PREFIX):-len(".yaml")]
+        if sid and "/" not in sid:
+            return "initial_state", sid
     return "disk", path
 
 
@@ -295,6 +300,9 @@ class ApiWorkspace(Workspace):
             if area == "map":
                 return yaml.safe_dump(self._client.map_plan_doc(pid),
                                       allow_unicode=True, sort_keys=False)
+            if area == "initial_state":
+                return yaml.safe_dump(self._client.initial_state_get(pid),
+                                      allow_unicode=True, sort_keys=False)
             if area == "strategy":
                 d = self._client.strategy_doc(pid)
                 return yaml.safe_dump(
@@ -322,6 +330,16 @@ class ApiWorkspace(Workspace):
                 area="map_plan", action="edit" if existed else "add", ref=pid,
                 label=f"地图规划 {pid}"))
             return
+        if area == "initial_state":
+            doc = yaml.safe_load(content) or {}
+            try:
+                self._client.initial_state_save(pid, doc)
+            except ApiError as exc:
+                raise WorkspaceError(f"保存失败：{_err_text(exc)}") from None
+            self._changes.add(ChangeRecord(
+                area="live", action="edit", ref=pid,
+                label=f"初始状态快照 {pid}"))
+            return
         if area == "strategy":
             existed = self._strategy_exists(pid)
             self._save_strategy(pid, content)
@@ -341,6 +359,12 @@ class ApiWorkspace(Workspace):
                 out += [f"{PLAN_PREFIX}{r['id']}.yaml" for r in self._client.plans_list()]
             except ApiError:
                 pass
+        if prefix in ("", "initial-states", "initial-states/"):
+            try:
+                out += [f"{INITIAL_STATE_PREFIX}{r['id']}.yaml"
+                        for r in self._client.initial_states_list()]
+            except ApiError:
+                pass   # 后端未启用 initial-states 时该区不出现在清单（如实缺席）
         if prefix in ("", "map-plans", "map-plans/"):
             try:
                 out += [f"{MAP_PREFIX}{r['id']}.yaml" for r in self._client.map_plans_list()]
@@ -359,6 +383,7 @@ class ApiWorkspace(Workspace):
         for area in self._readonly:
             out += area.list_paths(prefix)
         if not (prefix.startswith("plans") or prefix.startswith("map-plans")
+                or prefix.startswith("initial-states")
                 or prefix.startswith("strategies")):
             # scratch 同名路径刻意排除（filter 末句）：只读区是这些前缀的唯一语义，
             # 不给"磁盘上恰好有个 recordings/ 目录"的路径钻空子的机会

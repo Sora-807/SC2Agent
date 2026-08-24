@@ -95,6 +95,7 @@ EXPECTED_TOOLS = {
     # +audit_queue（F 批 2026-08-24：队列体检只诊断+建议，17→18）
     "simulate_plan", "audit_queue", "start_session", "stop_session", "sleep",
     "list_modules", "read_module",
+    "export_snapshot",
 }
 
 

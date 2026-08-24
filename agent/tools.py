@@ -282,47 +282,198 @@ def make_planning_tools(client: ApiClient,
     干跑试算、起会话、看参考战术库/当前策略。
     """
 
-    async def simulate_plan(args: dict) -> str:
-        items = args.get("queue")
-        pid = str(args.get("plan_id") or "").strip() or None
-        if not items and pid:
-            try:
-                items = client.plan_get(pid)["queue"]
-            except ApiError as exc:
-                return f"取规划失败：{_err(exc)}"
-        if not isinstance(items, list) or not items:
-            return "拒绝：queue 与 plan_id 至少给一个（都给则以 queue 为准）"
-        try:
-            horizon = min(600.0, max(1.0, float(args.get("horizon") or 300.0)))
-        except (TypeError, ValueError):
-            return "拒绝：horizon 必须是秒数（1..600）"
-        try:
-            r = client.plans_simulate({"items": items, "horizon": horizon,
-                                       "plan_id": pid or "draft"})
-        except ApiError as exc:
-            return f"干跑失败：{_err(exc)}"
-        pts = r.get("points") or []
-        out = [f"干跑 {pid or '草稿队列'}（horizon {horizon:g}s）："]
-        if pts:
-            last = pts[-1]
-            army = sum(v for k, v in (last.get("units") or {}).items())
-            bld = sum(v for v in (last.get("buildings") or {}).values())
-            out.append(f"曲线末点 t={last['t']:g}s 矿 {last['minerals']:g} 气 {last['gas']:g} "
-                       f"人口 {last['supply_used']:g}/{last['supply_cap']:g}"
-                       f"（采气工 {last.get('gas_workers', 0)}，建筑 {bld}，单位 {army}）")
-        evs = r.get("events") or []
-        if evs:
-            out.append("事件：")
-            out += [f"- t={e['t']:g}s {e['kind']} {e.get('stable_id') or ''}"
-                    + (f"：{e['reason']}" if e.get("reason") else "") for e in evs]
+    def _producer_zh(sid: str) -> str:
+        from game.catalog import load_all
+        e = load_all().by_stable_id(sid)
+        return (e.display_name_zh if e is not None else sid)
+
+    def _render_sim_v2(r: dict, title: str) -> str:
+        """四段输出（templates/simulate-plan-v2-output.md 归一版）。
+
+        事件时间线段落已删除 —— 段落 2 的 started_at/completed_at 就是它。
+        """
+        from production.semantics import SKIP_REASON_ZH, STATUS_ZH
+
+        out = [f"# 干跑 {title}"]
+        if r.get("static"):
+            out.append("（horizon=0：静态体检，没跑投影）")
+            for a in r.get("alerts") or []:
+                out.append(f"- [{a.get('severity')}] {a.get('text_zh')}")
+            if not (r.get("alerts") or []):
+                out.append("通过：没发现前置缺失 / 产出建筑缺失 / 人口超支。")
+            return "\n".join(out)
+
+        # 1/4 曲线采样（行数封顶：超长规划抽行显示，防挤掉后面的段落）
+        samples = r.get("samples") or []
+        out.append("### 1/4 曲线采样")
+        if len(samples) > 40:
+            stride = (len(samples) + 39) // 40
+            shown = samples[::stride]
+            if samples[-1] not in shown:
+                shown.append(samples[-1])
+            out.append(f"（{len(samples)} 个采样点，抽行显示 {len(shown)} 行 —— "
+                       "细看某段用 sample_start/sample_interval）")
+            samples = shown
+        if samples:
+            out.append("| t（秒） | 矿 | 气 | 补给(用/上) | 工人(矿/气/建/侦/闲) | 兵营(普闲/科闲) | 工厂 | 星港 |")
+            out.append("|---:|---:|---:|---|---|:---:|:---:|:---:|")
+
+            def _idle(p: dict, key: str) -> str:
+                if not p:
+                    return "—"
+                cap, busy = p.get(key + "_cap", 0), p.get(key + "_busy", 0)
+                return f"{max(0, cap - busy)}"
+
+            for smp in samples:
+                w = smp.get("workers") or {}
+                pr = smp.get("producers") or {}
+                wk = "/".join(str(w.get(k, 0)) for k in ("mineral", "gas", "building", "scouting", "idle"))
+                rax = pr.get("terran/barracks") or {}
+                fac = pr.get("terran/factory") or {}
+                sp = pr.get("terran/starport") or {}
+                out.append(f"| {smp['t']:g} | {smp['minerals']:g} | {smp['gas']:g} "
+                           f"| {smp['supply_used']:g}/{smp['supply_cap']:g} | {wk} "
+                           f"| {_idle(rax, 'normal')}/{_idle(rax, 'tech')} "
+                           f"| {_idle(fac, 'normal')}/{_idle(fac, 'tech')} "
+                           f"| {_idle(sp, 'normal')}/{_idle(sp, 'tech')} |")
+        else:
+            out.append("（采样段为空：sample_start 之后没有采样点）")
+
+        # 2/4 队列执行状态
+        rows = r.get("queue_status") or []
+        out.append("### 2/4 队列执行状态")
+        out.append("| uid | 队列项 | 执行状态 | 开始 | 完成 | 跳过原因 |")
+        out.append("|---|---|---|---:|---:|---|")
+        for q in rows:
+            why = SKIP_REASON_ZH.get(q.get("reason"), "") if q.get("reason") else ""
+            out.append(f"| {q.get('uid')} | {q.get('item')} | {STATUS_ZH.get(q.get('status'), q.get('status'))} "
+                       f"| {q.get('started_at') if q.get('started_at') is not None else '—'} "
+                       f"| {q.get('completed_at') if q.get('completed_at') is not None else '—'} "
+                       f"| {why or '—'} |")
+        out.append("> 状态：等待中=等矿/气/人口/前置（等一等就满足）｜执行中｜已完成｜"
+                   "已跳过=执行失败（原因见列）；没轮到=等待中")
+
+        # 3/4 终值快照
+        fin = r.get("final") or {}
+        out.append(f"### 3/4 终值快照（t={fin.get('t', 0):g}s）")
+        if fin:
+            w = fin.get("workers") or {}
+            out.append(f"矿 {fin.get('minerals', 0):g}｜气 {fin.get('gas', 0):g}｜"
+                       f"人口 {fin.get('supply_used', 0):g}/{fin.get('supply_cap', 0):g}｜"
+                       f"工人 矿{w.get('mineral', 0)}/气{w.get('gas', 0)}/"
+                       f"建{w.get('building', 0)}/侦{w.get('scouting', 0)}/闲{w.get('idle', 0)}")
+            blds = fin.get("buildings") or {}
+            if blds:
+                out.append("建筑：" + "，".join(f"{_producer_zh(k)}×{v}" for k, v in sorted(blds.items())))
+            else:
+                out.append("建筑：无")
+            us = fin.get("units") or {}
+            out.append("部队：" + ("，".join(f"{_producer_zh(k)}×{v}" for k, v in sorted(us.items())) if us else "无"))
+            det = fin.get("production_detail") or []
+            if det:
+                out.append("产线明细（按类型+挂件聚合，近似）：" + "；".join(
+                    f"{_producer_zh(d['building'])}({d.get('addon') or '无'})"
+                    f"→{'训练 ' + _producer_zh(d['producing']) if d.get('producing') else '空闲'}"
+                    for d in det))
+            ups = fin.get("upgrades") or []
+            out.append("已完成升级：" + ("，".join(_producer_zh(u) for u in ups) if ups else "无"))
+
+        # 4/4 健康检查
         alerts = r.get("alerts") or []
-        out.append("前瞻警报：" if alerts else "前瞻警报：（无）")
-        out += [f"- [{a.get('severity')}] {a.get('text_zh')}" for a in alerts]
+        out.append("### 4/4 健康检查")
+        by_sev: dict = {"error": [], "warn": [], "info": []}
+        for a in alerts:
+            by_sev.setdefault(a.get("severity"), []).append(a)
+        if any(by_sev.values()):
+            out.append("| 级别 | 类型 | 详情 |")
+            out.append("|---|---|---|")
+            for sev in ("error", "warn", "info"):
+                for a in by_sev.get(sev, []):
+                    mark = "🔴" if sev == "error" else ("🟡" if sev == "warn" else "⚪")
+                    out.append(f"| {mark} {sev} | {a.get('kind')} | {a.get('text_zh')} |")
+        for sev, zh in (("error", "🔴 error"), ("warn", "🟡 warn"), ("info", "⚪ info")):
+            if not by_sev.get(sev):
+                out.append(f"> {zh}：无")
         skipped = r.get("skipped") or []
         if skipped:
-            out.append("被跳过的项（语法/catalog 不认）：")
-            out += [f"- {s.get('op')}: {s.get('reason')}" for s in skipped]
-        return _clip("\n".join(out))
+            out.append("被跳过的项（语法/catalog 不认，未入仿）：" + "；".join(
+                f"{s.get('op')}: {s.get('reason')}" for s in skipped))
+        return "\n".join(out)
+
+    async def simulate_plan(args: dict) -> str:
+        body: dict = {}
+        src_note = []
+        if args.get("queue"):
+            body["items"] = args["queue"]
+        pid = str(args.get("plan_id") or "").strip() or None
+        if pid:
+            body["plan_id"] = pid
+            src_note.append(pid)
+        qname = str(args.get("queue_name") or "").strip() or None
+        if qname:
+            body["queue_name"] = qname
+            src_note.append(f"在线队列 {qname}")
+        if args.get("from_session"):
+            body["from_session"] = True
+            src_note.append("当前会话")
+        if not (body.get("items") or pid or qname or args.get("from_session")):
+            return ("拒绝：queue / plan_id / queue_name / from_session 至少给一个"
+                    "（都给则以 queue 为准）")
+        try:
+            raw_h = args.get("horizon")
+            horizon = min(600.0, max(0.0, float(raw_h if raw_h is not None else 300.0)))
+        except (TypeError, ValueError):
+            return "拒绝：horizon 必须是秒数（0..600；0 = 只做静态体检不跑投影）"
+        body["horizon"] = horizon
+        if args.get("sample_interval"):
+            body["sample_interval"] = int(args["sample_interval"])
+        if args.get("sample_start"):
+            body["sample_start"] = float(args["sample_start"])
+        if args.get("initial_state") is not None:
+            body["initial_state"] = args["initial_state"]
+            note = args["initial_state"] if isinstance(args["initial_state"], str) else "内联"
+            src_note.append(f"起点 {note}")
+        try:
+            r = client.plans_simulate(body)
+        except ApiError as exc:
+            return f"干跑失败：{_err(exc)}"
+        title = "＋".join(src_note) or "草稿队列"
+        title += f"（horizon {horizon:g}s）"
+        return _clip(_render_sim_v2(r, title))
+
+    async def export_snapshot(args: dict) -> str:
+        """从活跃会话导出状态快照 + 剩余队列（I6）：可直接喂回 simulate_plan。"""
+        save_as = str(args.get("id") or "").strip() or None
+        try:
+            out = client.session_export(save_as=save_as)
+        except ApiError as exc:
+            return f"导出失败：{_err(exc)}"
+        doc = out.get("initial_state") or {}
+        w = doc.get("workers") or {}
+        lines = [f"# 会话快照（t={out.get('game_time', 0):g}s）"
+                 + (f" → 已存 initial-states/{save_as}.yaml" if save_as else "")]
+        lines.append(f"矿 {doc.get('minerals', 0)}｜气 {doc.get('gas', 0)}｜"
+                     f"人口 {doc.get('supply_used', 0)}/{doc.get('supply_cap', 0)}｜"
+                     f"工人 矿{w.get('mineral', 0)}/气{w.get('gas', 0)}/"
+                     f"建{w.get('building', 0)}/侦{w.get('scouting', 0)}/闲{w.get('idle', 0)}")
+        blds = doc.get("buildings") or {}
+        if blds:
+            lines.append("建筑：" + "，".join(f"{k}×{v}" for k, v in sorted(blds.items())))
+        q = out.get("queue") or []
+        lines.append(f"剩余队列（{len(q)} 项，带 uid/status）：" if q else "剩余队列：空")
+        for it in q[:10]:
+            n = f" ×{it['count']}" if (it.get("count") or 1) > 1 else ""
+            lines.append(f"- {it.get('uid') or '?'} {it.get('op')} {it.get('type') or ''}{n}"
+                         f" [{it.get('status')}]"
+                         + (f"（{it.get('reason')}）" if it.get("reason") else ""))
+        if len(q) > 10:
+            lines.append(f"…还有 {len(q) - 10} 项")
+        lines.append("用法：simulate_plan(initial_state="
+                     + (f'"{save_as}"' if save_as else "导出的状态对象")
+                     + ", queue=上面的队列, ...) 预演后续。")
+        if out.get("note"):
+            lines.append(f"[近似] {out['note']}")
+        return "\n".join(lines)
 
     # ---- 会话（「开启游戏」两模式，2026-08-23 用户拍板收敛）----
 
@@ -613,16 +764,39 @@ def make_planning_tools(client: ApiClient,
 
     return [
         Tool(name="simulate_plan",
-             description=("离线干跑：真 planner 投影 + 前瞻警报（不需要会话）。给 queue 直接试，"
-                          "或给 plan_id 用该规划的现行队列。输出曲线末点/事件/警报/被跳过项。"
-                          "**改过规划文件必须干跑** —— 没有试算的改动不算完成。"),
+             description=("干跑 v2（四段输出：曲线采样/队列执行状态/终值快照/健康检查）。"
+                          "队列四选一：queue 显式草稿 / plan_id 规划文件 / queue_name 在线队列 / "
+                          "from_session 当前会话。起点三选一：initial_state（字符串=引用 "
+                          "initial-states/<id>，对象=内联）/ from_session / 缺省标准开局。"
+                          "horizon=0 = 只做静态体检（不跑投影）。**改过规划必须干跑** —— "
+                          "没有试算的改动不算完成。"),
              parameters={"type": "object",
                          "properties": {"queue": {"type": "array", "items": {"type": "object"}},
                                         "plan_id": {"type": "string"},
+                                        "queue_name": {"type": "string",
+                                                       "description": "在线队列名（默认 main）—— 对局中预演"},
+                                        "from_session": {"type": "boolean",
+                                                         "description": "取当前会话的状态+剩余队列当起点"},
                                         "horizon": {"type": "number",
-                                                    "description": "干跑秒数，1..600，默认 300"}},
+                                                    "description": "干跑秒数 0..600（默认 300；0=静态体检）"},
+                                        "sample_interval": {"type": "integer",
+                                                            "description": "采样间隔秒（默认 10）"},
+                                        "sample_start": {"type": "number",
+                                                         "description": "采样开始秒（默认 0，只看某段）"},
+                                        "initial_state": {"description":
+                                                          "起点：字符串=引用 initial-states/<id>（read initial-states/ 看有哪些），"
+                                                          "对象=内联一次性 {minerals,gas,supply_used,supply_cap,workers,buildings,units,upgrades}"}},
                          "additionalProperties": False},
              function=simulate_plan),
+        Tool(name="export_snapshot",
+             description=("从当前会话导出状态快照 + 剩余队列（带 uid/status）：给 id 就存成 "
+                          "initial-states/<id>.yaml（可复用），不给只返回。导出的状态和队列"
+                          "可直接喂 simulate_plan 预演后续（from_session 是它的一次性版）。"),
+             parameters={"type": "object",
+                         "properties": {"id": {"type": "string",
+                                               "description": "存成 initial-states/<id>.yaml（省略 = 只返回不落盘）"}},
+                         "additionalProperties": False},
+             function=export_snapshot),
         Tool(name="audit_queue",
              description=("队列体检（只诊断+给建议，不自动改）：检测卡补给/卡科技（前置不在场"
                           "也不在队列）/产出建筑缺失，每条建议给「插什么、插到哪个 uid 之前」。"

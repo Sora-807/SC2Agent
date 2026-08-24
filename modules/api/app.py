@@ -52,6 +52,7 @@ def create_app(frame_dir: Path | str | None = None,
                recordings_dir: Path | str | None = None,
                strategies_dir: Path | str | None = None,
                loadouts_dir: Path | str | None = None,
+               initial_states_dir: Path | str | None = None,
                agent_talk: "object | None" = None,
                agent_base: str | None = None) -> FastAPI:
     registry = SourceRegistry(Path(frame_dir) if frame_dir else DEFAULT_FRAME_DIR)
@@ -91,6 +92,11 @@ def create_app(frame_dir: Path | str | None = None,
 
     app.state.map_plans = MapPlanStore(
         Path(map_plans_dir) if map_plans_dir else None, catalog=load_all())
+    #: initial-state 快照（PLAN-V2 批 3）：默认内存态（出厂示例种子恒在）。
+    from view.initial_states import InitialStateStore
+
+    app.state.initial_states = InitialStateStore(
+        Path(initial_states_dir) if initial_states_dir else None)
     #: 对局记录目录（二十六轮）：None = 不录（测试默认；录了测试之间会互相污染）。
     app.state.recordings_dir = Path(recordings_dir) if recordings_dir else None
     #: 策略文件存储（二十七轮「开放写策略，免审」）：default 从内置常量播种（锁定）。

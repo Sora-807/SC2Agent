@@ -47,7 +47,7 @@ def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None) -> Queu
             if catalog is not None and catalog.by_stable_id(it.type) is None:
                 out.skipped.append(("build", f"catalog 没登记 {it.type}"))
                 continue
-            out.ops.extend(Build(it.type) for _ in range(count))
+            out.ops.extend(Build(it.type, uid=it.uid) for _ in range(count))
         elif op is QueueOp.TRAIN:
             if not it.type:
                 out.skipped.append(("train", "缺 type"))
@@ -55,12 +55,12 @@ def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None) -> Queu
             if catalog is not None and catalog.by_stable_id(it.type) is None:
                 out.skipped.append(("train", f"catalog 没登记 {it.type}"))
                 continue
-            out.ops.extend(Train(it.type) for _ in range(count))
+            out.ops.extend(Train(it.type, uid=it.uid) for _ in range(count))
         elif op is QueueOp.RESEARCH:
             if not it.type:
                 out.skipped.append(("research", "缺 type"))
                 continue
-            out.ops.append(Research(it.type))
+            out.ops.append(Research(it.type, uid=it.uid))
         elif op is QueueOp.ASSIGN_WORKERS:
             task = it.task.value if hasattr(it.task, "value") else it.task
             if task is None:

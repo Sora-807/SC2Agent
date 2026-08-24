@@ -64,16 +64,18 @@ QUEUE = [
 
 def test_simulate_reports_curve_events_and_alerts(tools):
     out = call(tools["simulate_plan"], {"queue": QUEUE, "horizon": 240})
-    assert "干跑" in out and "曲线末点" in out and "人口" in out
-    assert "前瞻警报" in out  # 没有警报也要有这一行（（无）），agent 才知道算完了
-    # 纯 build/train 无 research/assign 的队列不该有被跳过项
-    assert "被跳过" not in out
+    # 四段输出（批 3）：采样表/队列状态表/终值快照/健康检查
+    assert "干跑" in out and "1/4 曲线采样" in out and "人口" in out
+    assert "2/4 队列执行状态" in out and "3/4 终值快照" in out and "4/4 健康检查" in out
+    # 纯 build/train 无 research/assign 的队列不该有「语法不认」的被跳过项
+    # （执行失败的 skip 走 2/4 表 + 4/4 健康检查，不走这行）
+    assert "语法/catalog 不认" not in out
 
 
 def test_simulate_from_plan_id(tools):
     ws_api = tools  # noqa: F841 —— 命名沿用 fixture；建规划走 REST（文件域的活）
     out = call(tools["simulate_plan"], {"plan_id": "default", "horizon": 120})
-    assert "default" in out and "曲线末点" in out
+    assert "default" in out and "3/4 终值快照" in out
 
 
 def test_simulate_needs_queue_or_plan(tools):

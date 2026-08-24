@@ -139,6 +139,8 @@ def main() -> int:
                     help="装配清单目录（loadout：三件套引用，只读）")
     ap.add_argument("--strategies", default=str(ROOT / "runtime/strategies"),
                     help="策略文件目录（开放写策略：strategy+assembly 两段 YAML）")
+    ap.add_argument("--initial-states", default=str(ROOT / "runtime/initial-states"),
+                    help="initial-state 快照目录（simulate 起点 / 会话导出，I2/I6）")
     ap.add_argument("--log-level", default="warning")
     ap.add_argument("--no-kill", action="store_true",
                     help="端口被上一代后端占用时不自动清理（默认自动树杀后重启）")
@@ -157,6 +159,7 @@ def main() -> int:
                            recordings_dir=args.recordings,
                            strategies_dir=args.strategies,
                            loadouts_dir=args.loadouts,
+                           initial_states_dir=args.initial_states,
                            agent_base=f"http://{args.host}:{args.port}"),
                 host=args.host, port=args.port, log_level=args.log_level)
     return 0

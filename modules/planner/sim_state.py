@@ -27,6 +27,7 @@ class InFlight:
     build_time: int                  # catalog.build_time（落成阈值，秒）
     progress: float                  # 已耗秒（0..build_time）；到 build_time 落成
     producer: str | None = None      # train 的产建筑稳定 ID（build=None）
+    uid: str | None = None           # 来源队列项账本 ID（批 3：完成时刻归账）
 
 
 @dataclass

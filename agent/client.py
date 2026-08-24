@@ -97,6 +97,19 @@ class ApiClient:
     def map_plan_payload(self, pid: str) -> dict:
         return self._get(f"/api/map-plans/{pid}")
 
+    def initial_states_list(self) -> list[dict]:
+        return self._get("/api/initial-states")
+
+    def initial_state_get(self, pid: str) -> dict:
+        return self._get(f"/api/initial-states/{pid}")
+
+    def initial_state_save(self, pid: str, doc: dict) -> dict:
+        return self._put(f"/api/initial-states/{pid}", doc)
+
+    def session_export(self, save_as: str | None = None) -> dict:
+        path = "/api/session/export" + (f"?id={save_as}" if save_as else "")
+        return self._get(path)
+
     def map_plan_doc(self, pid: str) -> dict:
         """地图规划的**文档形状**（id/title/spawn/build_slots/pos_marks）—— 文件视图的读写体。"""
         return self._get(f"/api/map-plans/{pid}/doc")

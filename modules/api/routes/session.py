@@ -296,6 +296,30 @@ def session_map_plan(request: Request, id: str = Query(...)) -> dict:
     return {**sess.describe(), "swap": out}
 
 
+@router.get("/api/session/export")
+def session_export(request: Request, id: str | None = Query(None)) -> dict:
+    """从活跃会话导出 initial-state + 剩余队列（PLAN-V2 批 3，I6）。
+
+    `id` 给了 = 顺手存成 initial-states/<id>.yaml（可复用/可再喂 simulate）；
+    不给 = 只返回（一次性，from_session 走的同一份逻辑）。
+    """
+    state = request.app.state
+    sess = state.session
+    if sess is None:
+        raise HTTPException(status_code=409, detail="没有运行中的会话（先 POST /api/session/start）")
+    from api.session_export import export_snapshot
+
+    out = export_snapshot(sess, load_all())
+    if out.get("initial_state") is None:
+        raise HTTPException(status_code=409, detail=out.get("error", "导不出状态（还没有帧）"))
+    if id:
+        saved = state.initial_states.save(id, out["initial_state"], load_all())
+        if not saved.get("ok"):
+            raise HTTPException(status_code=400, detail=saved)
+        out["saved_as"] = id
+    return out
+
+
 @router.post("/api/session/speed")
 def session_speed(request: Request, multiplier: float = Query(...)) -> dict:
     """仿真模式变速（即时生效，不重启）：multiplier=0 → 不限速（最快）。

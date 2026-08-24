@@ -37,10 +37,21 @@ class ProjectionEvent:
 
 @dataclass
 class ProjectionCurve:
-    """投影曲线：points（逐秒快照）+ events（完成/启动/卡）+ 查询辅助。"""
+    """投影曲线：points（逐秒快照）+ events（完成/启动/卡）+ 查询辅助。
+
+    simulate v2（PLAN-V2 批 3）附加面（**不进帧契约**，REST 端点/渲染层消费）：
+    - `queue_status`：队列项执行账本（uid/status 四值/started_at/completed_at/reason，
+      D8：horizon 没轮到 = pending，无 not_reached）；
+    - `extras`：与 points 等长的派生量（workers 五分 + 产位 cap 明细）——
+      ProjectionPoint 是契约面不加字段，派生量走这里；
+    - `final_state`：结束时的 SimState（终值快照/产线明细/已完成升级用）。
+    """
 
     points: list[ProjectionPoint] = field(default_factory=list)
     events: list[ProjectionEvent] = field(default_factory=list)
+    queue_status: list[dict] = field(default_factory=list)
+    extras: list[dict] = field(default_factory=list)
+    final_state: object | None = None
 
     def time_to(self, predicate) -> float | None:
         """首个 predicate(point)==True 的 t；None=全程未满足。predicate: ProjectionPoint→bool。"""

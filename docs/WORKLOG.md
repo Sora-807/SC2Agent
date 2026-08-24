@@ -302,6 +302,47 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.61 五十四轮：PLAN-V2 批 3 落地 —— simulate v2 四段输出 + initial-states + 会话导出（2026-08-24）
+
+批 3 全部落地，后端 **968 passed / 4 skipped**（批 2 后 954）、前端 **386 + tsc 绿**、
+**契约零改动**（v2 附加键在 REST 响应层，不进 ViewFrame）：
+
+- **uid 穿透 planner**：Op 子类末位带 uid（基类默认值会挡子类非默认字段——dataclass
+  继承坑）；queue_to_ops 透传（count 展开共享同 uid）；InFlight 带 uid（完成时刻归账）。
+- **执行账本**（curve.queue_status）：completed（started/completed 时刻）/ skipped
+  （死局映射闭集 prereq_missing + detail 原话）/ in_progress（horizon 截断在途）/
+  pending（没轮到，D8 无 not_reached）。**三个坑**：①_apply_completed 在 in_flight
+  过滤前调用（按对象身份剔除 done）；②count 展开同 uid 有间隙（训练逐个）——完成
+  判定还要看剩余队列有没有同 uid op；③settle 循环同 uid 第二个 op 会覆写状态（先判
+  rec.status != pending 跳过）。
+- **采样派生**（curve.extras，与 points 等长）：工人五分（building=在途建造派生、
+  scouting 恒 0=编组派生批 5）+ 产位 cap 明细（slot_capacity 同一套槽模型）。
+  ProjectionPoint 是契约面不加字段 —— 派生量走 extras。
+- **initial_state**：planner/initial_state.py（state_from_doc/validate：catalog/units
+  不含 SCV/工人分项/supply_cap 按 CC=13·depot=8 对账；state_to_doc 反向；static_check
+  = horizon=0 静态体检）；Planner.project(initial=SimState) 直入起点跳过 derive。
+- **plans_simulate v2**：+queue_name（在线队列）/from_session（会话导出当起点）/
+  initial_state（字符串引用 initial-states/<id>｜对象内联）/sample_interval/sample_start
+  （采样窗 [start, horizon]——until_complete 跑过头归曲线不归采样）；horizon=0 静态
+  体检（D2 的 audit 合并路径）；响应附加键 samples/queue_status/final/alerts
+  （**不得覆盖 frame 自带键**——source/skipped 教训：附加键改名 queue_source）。
+  queue/items 两键都收（v1 兼容）。草稿项自动分配显示 uid q01…。
+- **initial-states/ 资源面**：InitialStateStore（example-midgame 锁定种子「只补缺失」）
+  + REST CRUD + serve_api --initial-states + 工作区 initial-states/ 虚拟目录（读写经
+  REST，校验在服务端）。
+- **export_snapshot**：GET /api/session/export（?id= 存盘复用）+ agent 工具；离线走
+  derive_from→state_to_doc（最准），live 从帧拼（frame/world+economy+production join，
+  workers.building=在途建造数近似、upgrades 空表如实标注——runtime research 记账未建）。
+- **simulate_plan 工具四段渲染**（templates/simulate-plan-v2-output.md 归一版）：
+  采样表（工人五分斜杠串+兵营/工厂/星港普闲/科闲）/队列状态表（STATUS_ZH+SKIP_REASON_ZH）/
+  终值快照（近似标注：产线明细按类型+挂件聚合）/健康检查（🔴🟡⚪ 分级表）。
+  事件时间线段落删除（2/4 表的起止时刻就是它）；采样行封顶 40（抽行+提示，防挤掉
+  后段——bio_tank 1500s×10s=150 行曾把 3/4 段截掉）。
+- 工程教训：heredoc 传含反斜杠补丁**又**截断两次（投影 uid/InFlight uid 两次静默
+  丢失）——已全量改 Write 脚本文件/Edit 工具，且每次改完立即 grep 验证落盘。
+
+**待批 6**：audit_queue 工具退役（horizon=0 路径已通）；spec.py 提示词更新。
+
 ## 0.60 五十三轮：PLAN-V2 批 2 落地 —— 地图规划双分支 + 会话图层合并 + 默认热切（ADR-0033，2026-08-24）
 
 批 2 全部落地，后端 **954 passed / 4 skipped**（批 1 后 942，+12 行为锁）、

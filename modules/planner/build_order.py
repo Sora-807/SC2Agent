@@ -14,28 +14,37 @@ from typing import Callable
 
 @dataclass
 class Op:
-    """生产队列项（planner 仿真消费）。"""
+    """生产队列项（planner 仿真消费）。
+
+    uid（PLAN-V2 批 3）：来源队列项的账本 ID，声明在各子类末位（基类放默认值
+    会挡住子类的非默认字段）—— count 展开的多个 Op 共享同一 uid（状态表按队列
+    项归并）。None = 模块注册产物/无队列来源。
+    """
 
 
 @dataclass
 class Build(Op):
     type: str                       # 稳定 ID "terran/factory"
+    uid: str | None = None
 
 
 @dataclass
 class Train(Op):
     type: str                       # 稳定 ID "terran/siegetank"
+    uid: str | None = None
 
 
 @dataclass
 class AssignWorkers(Op):
     task: str                       # "mineral" / "gas"
     count: int
+    uid: str | None = None
 
 
 @dataclass
 class Research(Op):
     type: str                       # 稳定 ID "terran/infantryweapons1"
+    uid: str | None = None
 
 
 @dataclass

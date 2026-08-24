@@ -31,6 +31,17 @@ SUPPLY_MAX = 200
 COMPLETION_CAP = 3600.0
 
 
+def _dead_reason(reason: str | None) -> tuple[str, str]:
+    """死局原因（_feasible 的中文 reason）→ 闭集 skip key + detail。
+
+    闭集 = production.semantics.SKIP_REASONS（prereq_missing / placement_collision）。
+    仿真的死局几乎全是「前置永远建不出」（prereq_missing）；供给顶满 200 与
+    无收入属于环境死局，也归 prereq_missing（detail 如实带原话）。仿真不放置，
+    placement_collision 只有后续槽位近似模型才会产生。
+    """
+    return "prereq_missing", str(reason or "")
+
+
 class Planner:
     """生产投影器：planner(GameState, production_sequence) → 投影曲线。"""
 
@@ -44,7 +55,8 @@ class Planner:
         self._tech_units = {e.stable_id for e in catalog.where() if is_tech_unit(e, catalog)}
 
     def project(self, gs: GameState, seq: list, until: float, *,
-                until_complete: bool = False, tail: float = 0.0) -> ProjectionCurve:
+                until_complete: bool = False, tail: float = 0.0,
+                initial=None) -> ProjectionCurve:
         """从 gs 快照 + production_sequence 投影到 until 秒。
 
         until_complete（2026-08-22 二十三轮用户拍板）：跑到**队列完成**为止 ——
@@ -59,13 +71,27 @@ class Planner:
         供给守卫（auto_supply）已删（PLAN-V2 D7）：投影不替人补供给 —— 卡人口
         真实浮出，由警报层 supply_capped + audit_queue 给「插 depot before_uid」
         的建议，一切尽可能手动。
+
+        initial（PLAN-V2 批 3）：给定 SimState 直接当起点（initial-state 文档/
+        会话导出快照），跳过 derive_from(gs) —— gs 仍要给（seq 语义/签名兼容），
+        但状态以 initial 为准。
         """
-        st = derive_from(gs, self._catalog)
+        st = initial if initial is not None else derive_from(gs, self._catalog)
         queue = expand(seq) if seq else []
         curve = ProjectionCurve()
         stalled_recorded: set[int] = set()   # 已记卡点事件的 op id（每 op 只记首次卡）
         hard_cap = until + COMPLETION_CAP
         done_at: float | None = None         # 队列+在途首次双双清空的时刻（tail 起点）
+        # 执行账本（批 3）：uid → {status/started_at/completed_at/reason}。
+        # count 展开的多个 Op 共享 uid —— 首个开工记 started，全部完工记 completed。
+        ledger: dict[str, dict] = {}
+        dead_head: dict[str, str] = {}       # uid → 死局原因（映射后的闭集 key+detail）
+        for op in queue:
+            if getattr(op, "uid", None) and op.uid not in ledger:
+                ledger[op.uid] = {"uid": op.uid, "status": "pending",
+                                  "started_at": None, "completed_at": None,
+                                  "reason": None, "detail": None,
+                                  "item": self._op_label(op)}
         while True:
             if not (st.t < until
                     or (until_complete and st.t < hard_cap
@@ -85,7 +111,7 @@ class Planner:
             # 3. 落成
             done = [f for f in st.in_flight if f.progress >= f.build_time]
             if done:
-                self._apply_completed(st, done, curve)
+                self._apply_completed(st, done, curve, ledger, queue)
                 st.in_flight = [f for f in st.in_flight if f.progress < f.build_time]
             # 4. 消费队列（可行性门控）
             while queue:
@@ -97,17 +123,34 @@ class Planner:
                         curve.events.append(ProjectionEvent(
                             "stalled", self._op_label(queue[0]), st.t, reason))
                         stalled_recorded.add(id(queue[0]))
+                        # 账本：死局队首 → skipped 候选（reason 映射闭集；循环每秒
+                        # break，这里记一次即可 —— 后续项 pending 不级联）
+                        uid = getattr(queue[0], "uid", None)
+                        if uid is not None and uid not in dead_head:
+                            key, detail = _dead_reason(reason)
+                            dead_head[uid] = key
+                            ledger[uid]["detail"] = detail
                     break
                 stalled_recorded.discard(id(queue[0]))
+                uid = getattr(queue[0], "uid", None)
+                if uid is not None and ledger[uid]["started_at"] is None:
+                    ledger[uid]["started_at"] = st.t
                 self._start(queue[0], st)
                 curve.events.append(ProjectionEvent("started", self._op_label(queue[0]), st.t, None))
+                # assign_workers 是瞬时动作（_start 直接改状态）：当场完成
+                if isinstance(queue[0], AssignWorkers) and uid is not None:
+                    ledger[uid]["completed_at"] = st.t
                 queue.pop(0)
-            # 5. 记快照
+            # 5. 记快照 + 派生量（extras 与 points 等长；契约面 ProjectionPoint 不加字段）
             curve.points.append(st.to_point())
+            curve.extras.append(self._point_extra(st))
             st.t += 1
             # tail 的记账点：本帧结束后队列与在途都空了 → 这是「最后一个事件完成」时刻
             if until_complete and done_at is None and not queue and not st.in_flight:
                 done_at = st.t
+        curve.final_state = st
+        self._settle_ledger(ledger, queue, st, dead_head)
+        curve.queue_status = list(ledger.values())
         return curve
 
     # ---- 可行性门控（资源/前置/产槽/builder）----
@@ -271,18 +314,21 @@ class Planner:
                     st.idle_workers -= 1
                 else:
                     st.mineral_workers -= 1
-            st.in_flight.append(InFlight(op.type, "build", e.build_time, 0.0, None))
+            st.in_flight.append(InFlight(op.type, "build", e.build_time, 0.0, None,
+                                          uid=op.uid))
         elif isinstance(op, Train):
             e = self._catalog.by_stable_id(op.type)
             st.minerals -= e.cost.minerals
             st.gas -= e.cost.vespene
             st.supply_used += e.cost.supply
-            st.in_flight.append(InFlight(op.type, "train", e.build_time, 0.0, e.produced_by))
+            st.in_flight.append(InFlight(op.type, "train", e.build_time, 0.0, e.produced_by,
+                                          uid=op.uid))
         elif isinstance(op, Research):
             e = self._catalog.by_stable_id(op.type)
             st.minerals -= e.cost.minerals
             st.gas -= e.cost.vespene
-            st.in_flight.append(InFlight(op.type, "research", e.build_time, 0.0, e.produced_by))
+            st.in_flight.append(InFlight(op.type, "research", e.build_time, 0.0, e.produced_by,
+                                          uid=op.uid))
         elif isinstance(op, AssignWorkers):
             # **目标值语义**（ADR-0030 D2）：维持 count 个，不是"再派 count 个"。
             # 运行时的 assign_workers 已经是目标值（队列项 = 写目标，D2.2），
@@ -311,7 +357,8 @@ class Planner:
                     st.mineral_workers -= give_back
                     st.gas_workers += give_back
 
-    def _apply_completed(self, st: SimState, done: list[InFlight], curve: ProjectionCurve) -> None:
+    def _apply_completed(self, st: SimState, done: list[InFlight], curve: ProjectionCurve,
+                         ledger: dict | None = None, queue: list | None = None) -> None:
         for f in done:
             if f.kind == "build":
                 e = self._catalog.by_stable_id(f.type)
@@ -338,6 +385,101 @@ class Planner:
                     st.mineral_workers += 1
                     st.total_workers += 1
             curve.events.append(ProjectionEvent("completed", f.type, st.t, None))
+        # 账本：uid 的全部在途都完工 → completed（count 展开的多 Op 归并）
+        if ledger is None:
+            return
+        # 本秒完工的 flight 还留在 st.in_flight 里（过滤在调用侧）——按对象身份剔除；
+        # 同 uid 多个在途（count 展开）只要还有活口就不算 completed
+        done_ids = {id(f) for f in done}
+        alive = {getattr(g, "uid", None) for g in st.in_flight
+                 if id(g) not in done_ids}
+        # count 展开的同 uid op 可能还有没开工的留在队列（逐个训练有间隙）——
+        # 队列里还有同 uid = 没完事（保守至多晚 1 秒，完成时刻仍准确）
+        remaining = {getattr(op, "uid", None) for op in (queue or [])}
+        for f in done:
+            fid = getattr(f, "uid", None)
+            if fid is not None and fid not in alive and fid not in remaining:
+                ledger[fid]["completed_at"] = st.t
+
+    # ---- simulate v2（批 3）：账本终态 + 采样派生 ----
+
+    def _settle_ledger(self, ledger: dict, queue: list, st, dead_head: dict) -> None:
+        """仿真结束后的账本终态。
+
+        剩余队列按序：completed（count 部分已完工）> in_progress（还在途）>
+        队首判死（dead_head → skipped + 闭集 reason；资源类等待被截断 → pending）；
+        其后全部 pending（D8：horizon 没轮到 = pending，无 not_reached）。
+        不在剩余队列的项（已开工出队）：completed 或 in_progress（tail 段在途）。
+        """
+        inflight_uids = {getattr(f, "uid", None) for f in st.in_flight}
+        head_settled = False
+        for op in queue:
+            uid = getattr(op, "uid", None)
+            if uid is None:
+                continue
+            rec = ledger[uid]
+            if rec["status"] != "pending":
+                continue     # count 展开的同 uid op 只结算一次（别被后位覆写）
+            if rec["completed_at"] is not None:
+                rec["status"] = "completed"
+            elif uid in inflight_uids:
+                rec["status"] = "in_progress"
+            elif not head_settled:
+                head_settled = True
+                if uid in dead_head:
+                    rec["status"] = "skipped"
+                    rec["reason"] = dead_head[uid]
+            else:
+                rec["status"] = "pending"
+        for uid, rec in ledger.items():
+            if rec["status"] != "pending" or rec["started_at"] is None:
+                continue
+            if rec["completed_at"] is not None:
+                rec["status"] = "completed"
+            elif uid in inflight_uids:
+                rec["status"] = "in_progress"
+
+    def _point_extra(self, st) -> dict:
+        """采样派生量（extras 与 points 等长）：工人五分 + 产位 cap 明细。
+
+        building = 在途建造数派生（SimState 无建造工单列账）；scouting 恒 0
+        （D3：侦查是编组派生，批 5 显示面）；产位用 slot_capacity 同一套槽模型。
+        """
+        building_workers = sum(1 for f in st.in_flight if f.kind == "build")
+        producers: dict[str, dict] = {}
+        for sid, n in st.buildings.items():
+            entry = self._catalog.by_stable_id(sid)
+            if entry is None or "train" not in entry.capabilities or n <= 0:
+                continue
+            techlab_sid = self._techlab_of.get(sid)
+            reactor_sid = self._reactor_of.get(sid)
+            normal_cap, tech_cap = slot_capacity(sid, st.buildings, st.addons, techlab_sid)
+            busy_n = busy_t = 0
+            for f in st.in_flight:
+                if f.kind != "train" or f.producer != sid:
+                    continue
+                if f.type in self._tech_units:
+                    busy_t += 1
+                else:
+                    busy_n += 1
+            tech = techlab_sid and st.buildings.get(techlab_sid, 0) or 0
+            reac = reactor_sid and st.buildings.get(reactor_sid, 0) or 0
+            producers[sid] = {
+                "normal_cap": normal_cap, "tech_cap": tech_cap,
+                "normal_busy": busy_n, "tech_busy": busy_t,
+                "total": n, "bare": max(0, n - tech - reac),
+                "with_reactor": reac, "with_techlab": tech,
+                "building_addon": sum(
+                    1 for f in st.in_flight
+                    if f.kind == "build" and f.type in (techlab_sid, reactor_sid)),
+            }
+        return {
+            "workers": {
+                "mineral": st.mineral_workers, "gas": st.gas_workers,
+                "building": building_workers, "scouting": 0, "idle": st.idle_workers,
+            },
+            "producers": producers,
+        }
 
     @staticmethod
     def _op_label(op: Op) -> str | None:
