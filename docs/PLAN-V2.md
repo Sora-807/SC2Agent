@@ -108,9 +108,18 @@ improvement-notes.md I1-I9 + templates/ 三份，**是输入不是规范** —�
   游戏·数据手册 / memory 种子），泛化 agent/seeds。
 - scouting（D3）：`workers.scouting` = 编入非经济组 SCV 派生；`repair` 操作立项。
 
-### 批 6：收尾
+### 批 6：收尾 + 定向清偿（2026-08-24 用户确认扩入）
 - audit_queue 退役（simulate_plan 吸收）；提示词/seeds/文档同步；
   改名后的写面校验全绿；WORKLOG/ISSUES 收档。
+- **债务清偿三项**（批 1-3 实战踩到的摩擦点，来源讨论见 WORKLOG §0.62）：
+  ①命令分发归一 —— queue_op 的 dispatch 三份拷贝（OfflineSession/LiveSession/
+  run_session）收敛为一张表 + 三处薄壳；
+  ②planner._feasible 改吃 production.semantics.classify（ExecView 适配层，
+  删批 3 的 _dead_reason 映射垫片 —— 兑现批 1「一套执行语义三个消费方」承诺）；
+  ③live export 下沉子进程侧直出（有 GameState 的一侧算最准，父进程只转发，
+  消掉帧 join 近似：upgrades 空表/building 工人数近似）。
+- 顺手：REFACTOR §3 死代码清单扫一遍（半天）；B6（planner 三族化）继续挂账
+  —— 只在真要跑非人族规划时才做（YAGNI）。
 
 ## 4. 依赖与顺序
 
