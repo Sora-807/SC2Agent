@@ -302,6 +302,28 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.62 五十五轮：PLAN-V2 批 4 落地 —— observe v2 两块输出 + 集群 + 自动 step（2026-08-24）
+
+批 4 全部落地，后端 **968 / 4s**、前端 **386 + tsc 绿**、契约零改动：
+
+- **无 bbox 两块**（templates/observe-output.md 归一）：`全局状态`（资源/工人五分
+  [building=在途建造派生、scouting=0 待批 5、分类差如实标 other]/建筑汇总[挂件
+  分布+在建]/部队汇总/生产序列[在训=账本+建筑 producing 双源、排队；旧录像
+  status 值回放兼容]）+ `区域信息`（按批 2 落的 mine_areas 矿区分区：建筑表
+  坐标/挂件/正在做什么 + 部队表集群/血量%=均值/绝对=总和、`敌方：` 前缀=当前
+  帧视野内；矿区外如实另栏并标注待校准）。旧段 经济/部队清单/关键建筑/区域 退役。
+- **view/clusters.py**（新）：网格桶并查集聚类（半径 5 格），observe 区域表与
+  adapt 的 `world.enemy_clusters`（EnemyClusterView 从恒 None stub 落地）同一算法单点。
+- **bbox 自动 step**：observe 工具删 step 参数——最小 step≥1 使 列×行≤14×14
+  （全量优先），超出自动降密度并在尾部标注实际 step（14×14 上限保留，用户批注）。
+- **source/time**：`GET /api/observation?source=<id>&time=<秒>`（agent 工具透传）——
+  录像源回看历史时态；live 缓冲帧同路（超范围如实空段）。observe.py 本就吃帧字典，
+  帧驱动底子已在，本批只是把它从"多段杂烩"重排成模板两块。
+- 投影段的 30s 预估标注已移除（看曲线用 simulate_plan）。
+
+**矿区坐标（mine_areas.yaml 草案）仍待真机校准** —— 批 2 落的六矿区 bbox 现在
+真的被消费了（区域信息段+矿区外栏），下次真机局对照 observe 输出校准一次即可。
+
 ## 0.61 五十四轮：PLAN-V2 批 3 落地 —— simulate v2 四段输出 + initial-states + 会话导出（2026-08-24）
 
 批 3 全部落地，后端 **968 passed / 4 skipped**（批 2 后 954）、前端 **386 + tsc 绿**、

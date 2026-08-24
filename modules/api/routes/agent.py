@@ -21,16 +21,19 @@ router = APIRouter()
 
 @router.get("/api/observation")
 def observation(request: Request, source: str = Query("live"),
-                text: bool = Query(False)) -> dict:
+                text: bool = Query(False),
+                time: float | None = Query(None)) -> dict:
     """当前观察包（ADR-0009）。`text=true` 额外给可直接进 prompt 的渲染文本。
 
+    `time`（批 4）：取该时刻的帧而不是最新帧 —— 录像源（source=对局记录 id）回看
+    历史时态用；live 源的缓冲帧同样支持（超缓冲范围如实空段）。
     规则是**替换**而不是追加：每次取都是一份新的"当前事实"，旧的靠 `supersedes` 指向。
     `facts.based_on_seq` 是下命令时必须回填的东西（R8 的闭环）。
     """
     state = request.app.state
     src = require_source(state, source)
     info = src.info()
-    frames = frames_by_topic(src.latest_at(info.to_time))
+    frames = frames_by_topic(src.latest_at(time if time is not None else info.to_time))
     packet = observation_packet(frames, catalog=load_all(), supersedes=state.last_observation_seq)
     state.last_observation_seq = packet.seq
     body = {

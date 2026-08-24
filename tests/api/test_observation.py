@@ -20,7 +20,7 @@ def test_observation_gives_seq_sections_and_facts(client: TestClient):
     body = client.get("/api/observation").json()
     assert body["seq"] == sess.seq - 0 or body["seq"] > 0
     assert body["facts"]["based_on_seq"] == body["seq"]
-    assert "经济" in body["sections"]
+    assert "全局状态" in body["sections"] and "区域信息" in body["sections"]
 
 
 def test_observation_supersedes_previous(client: TestClient):
@@ -106,4 +106,4 @@ def test_observation_of_a_replay_source_also_works(tmp_path):
     c = TestClient(create_app(fixtures, tmp_path / "p.jsonl"))
     body = c.get("/api/observation", params={"source": "opening", "text": "true"}).json()
     assert body["seq"] > 0
-    assert "经济" in body["sections"]
+    assert "全局状态" in body["sections"] and "区域信息" in body["sections"]

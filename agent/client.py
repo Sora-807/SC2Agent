@@ -47,8 +47,12 @@ class ApiClient:
 
     # ---- 读 ----
 
-    def observation(self, *, source: str = "live", text: bool = True) -> dict:
-        return self._get(f"/api/observation?source={source}&text={'true' if text else 'false'}")
+    def observation(self, *, source: str = "live", text: bool = True,
+                    time: float | None = None) -> dict:
+        q = f"source={source}&text={'true' if text else 'false'}"
+        if time is not None:
+            q += f"&time={time}"
+        return self._get(f"/api/observation?{q}")
 
     def agent_tools(self) -> dict:
         return self._get("/api/agent/tools")

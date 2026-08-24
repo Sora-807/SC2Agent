@@ -78,16 +78,15 @@ def observation_packet(
 
     sections = {
         "会话": _session_text(session),
-        "经济": _economy_text(world, econ, zh),
-        "部队": _groups_text(flow, zh),
-        "部队清单": _army_text(world, prod, catalog, zh),
-        "关键建筑": _buildings_text(world, catalog, zh),
-        "生产": _production_text(prod, zh),
+        # 批 4（模板 observe-output.md）：无 bbox 输出两块 —— 全局状态 + 区域信息
+        "全局状态": _global_text(world, econ, prod, catalog, zh),
+        "区域信息": _areas_text(world, catalog, zh),
+        "编组": _groups_text(flow, zh),
         "op 流水": _ops_text(ops, zh),
         "策略": _strategy_text(flow, strategy),
         "风险": _alerts_text(alerts),
         "投影": _projection_text(proj, game_time, zh),
-        "区域": _regions_text(world, econ, catalog, zh),
+        "生产队列": _production_text(prod, zh),
         "提案历史": _proposals_text(proposals),
     }
     facts = {
@@ -115,6 +114,167 @@ def observation_packet(
 
 
 # ---------------- 各段 ----------------
+
+def _worker_split(world: dict | None, econ: dict | None, prod: dict | None) -> dict:
+    """工人五分：mineral/gas/idle 取经济帧 actual；building=在途建造数派生；
+    scouting 恒 0（D3：侦查是编组派生）。总数对不上时如实标注 other。"""
+    tasks = {t.get("task"): int(t.get("actual") or 0) for t in (econ or {}).get("tasks") or []}
+    building = len((prod or {}).get("in_flight") or [])
+    total = sum(1 for u in (world or {}).get("units") or []
+                if u.get("owner") == "self" and (u.get("stable_id") or "").endswith("/scv"))
+    mineral = tasks.get("mineral", 0)
+    gas = tasks.get("gas", 0)
+    idle = tasks.get("idle", 0)
+    other = max(0, total - mineral - gas - idle - building)
+    return {"mineral": mineral, "gas": gas, "building": building,
+            "scouting": 0, "idle": idle, "other": other, "total": total}
+
+
+_ADDON_ZH = {"techlab": "科技实验室", "reactor": "反应堆"}
+
+
+def _global_text(world, econ, prod, catalog: Catalog, zh) -> str:
+    """全局状态：资源 / 工人分布 / 建筑汇总（挂件分布+在建）/ 部队汇总 / 生产序列。"""
+    if not world:
+        return ""
+    eco = world.get("economy") or {}
+    out = [f"资源：矿 {eco.get('minerals', 0)}｜气 {eco.get('vespene', 0)}｜"
+           f"人口 {eco.get('supply_used', 0)}/{eco.get('supply_cap', 0)}"]
+    w = _worker_split(world, econ, prod)
+    extra = f"（另有 {w['other']} 未分类）" if w["other"] else ""
+    out.append(f"工人：采矿 {w['mineral']}｜采气 {w['gas']}｜建造 {w['building']}｜"
+               f"侦查 {w['scouting']}｜空闲 {w['idle']}{extra}")
+    # 建筑汇总：类型 → 总数 + 挂件分布 + 在建
+    rows: dict[str, dict] = {}
+    for u in world.get("units") or []:
+        if u.get("owner") != "self":
+            continue
+        sid = u.get("stable_id") or ""
+        e = catalog.by_stable_id(sid)
+        if e is None or (e.role and e.role.value != "building"):
+            continue
+        rec = rows.setdefault(sid, {"total": 0, "techlab": 0, "reactor": 0, "wip": 0})
+        rec["total"] += 1
+        if u.get("addon") in rec:
+            rec[u["addon"]] += 1
+        if (u.get("build_progress") or 1) < 1:
+            rec["wip"] += 1
+    if rows:
+        out.append("建筑汇总：")
+        for sid, r in sorted(rows.items()):
+            add = ""
+            if r["techlab"] or r["reactor"]:
+                add = (f"（科技 {r['techlab']} / 反应堆 {r['reactor']} / 无 "
+                       f"{r['total'] - r['techlab'] - r['reactor']}）")
+            wip = f"，在建 {r['wip']}" if r["wip"] else ""
+            out.append(f"- {zh(sid)}：{r['total']}{add}{wip}")
+    else:
+        out.append("建筑汇总：无")
+    army = _count_army(world, catalog)
+    out.append("部队汇总：" + ("，".join(f"{zh(k)}×{v}" for k, v in sorted(army.items()))
+                             if army else "无"))
+    # 生产序列：正在训练（账本 + 建筑 producing 双来源）× 待训练（队列 train 计数，
+    # 旧录像的 status 值（未处理/队首阻塞）也算未执行 —— 回放优先）
+    training: dict[str, int] = {}
+    for t in (prod or {}).get("training") or []:
+        training[t["stable_id"]] = training.get(t["stable_id"], 0) + 1
+    for u in world.get("units") or []:
+        for pr in u.get("producing") or []:
+            training[pr["stable_id"]] = training.get(pr["stable_id"], 0) + 1
+    queued: dict[str, int] = {}
+    for q in (prod or {}).get("queues") or []:
+        for it in q.get("items") or []:
+            if it.get("op") == "train" and it.get("status") not in ("completed", "skipped"):
+                queued[it["stable_id"]] = queued.get(it["stable_id"], 0) + max(1, it.get("count") or 1)
+    if training or queued:
+        out.append("生产序列：" + "；".join(
+            f"{zh(k)} 训练 {v}/排队 {queued.get(k, 0)}" for k, v in sorted(training.items()))
+            + ("｜排队（未开训）：" + "，".join(f"{zh(k)}×{v}" for k, v in sorted(queued.items())
+                                              if k not in training) if queued else ""))
+    return "\n".join(out)
+
+
+def _areas_text(world, catalog: Catalog, zh) -> str:
+    """区域信息：按基础数据矿区分区（批 2 落的 mine_areas，坐标待校准已标注）。
+
+    每矿区：建筑表（坐标/挂件/正在做什么）+ 部队表（兵种/集群/数量/坐标/血量%/绝对
+    血量；`敌方：` 前缀 = 当前帧视野内；历史踪迹在 enemy_contact 警报不混入）。
+    """
+    from tactical_map.mine_areas import load_mine_areas
+
+    if not world:
+        return ""
+    areas = load_mine_areas()
+    if not areas:
+        return ""
+    units = world.get("units") or []
+
+    def _in(u, a):
+        x, y = u.get("pos") or (0, 0)
+        return a.contains(x, y)
+
+    out = []
+    leftovers = list(units)
+    for a in areas:
+        inside = [u for u in units if _in(u, a)]
+        if not inside:
+            out.append(f"### {a.name}（{a.side}）\n无建筑，无部队")
+            continue
+        for u in inside:
+            leftovers.remove(u)
+        bl = [u for u in inside if u.get("owner") == "self"
+              and (e := catalog.by_stable_id(u.get("stable_id") or "")) is not None
+              and e.role and e.role.value == "building"]
+        troops = [u for u in inside
+                  if (u.get("owner") in ("self", "enemy"))
+                  and u.get("stable_id") and not (u.get("stable_id") or "").endswith("/scv")]
+        head = [f"### {a.name}（{a.side}）"]
+        if bl:
+            head.append("建筑：")
+            for u in bl:
+                x, y = u.get("pos") or (0, 0)
+                add = _ADDON_ZH.get(u.get("addon")) or ("无" if catalog.by_stable_id(
+                    u["stable_id"]).capabilities and "train" in
+                    catalog.by_stable_id(u["stable_id"]).capabilities else "—")
+                doing = "空闲"
+                prod_of = u.get("producing") or []
+                if (u.get("build_progress") or 1) < 1:
+                    doing = f"建造中（{int((u.get('build_progress') or 0) * 100)}%）"
+                elif prod_of:
+                    doing = "训练 " + zh(prod_of[0]["stable_id"])
+                head.append(f"- {zh(u['stable_id'])} ({x:.0f},{y:.0f})｜挂件 {add}｜{doing}")
+        else:
+            head.append("建筑：无")
+        rows = []
+        for owner, prefix in (("self", ""), ("enemy", "敌方：")):
+            pool = [u for u in troops if u.get("owner") == owner]
+            if not pool:
+                continue
+            items = [{"x": (u.get("pos") or (0, 0))[0], "y": (u.get("pos") or (0, 0))[1],
+                      "stable_id": u.get("stable_id"), "hp": u.get("hp", 0),
+                      "hp_max": u.get("hp_max", 0)} for u in pool]
+            for c in _cluster_payload(items):
+                kinds = "，".join(f"{zh(k)}×{v}" for k, v in sorted(c["by_stable_id"].items()))
+                hp_pct = f"{c['hp_pct']:.0f}%" if c.get("hp_pct") is not None else "?"
+                rows.append(f"- {prefix}{kinds}｜集群 {c['count']} 单位 @({c['center'][0]:.0f},"
+                            f"{c['center'][1]:.0f})｜血量 {hp_pct}（{c['hp_total']:.0f}）")
+        head.append("部队：" + ("\n".join(rows) if rows else "无"))
+        out.append("\n".join(head))
+    n_out = sum(1 for u in leftovers
+                if u.get("owner") in ("self", "enemy") and not (u.get("stable_id") or "").endswith("/scv"))
+    n_bl = sum(1 for u in leftovers if u.get("owner") == "self")
+    if n_out or n_bl:
+        out.append(f"### 矿区外（未划入任何矿区）\n"
+                   f"约 {n_bl} 我方单位/建筑、{n_out} 部队 —— "
+                   "矿区坐标待校准（mine_areas.yaml），部分单位暂落此栏")
+    return "\n\n".join(out)
+
+
+def _cluster_payload(items: list[dict]) -> list[dict]:
+    from view.clusters import cluster_units
+
+    return cluster_units(items)
+
 
 def _session_text(session: dict | None) -> str:
     if not session:
@@ -464,7 +624,7 @@ def _projection_text(proj: dict | None, now: float, zh) -> str:
     stalls = [e for e in near if e["kind"] == "stalled"]
     done = [e for e in near if e["kind"] == "completed"]
     if stalls:
-        out.append("未来 30s 内会卡：" + "；".join(
+        out.append("（30s 预估已移除：看曲线用 simulate_plan）未来 30s 内会卡：" + "；".join(
             f"{_mmss(e['t'])} {zh(e['stable_id'])} {e['reason'] or ''}" for e in stalls))
     if done:
         out.append("未来 30s 内完成：" + "，".join(

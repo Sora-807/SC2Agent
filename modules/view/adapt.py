@@ -119,8 +119,9 @@ def world_frame(
             supply_used=gs.supply_used, supply_cap=gs.supply_cap,
         ),
         units=units,
-        # 聚类算法未实现（flow.vocab 的 forbidden.spatial_tools 里有登记）→ None，前端降级
-        enemy_clusters=None,
+        # 批 4：敌方就近聚类（view/clusters 同一算法单点；observe 区域部队表与
+        # 前端 world.enemy_clusters 两个消费方）
+        enemy_clusters=_enemy_clusters(gs, catalog),
         resource_state=_resource_state(gs),
         grids=grids,
     )
@@ -168,6 +169,29 @@ def projection_frame(
 
 
 # ---------------- 内部 ----------------
+
+def _enemy_clusters(gs: GameState, catalog: Catalog) -> list[EnemyClusterView] | None:
+    """敌方单位就近聚类 → EnemyClusterView（批 4 落地，替代恒 None 的 stub）。"""
+    from view.clusters import cluster_units
+
+    items = []
+    for u in gs.units:
+        if u.owner is not Owner.ENEMY:
+            continue
+        entry = catalog.by_burnysc2_name(catalog.normalize_burnysc2_name(u.type_name.upper()))
+        sid = entry.stable_id if entry is not None else f"unknown/{u.type_name.lower()}"
+        items.append({"x": u.position.x, "y": u.position.y, "stable_id": sid,
+                      "hp": u.hp, "hp_max": u.hp_max})
+    if not items:
+        return None
+    out = []
+    for c in cluster_units(items):
+        out.append(EnemyClusterView(
+            center=c["center"], radius=5.0, count=c["count"],
+            by_stable_id=dict(c["by_stable_id"]),
+        ))
+    return out
+
 
 def _unit_view(u: Unit, catalog: Catalog, group_id: str | None) -> UnitView:
     raw = u.type_name.upper()

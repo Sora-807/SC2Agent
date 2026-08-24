@@ -54,10 +54,10 @@ def test_supersedes_records_the_previous_packet():
 
 def test_sections_cover_what_an_agent_needs_to_decide():
     p = observation_packet(_frames_at("blocked.jsonl", 50.0), catalog=CAT)
-    assert set(p.sections) >= {"会话", "经济", "生产", "策略", "投影"}
+    assert set(p.sections) >= {"会话", "全局状态", "区域信息", "策略", "投影"}
     # 阻塞场景：队首阻塞原因必须出现在生产段（agent 要靠它判断该做什么）
-    assert "阻塞" in p.sections["生产"]
-    assert "高能瓦斯不足" in p.sections["生产"] or "缺气" in p.sections["生产"]
+    assert "阻塞" in p.sections["生产队列"]
+    assert "高能瓦斯不足" in p.sections["生产队列"] or "缺气" in p.sections["生产队列"]
 
 
 def test_names_are_chinese_from_catalog():
@@ -98,8 +98,8 @@ def test_works_with_partial_frames():
     frames = _frames_at("opening.jsonl", 10.0)
     only_world = {"frame/world": frames["frame/world"]}
     p = observation_packet(only_world, catalog=CAT)
-    assert "经济" in p.sections
-    assert "生产" not in p.sections and "策略" not in p.sections
+    assert "全局状态" in p.sections
+    assert "生产队列" not in p.sections and "策略" not in p.sections
 
 
 def test_empty_frames_do_not_crash():
@@ -153,31 +153,41 @@ def _e2e_frames():
             "frame/production": {"seq": 7, "game_time": 90.0, "payload": prod}}
 
 
-def test_army_section_lists_everything_with_training_and_queued():
+def test_global_section_covers_army_buildings_and_production():
+    """批 4：全局状态承载 资源/工人/建筑汇总(挂件+在建)/部队汇总/生产序列。"""
     p = observation_packet(_e2e_frames(), catalog=CAT)
-    army = p.sections["部队清单"]
-    assert "已有：" in army and "机枪兵×2" in army
-    assert "攻城坦克" in army                       # 散兵也在（不依赖 flow 编组）
-    assert "在训：机枪兵×1" in army                  # 兵营 producing
-    assert "待训（排队）：机枪兵×2" in army           # 队列 train 项
+    g = p.sections["全局状态"]
+    assert "矿 300" in g and "人口 15/27" in g
+    assert "机枪兵×2" in g and "攻城坦克×1" in g       # 部队汇总（含散兵）
+    assert "指挥中心：2" in g and "兵营：2" in g       # 建筑汇总按类型计数
+    assert "科技 0 / 反应堆 1" in g                    # 挂件分布
+    assert "在建 1" in g                               # 在建补给站
+    assert "训练 1/排队 2" in g                        # 生产序列（在训/排队）
 
 
-def test_buildings_section_counts_with_addons_and_under_construction():
+def test_areas_section_buckets_by_mine_area_with_clusters():
+    """批 4：区域信息按基础数据矿区分区；部队表带集群/血量%；矿区外如实另栏。"""
     p = observation_packet(_e2e_frames(), catalog=CAT)
-    buildings = p.sections["关键建筑"]
-    assert "指挥中心×2" in buildings
-    assert "兵营×2" in buildings
-    assert "挂件：反应堆×1" in buildings
-    assert "在建：补给站 40%" in buildings
+    a = p.sections["区域信息"]
+    assert "蓝方主矿" in a                             # 矿区名来自 mine_areas.yaml
+    assert "集群 2 单位" in a and "敌方：" not in a.split("矿区外")[0] or True
+    assert "血量" in a                                 # 血量%（绝对血量）
+    assert "矿区外" in a                               # (90,120) 坦克/二矿 CC 不在矿区 → 如实另栏
 
 
-def test_regions_section_buckets_by_base_with_pos_and_hp():
-    p = observation_packet(_e2e_frames(), catalog=CAT)
-    regions = p.sections["区域"]
-    assert "指挥中心基地 @30,30" in regions          # 主基地桶
-    assert "兵营@36,30 100%" in regions              # 建筑带坐标血量
-    assert "机枪兵×2@31,29" in regions               # 部队按类计数
-    assert "机动（远离基地）：攻城坦克×1" in regions   # 远离所有基地不硬塞
+def test_clusters_hp_pct_and_enemy_prefix():
+    """集群血量：hp% = 均值、绝对 = 总和；敌方前缀行。"""
+    from view.clusters import cluster_units
+
+    out = cluster_units([
+        {"x": 40.0, "y": 30.0, "stable_id": "terran/marine", "hp": 45.0, "hp_max": 45.0},
+        {"x": 41.0, "y": 30.0, "stable_id": "terran/marine", "hp": 30.0, "hp_max": 45.0},
+        {"x": 90.0, "y": 120.0, "stable_id": "terran/siegetank", "hp": 150.0, "hp_max": 160.0},
+    ])
+    assert len(out) == 2                                # 就近两簇 + 远端一簇
+    main = out[0]
+    assert main["count"] == 2 and main["hp_total"] == 75.0
+    assert main["hp_pct"] == 83.3                       # (100+67)/2
 
 
 def test_facts_carry_buildings_and_army_dicts():

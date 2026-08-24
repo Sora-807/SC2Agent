@@ -48,12 +48,9 @@ def make_tools(client: ApiClient, *, source: str = "live",
 
         src = str(args.get("source") or "live")
         try:
-            step = int(args.get("step") or 2)
             x1, y1, x2, y2 = (int(v) for v in args.get("bbox") or ())
         except (TypeError, ValueError):
             return "拒绝：bbox 是四个整数 [x1,y1,x2,y2]（左下 + 右上，闭区间）"
-        if step < 1:
-            return f"拒绝：step 必须 ≥1（收到 {step}）"
         (w, h), _ = load_placeable()
         bad = []
         for name, v, hi in (("x1", x1, w - 1), ("x2", x2, w - 1),
@@ -68,19 +65,31 @@ def make_tools(client: ApiClient, *, source: str = "live",
             return (f"error: bbox 超出可索引范围 —— 地图 {w}×{h}"
                     f"（x∈[0,{w - 1}]，y∈[0,{h - 1}]；bbox=左下+右上闭区间）："
                     + "；".join(bad))
+        # 批 4：自动 step —— 取最小 step≥1 使 列×行 ≤14×14（全量优先，超出降密度）；
+        # 14×14 上限保留（用户批注）。不再收 step 参数。
+        cols, rows = x2 - x1 + 1, y2 - y1 + 1
+        step = 1
+        while step < 64 and ((cols + step - 1) // step) * ((rows + step - 1) // step) > 14 * 14:
+            step += 1
         area = MapsArea(client, Path(map_plans_dir) if map_plans_dir
                         else Path("runtime/map-plans"))
         path = f"maps/{src}/{x1}_{y1}_{x2}_{y2}" + (f"_s{step}" if step > 1 else "") + ".md"
         try:
-            return area.read(path)
+            text = area.read(path)
         except WorkspaceError as exc:
             return f"error: {exc}"
+        if step > 1:
+            text += (f"\n[自动 step={step}] 框选 {cols}×{rows} 超过 14×14 网格上限，"
+                     "已自动降密度；要看细节就缩小 bbox。")
+        return text
 
     async def observe(args: dict) -> str:
         if args.get("bbox") is not None:
             return _region_grid(args)
         try:
-            obs = client.observation(source=source)
+            obs = client.observation(
+                source=source,
+                time=float(args["time"]) if args.get("time") is not None else None)
         except ApiError as exc:
             return f"取观察失败：{exc}"
         text = obs.get("text") or ""
@@ -125,21 +134,21 @@ def make_tools(client: ApiClient, *, source: str = "live",
     return [
         Tool(
             name="observe",
-            description=("读当前观察包（经济/部队/部队清单/关键建筑/生产/策略/风险/投影/区域）。"
+            description=("读观察包（批 4 两块：全局状态=资源/工人分任务/建筑汇总含挂件与在建/"
+                         "部队汇总/生产序列；区域信息=按矿区列建筑表+部队集群（血量%，敌方：前缀=当前视野））。"
                          "先调它再做判断；它给的 seq 就是提案要回填的 based_on_seq。"
-                         "带 bbox 时改读**格点网格**（布局结构：槽位/预设点/地形；建造状态"
-                         "仍走无参 observe）—— bbox=[x1,y1,x2,y2]（左下+右上闭区间，全图 176×160），"
-                         "step 降密度（默认 2，网格上限 14×14 列×行），source 默认 live"
-                         "（当前会话装配的地图规划，无会话=出厂 bl 布局；有哪些源 read maps/index.md）。"
-                         "超范围/网格超上限**如实报错**（说清哪个坐标超了/建议 step），别瞎试。"),
+                         "带 bbox 时改读**格点网格**（布局结构：槽位/预设点/地形；建造状态仍走无参 observe）"
+                         "—— bbox=[x1,y1,x2,y2]（左下+右上闭区间，全图 176×160），step 自动：≤14×14 全量、"
+                         "超出自动降密度并在尾部标注实际 step。source=live（默认，当前会话图层）或地图规划 id；"
+                         "time=回看该游戏秒的帧（配录像源复盘）。超范围**如实报错**（说清哪个坐标超了），别瞎试。"),
             parameters={"type": "object", "properties": {
                 "bbox": {"type": "array", "items": {"type": "integer"},
                          "minItems": 4, "maxItems": 4,
                          "description": "[x1,y1,x2,y2] 左下 + 右上（闭区间）"},
-                "step": {"type": "integer", "minimum": 1,
-                         "description": "格点步长，默认 2（每 2 格取 1 格降密度）"},
                 "source": {"type": "string",
-                           "description": "地图源 id：live（默认）或地图规划 id"},
+                           "description": "帧源/地图源 id：live（默认）或地图规划 id"},
+                "time": {"type": "number",
+                         "description": "回看该游戏秒的帧（录像复盘；省略=最新帧）"},
             }, "additionalProperties": False},
             function=observe,
         ),
