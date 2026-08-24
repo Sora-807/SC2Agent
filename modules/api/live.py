@@ -52,6 +52,7 @@ class LiveSession:
                  tick_seconds: float = 0.25,
                  label: str | None = None, python: str | None = None,
                  map_plan: str | None = None,
+                 map_plans_dir: Path | str | None = None,
                  strategy_path: str | None = None,
                  spawn: str | None = None,
                  speed: float = 0.0,
@@ -128,6 +129,8 @@ class LiveSession:
             cmd.append("--realtime")
         if map_plan:
             cmd += ["--map-plan", str(map_plan)]
+        if map_plans_dir:
+            cmd += ["--map-plans-dir", str(map_plans_dir)]   # 批 2：合并图层要整个目录
         if strategy_path:
             cmd += ["--strategy-file", str(strategy_path)]   # 二十七轮：开放写策略
         if spawn:
@@ -423,6 +426,18 @@ class LiveSession:
         """
         self._send({"op": "swap", "strategy": str(strategy_file)})
         return {"swap": "dispatched", "strategy": Path(strategy_file).stem,
+                "accepted_seq": self.seq}
+
+    def swap_map_plan(self, map_plan_id: str) -> dict:
+        """默认地图热切（批 2）：换默认规划，帧边界重建合并图层并重发 static/map。
+
+        命令走子进程通道；新默认不存在由子进程侧校验（它才看得见规划目录），
+        失败 → error 控制行，会话继续跑旧默认。
+        """
+        if self.proc.poll() is not None:
+            raise RuntimeError(f"会话已结束（{self.state}）：{self.error or '子进程已退出'}")
+        self._send({"op": "map", "plan": str(map_plan_id)})
+        return {"swap": "dispatched", "map_plan": str(map_plan_id),
                 "accepted_seq": self.seq}
 
     def tick(self) -> None:

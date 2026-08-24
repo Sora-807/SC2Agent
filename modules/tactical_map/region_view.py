@@ -123,7 +123,7 @@ def render_region(bbox: tuple[int, int, int, int], slots: dict[str, dict],
 
     out = [f"# 区域 {title or '网格'}（x{x1}–{x2}，y{y1}–{y2}，step={step}）", ""]
     if not slots:
-        out.append("> 该规划没有槽位（空白预设）—— 看出厂布局用 `maps/layout-bl/<bbox>.md`。")
+        out.append("> 该规划没有槽位（空白预设）—— 看出厂布局用 `maps/layout/<bbox>.md`。")
         out.append("")
     out.append("| y\\x | " + " | ".join(str(x) for x in cols) + " |")
     out.append("|---|" + "|".join([":---:"] * len(cols)) + "|")

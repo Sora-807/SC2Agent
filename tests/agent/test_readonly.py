@@ -129,11 +129,21 @@ def test_single_file_area_missing_is_error_not_empty(tmp_path: Path):
 def _map_plans_dir(tmp_path: Path) -> Path:
     d = tmp_path / "map-plans"
     d.mkdir()
-    (d / "layout-bl.yaml").write_text(
-        "id: layout-bl\ntitle_zh: 出厂布局（bl）\nmap_name: LadderMap\nspawn: bl\n"
-        "origin: [30, 30]\nanchor: [30, 30]\nbuild_slots:\n"
-        "  D1: {pos: [40.5, 32.5], size: 2, kind: supply, alias_zh: 补给站1}\n"
-        "pos_marks: {}\n", encoding="utf-8")
+    # 批 2 双分支形态：一份 = bl+tr（夹具 bl 侧有 D1，tr 侧空）
+    (d / "layout.yaml").write_text(
+        "id: layout\ntitle_zh: 出厂布局\nmap_name: LadderMap\n"
+        "spawns:\n"
+        "  bl:\n"
+        "    origin: [30, 30]\n"
+        "    anchor: [30, 30]\n"
+        "    build_slots:\n"
+        "      D1: {pos: [40.5, 32.5], size: 2, kind: supply, alias_zh: 补给站1}\n"
+        "    pos_marks: {}\n"
+        "  tr:\n"
+        "    origin: [131, 127]\n"
+        "    anchor: [131, 127]\n"
+        "    build_slots: {}\n"
+        "    pos_marks: {}\n", encoding="utf-8")
     return d
 
 
@@ -143,8 +153,8 @@ def test_maps_area_index_and_region(tmp_path: Path):
     area = MapsArea(None, _map_plans_dir(tmp_path))
     assert area.list_paths() == ["maps/index.md"]
     idx = area.read("maps/index.md")
-    assert "`live`" in idx and "layout-bl" in idx and "示例" in idx
-    grid = area.read("maps/layout-bl/39_31_41_34.md")
+    assert "`live`" in idx and "layout" in idx and "示例" in idx
+    grid = area.read("maps/layout/39_31_41_34.md")
     assert "D1" in grid and "词表" in grid
     # live 无会话（client=None → session() 失败被兜住）→ 退出厂布局并注明
     live = area.read("maps/live/39_31_41_34.md")
@@ -156,11 +166,11 @@ def test_maps_area_bad_paths_and_unknown_source(tmp_path: Path):
 
     area = MapsArea(None, _map_plans_dir(tmp_path))
     with pytest.raises(WorkspaceError, match="约定 maps/"):
-        area.read("maps/layout-bl/not-a-bbox.md")
+        area.read("maps/layout/not-a-bbox.md")
     with pytest.raises(WorkspaceError, match="没有地图源"):
         area.read("maps/nope/1_2_3_4.md")
     with pytest.raises(WorkspaceError, match="step"):
-        area.read("maps/layout-bl/0_0_40_40.md")          # 超网格上限：建议加步长
+        area.read("maps/layout/0_0_40_40.md")          # 超网格上限：建议加步长
 
 
 def test_maps_area_mounted_in_workspace(tmp_path: Path):
@@ -174,9 +184,9 @@ def test_maps_area_mounted_in_workspace(tmp_path: Path):
                                proposals_log=tmp_path / "proposals.jsonl",
                                map_plans_dir=_map_plans_dir(tmp_path)))
     assert "maps/index.md" in ws._list_file_paths()
-    assert "D1" in ws.read_text("maps/layout-bl/39_31_41_34.md")
+    assert "D1" in ws.read_text("maps/layout/39_31_41_34.md")
     with pytest.raises(WorkspaceError, match="只读区"):
-        ws.write_text("maps/layout-bl/1_1_2_2.md", "篡改")
+        ws.write_text("maps/layout/1_1_2_2.md", "篡改")
 
 
 def test_workspace_snapshot_excludes_readonly_and_rest(tmp_path: Path):

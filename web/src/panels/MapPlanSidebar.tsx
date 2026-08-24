@@ -20,13 +20,13 @@ export function MapPlanSidebar() {
   const marks = proj.marks;
   const selMeta = st.mplans?.find((p) => p.id === st.selId) ?? null;
 
-  // 双下拉模型（用户拍板）：规划 = 某地图 × 某方的一种布局 ——
-  // 地图下拉 + 出生点切换 → 规划下拉只列这个空间的布局，随时切换对比
+  // 批 2（双分支）：蓝红是**同一规划的分支视图**（不再按出生点过滤规划清单）——
+  // 地图下拉选空间；规划下拉列该地图全部布局（dual 一份两看，旧单分支各归各）
   const mapNames = useMemo(
     () => [...new Set((st.mplans ?? []).map((p) => p.map_name))], [st.mplans]);
   const spacePlans = useMemo(
-    () => (st.mplans ?? []).filter((p) => p.map_name === st.selMap && p.spawn === st.spawn),
-    [st.mplans, st.selMap, st.spawn]);
+    () => (st.mplans ?? []).filter((p) => p.map_name === st.selMap),
+    [st.mplans, st.selMap]);
 
   // "草稿新增"的名单（列表里打标记用）
   const addedNames = useMemo(() => new Set(st.draft
@@ -67,7 +67,7 @@ export function MapPlanSidebar() {
                       + (st.spawn === sp
                         ? "border-accent-blue bg-blue-soft font-medium text-strong"
                         : "border-l2 text-dim")}
-                    title={sp === "bl" ? "蓝色方出生点（左下）" : "红色方出生点（右上）"}>
+                    title={sp === "bl" ? "蓝色方分支（左下）—— 同一规划的另一侧" : "红色方分支（右上）—— 同一规划的另一侧"}>
               {sp === "bl" ? "蓝方" : "红方"}
             </button>
           ))}

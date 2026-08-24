@@ -1,0 +1,15 @@
+# 矿区划分（PLAN-V2 D4：硬编码进地图基础数据，每张图一份，含红蓝双方）
+#
+# ⚠️ 草案坐标（2026-08-24 用户草案表，**待真机校准**）—— 批 4 observe v2 的
+# 矿区分区以此表为验收基准；校准后只改这份文件，代码零改。
+#
+# 字段：name = 中文名（显示/引用）；side = bl|tr|neutral（归属方）；
+# bbox = [x1, y1, x2, y2] 世界坐标闭区间（左下 + 右上）。
+map_name: LadderMap
+areas:
+  - {name: 蓝方主矿, side: bl, bbox: [38, 25, 50, 40]}
+  - {name: 蓝方二矿, side: bl, bbox: [65, 70, 80, 80]}
+  - {name: 中岛矿, side: neutral, bbox: [95, 90, 115, 105]}
+  - {name: 红方主矿, side: tr, bbox: [108, 64, 120, 75]}
+  - {name: 红方二矿, side: tr, bbox: [118, 115, 135, 130]}
+  - {name: 红方三矿, side: tr, bbox: [98, 98, 108, 108]}

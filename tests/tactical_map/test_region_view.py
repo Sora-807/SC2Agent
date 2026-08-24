@@ -80,7 +80,7 @@ def test_render_region_empty_slots_say_so():
     from tactical_map.region_view import render_region
 
     text = render_region((39, 31, 41, 34), {}, CAT)
-    assert "没有槽位" in text and "layout-bl" in text
+    assert "没有槽位" in text and "maps/layout/" in text
 
 
 def test_render_region_clamps_and_notes():

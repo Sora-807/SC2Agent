@@ -96,6 +96,9 @@ async def session_start(request: Request,
                 status_code=400,
                 detail=f"地图规划 {map_plan!r} 不存在或没有落盘文件"
                        "（子进程会话需要真文件；检查 --map-plans 目录）")
+    # 批 2：会话图层 = 整个规划目录合并（默认规划裸名 + 其余命名空间键）——
+    # 子进程/离线会话都要拿到目录；plan_path 只用于存在性检查与幂等守卫
+    plans_dir = state.map_plans.dir
     strategy_path: str | None = None
     if strategy:
         strategy_path = state.strategies.file_path(strategy)
@@ -124,7 +127,10 @@ async def session_start(request: Request,
         old.stop()                 # 换驱动/换规划（或旧会话已死）：先收尾（树杀，防孤儿 SC2）
         state.session = None
     if driver in ("sim", "sc2"):
-        sess = LiveSession(driver=driver, map_plan=plan_path,
+        # map_plan 传 **id**（子进程 --map-plan 按目录合并图层查它）；
+        # plan_path 只做存在性检查与幂等守卫
+        sess = LiveSession(driver=driver, map_plan=map_plan,
+                           map_plans_dir=plans_dir,
                            strategy_path=strategy_path, spawn=spawn,
                            # 「开启游戏」两模式：normal=实时（此前默认）；fast=仿真快进 + 倍速
                            realtime=(driver == "sc2" and mode_resolved != "fast"),
@@ -150,7 +156,7 @@ async def session_start(request: Request,
         return state.session.describe()
     from api.session import OfflineSession
 
-    sess = OfflineSession(load_all(), map_plan=plan_path,
+    sess = OfflineSession(load_all(), map_plan=map_plan, map_plans_dir=plans_dir,
                           strategy_path=strategy_path, spawn=spawn)
     state.session = sess
     sess.map_plan_path = plan_path      # noqa: B010
@@ -193,10 +199,14 @@ def _production_pairs(production: dict) -> list[tuple[str, int]]:
 
 
 def _loadout_queue_items(state, plan_id: str, map_plan_id: str | None) -> list:
-    """loadout.plan 引用的生产规划 → QueueItem 列表（含 I8 限定引用解析）。"""
+    """loadout.plan 引用的生产规划 → QueueItem 列表。
+
+    placement 引用（裸名 / `规划id/点位名`）原样直通 —— 批 2 起会话图层带全部
+    规划的命名空间键，解析在 runtime 的 placement 层；不存在的标记在执行期
+    dropped（作者错误，不静默）。
+    """
     from fastapi import HTTPException as _HTTP
 
-    from view.plans import resolve_placement_refs
     from view.proposals import parse_item
 
     doc = state.plans.get(plan_id)
@@ -204,11 +214,7 @@ def _loadout_queue_items(state, plan_id: str, map_plan_id: str | None) -> list:
         raise _HTTP(status_code=400,
                     detail=f"loadout 引用的生产规划 {plan_id!r} 不存在（可用："
                            f"{[p['id'] for p in state.plans.list()]}）")
-    items = [parse_item(i) for i in (doc.get("queue") or [])]
-    items, ref_err = resolve_placement_refs(items, map_plan_id)
-    if ref_err is not None:
-        raise _HTTP(status_code=400, detail=f"loadout 生产序列：{ref_err}")
-    return items
+    return [parse_item(i) for i in (doc.get("queue") or [])]
 
 
 @router.post("/api/session/swap")
@@ -259,6 +265,34 @@ def session_swap(request: Request, strategy: str = Query(...)) -> dict:
         out = sess.swap_strategy(str(path))      # 子进程通道（stdin / 控制文件）
         return {**sess.describe(), "swap": out}
     out = sess.swap_strategy(manifest)           # offline：pending，下一帧边界应用
+    return {**sess.describe(), "swap": out}
+
+
+@router.post("/api/session/map-plan")
+def session_map_plan(request: Request, id: str = Query(...)) -> dict:
+    """默认地图热切（PLAN-V2 批 2）：对运行中的会话换**默认规划**，帧边界生效。
+
+    只换默认份（裸名槽位 = 自动放置的消费面 + home 区名单）；`规划id/点位名`
+    命名空间引用不受影响。新默认的裸名缺失引用（队列里裸名项）在执行期
+    dropped（作者错误，不静默）。
+    """
+    state = request.app.state
+    sess = state.session
+    if sess is None:
+        raise HTTPException(status_code=409, detail="没有运行中的会话（先 POST /api/session/start）")
+    if hasattr(sess, "proc") and not sess.describe().get("alive"):
+        raise HTTPException(status_code=409, detail="会话子进程已退出，换不了地图（重开会话）")
+    if id not in {r["id"] for r in state.map_plans.list()}:
+        raise HTTPException(status_code=400,
+                            detail=f"地图规划 {id!r} 不存在（可用："
+                                   f"{[r['id'] for r in state.map_plans.list()]}）")
+    try:
+        # live = 子进程通道（stdin/控制文件）；offline = pending，下一帧边界应用
+        out = sess.swap_map_plan(id)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    sess.map_plan_id = id        # noqa: B010 —— 幂等守卫/诊断读
+    sess.map_plan_path = state.map_plans.file_path(id)   # noqa: B010
     return {**sess.describe(), "swap": out}
 
 

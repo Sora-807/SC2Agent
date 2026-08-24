@@ -93,10 +93,11 @@ export const useMapPlanStore = create<MapPlanStore>((set, get) => ({
       // 深链选中优先，否则默认 LadderMap/bl 第一个
       const deep = initialId && rows.find((p) => p.id === initialId);
       const first = deep
-        ?? rows.find((p) => p.map_name === "LadderMap" && p.spawn === "bl")
+        ?? rows.find((p) => p.map_name === "LadderMap")
         ?? rows[0];
       if (first) {
-        set({ selMap: first.map_name, spawn: first.spawn as "bl" | "tr" });
+        // 批 2：spawn 是**分支视图**（双分支一份规划两页签看），不再是规划过滤键
+        set({ selMap: first.map_name, spawn: first.spawn === "tr" ? "tr" : "bl" });
         await get().openMapPlan(first.id);
       }
     } catch (err) {
@@ -111,7 +112,8 @@ export const useMapPlanStore = create<MapPlanStore>((set, get) => ({
   },
 
   async openMapPlan(id) {
-    const payload = await getMapPlanPayload(id);
+    const st = get();
+    const payload = await getMapPlanPayload(id, st.spawn);
     set({
       selId: id,
       planPayload: payload,
@@ -121,9 +123,16 @@ export const useMapPlanStore = create<MapPlanStore>((set, get) => ({
     });
   },
 
+  /** 切地图 = 换规划空间（该地图第一个规划）；蓝红 = 分支视图（同一规划的另一侧） */
   switchSpace(m, sp) {
+    const st = get();
+    const samePlan = st.selId && st.mplans?.some((p) => p.id === st.selId && p.map_name === m);
     set({ selMap: m, spawn: sp });
-    const first = (get().mplans ?? []).find((p) => p.map_name === m && p.spawn === sp);
+    if (samePlan && st.selId) {
+      void get().openMapPlan(st.selId);   // 只换分支视图：同一规划重拉该侧 payload
+      return;
+    }
+    const first = (get().mplans ?? []).find((p) => p.map_name === m);
     if (first) void get().openMapPlan(first.id);
     else set({ selId: null, planPayload: null, draft: [] });
   },
@@ -140,7 +149,9 @@ export const useMapPlanStore = create<MapPlanStore>((set, get) => ({
       return;
     }
     try {
-      await saveMapPlan(st.selId, mapDraftToHunks(st.draft));
+      await saveMapPlan(st.selId, mapDraftToHunks(st.draft),
+                        st.mplans?.find((p) => p.id === st.selId)?.spawn === "dual"
+                          ? st.spawn : undefined);
       await get().openMapPlan(st.selId);
       await get().refreshList();
       set({ submitMsg: "已保存到地图规划文件（" + st.selId + "）" });
@@ -172,7 +183,7 @@ export const useMapPlanStore = create<MapPlanStore>((set, get) => ({
     try {
       await removeMapPlan(st.selId);
       const rows = await get().refreshList();
-      const first = rows.find((r) => r.map_name === st.selMap && r.spawn === st.spawn) ?? rows[0];
+      const first = rows.find((r) => r.map_name === st.selMap) ?? rows[0];
       if (first) await get().openMapPlan(first.id);
     } catch (err) {
       set({ planMsg: "删除失败：" + (err as Error).message });

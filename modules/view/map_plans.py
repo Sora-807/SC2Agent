@@ -1,25 +1,24 @@
-"""view.map_plans：离线地图规划的文件存储（P2）—— **规划 = 某地图 × 某方的一种布局**。
+"""view.map_plans：离线地图规划的文件存储（P2 → PLAN-V2 批 2 双分支）。
 
-用户拍板的模型（2026-08-21 十三轮反馈）：规划不是"一张地图"，而是**针对
-某个地图 + 红/蓝方的一个布局方案**——双下拉（先选地图和阵营，再在独立的
-规划空间里切换布局），随时换布局对比。
+用户原始设计（2026-08-24 重申）：**左出生点和右出生点是一份地图规划的两种
+结构** —— 一份文件 = bl+tr 两套 build_slots/pos_marks（ADR-0033）。单分支旧格式
+（`spawn:` + 平铺）继续可读（load_map_plan 兼容包装），但新建/预设全是双分支。
 
-文件形态（一规划一 YAML，单出生点分支）：
-`{id, title_zh, map_name, spawn(bl|tr), origin, anchor, build_slots, pos_marks, updated_at}`
+文件形态（双分支）：
+`{id, title_zh, map_name, spawns: {bl: {origin, anchor, build_slots, pos_marks},
+ tr: {…}}, updated_at}`
 
-锁定预设（init 生成，复制是唯一改动路径）：
-- `default-bl/tr`：**空白地图** —— 只有地形/资源/基地预设，无任何自建槽位
- （用户拍板"去掉所有自建槽位后才是默认地图"）；
-- `layout-bl/tr`：出厂校准布局 —— 手写 base_layout 对应方的全部槽位
- （真机 can_place 扫描校准数据的引用副本）。
+锁定预设（init 生成，复制是唯一改动路径；批 2 起取代单分支四件）：
+- `default`：**空白地图**（双分支）—— 只有地形/资源/基地预设，无任何自建槽位；
+- `layout`：出厂校准布局（双分支）—— 手写 base_layout 两侧的全部槽位。
 
 编辑语义与 map_plan 提案同一套校验（apply_map_overrides：重名/重叠/尺寸/
-指向不存在）；离线直改文件（不走审批）。payload = static/map 形状 +
-真机地形 + 全图资源点 + 预设名预留区。
+指向不存在）；hunks 只作用于**当前编辑的分支**（payload/save 都带 spawn）。
+离线直改文件（不走审批）。payload = static/map 形状 + 真机地形 + 全图资源点 +
+预设名预留区。
 """
 from __future__ import annotations
 
-import tempfile
 import threading
 import time
 import uuid
@@ -39,8 +38,12 @@ from view.statics import ladder_resource_nodes, ladder_terrain_view, map_static
 LADDER_SOURCE = (Path(__file__).resolve().parents[1] / "tactical_map"
                  / "data" / "ladder_map" / "base_layout.yaml")
 
-#: 锁定的预设 id 前缀（default-*/layout-*：空白与出厂校准，复制再改）
-LOCKED_PREFIXES = ("default-", "layout-")
+#: 锁定的预设 id 前缀（default/layout：空白与出厂校准，复制再改；
+#: 旧单分支预设 default-bl/tr、layout-bl/tr 是其子串 —— 同样锁）
+LOCKED_PREFIXES = ("default", "layout")
+
+#: 单分支时代的锁定预设（批 2 双分支取代；init 时退役 —— 锁定件不可改，删了安全）
+LEGACY_LOCKED = ("default-bl", "default-tr", "layout-bl", "layout-tr")
 
 SPAWNS = ("bl", "tr")
 
@@ -49,28 +52,23 @@ def _source() -> dict:
     return yaml.safe_load(LADDER_SOURCE.read_text(encoding="utf-8")) or {}
 
 
-def _source_side(side: str) -> dict:
-    s = (_source().get("spawns") or {}).get(side) or {}
-    return {"origin": s.get("origin"), "anchor": s.get("anchor"),
-            "build_slots": dict(s.get("build_slots") or {}),
-            "pos_marks": dict(s.get("pos_marks") or {})}
-
-
-def _preset(pid: str, title: str, side: str, *, empty: bool) -> dict:
-    src = _source_side(side)
-    return {"id": pid, "title_zh": title, "map_name": "LadderMap", "spawn": side,
-            "origin": src["origin"], "anchor": src["anchor"],
-            "build_slots": {} if empty else src["build_slots"],
-            "pos_marks": {} if empty else src["pos_marks"],
-            "updated_at": 0.0}
+def _dual_preset(pid: str, title: str, *, empty: bool) -> dict:
+    """双分支预设：base_layout 两侧各一份（空白 = 槽位/点位清空，origin/anchor 保留）。"""
+    spawns: dict[str, dict] = {}
+    for side, s in (_source().get("spawns") or {}).items():
+        spawns[side] = {
+            "origin": s.get("origin"), "anchor": s.get("anchor"),
+            "build_slots": {} if empty else dict(s.get("build_slots") or {}),
+            "pos_marks": {} if empty else dict(s.get("pos_marks") or {}),
+        }
+    return {"id": pid, "title_zh": title, "map_name": "LadderMap",
+            "spawns": spawns, "updated_at": 0.0}
 
 
 def _presets() -> list[dict]:
     return [
-        _preset("default-bl", "默认空白地图（蓝方）", "bl", empty=True),
-        _preset("default-tr", "默认空白地图（红方）", "tr", empty=True),
-        _preset("layout-bl", "出厂校准布局（蓝方）", "bl", empty=False),
-        _preset("layout-tr", "出厂校准布局（红方）", "tr", empty=False),
+        _dual_preset("default", "默认空白地图（蓝红双分支）", empty=True),
+        _dual_preset("layout", "出厂校准布局（蓝红双分支）", empty=False),
     ]
 
 
@@ -79,6 +77,50 @@ def _hunks_of(raw_hunks: list[dict]) -> list[MapHunkLike]:
                         kind=str(h.get("kind") or ""),
                         payload=dict(h.get("payload") or {}))
             for i, h in enumerate(raw_hunks)]
+
+
+def _validate_branch_slots(cur_slots: dict, new_slots: dict) -> list[dict]:
+    """分支槽位校验（save_payload 的单/双分支共用）：简写约定 + 重叠 + 固定建造点。
+
+    只查**本次改动**的槽位（新增，或 pos/size 变了）；重叠检查覆盖「改动 × 全部」。
+    """
+    changed = {n for n, e in new_slots.items()
+               if n not in cur_slots
+               or (cur_slots[n].get("pos") != e.get("pos")
+                   or cur_slots[n].get("size") != e.get("size"))}
+    errors: list[dict] = []
+    reserved = _reserved_boxes(_default_catalog(), None)
+    for a in sorted(changed):
+        ea = new_slots[a]
+        if not is_valid_slot_name(a):
+            errors.append({"hunk_id": a,
+                           "text_zh": f"槽位名 {a!r} 不符合简写约定"
+                                      "（D/R/F/S+序号[+挂件]，如 D17、R5、R5+；"
+                                      "中文别名写 alias_zh）"})
+            continue
+        pos_a = ea.get("pos")
+        if not pos_a:
+            continue
+        fp_a = _footprint([float(pos_a[0]), float(pos_a[1])], int(ea.get("size") or 0))
+        for b, eb in sorted(new_slots.items()):
+            if b == a:
+                continue
+            pos_b = eb.get("pos")
+            if not pos_b:
+                continue
+            fp_b = _footprint([float(pos_b[0]), float(pos_b[1])], int(eb.get("size") or 0))
+            if _overlaps(fp_a, fp_b):
+                errors.append({"hunk_id": a, "text_zh": f"槽位 {a!r} 与 {b!r} 重叠"})
+                break
+        else:
+            for rb in reserved:
+                if _overlaps(fp_a, (rb["tl"][0], rb["tl"][1], rb["br"][0], rb["br"][1])):
+                    errors.append({
+                        "hunk_id": a,
+                        "text_zh": f"槽位 {a!r} 压住{rb['label_zh']}（固定建造点，不可占用）",
+                    })
+                    break
+    return errors
 
 
 def _reserved_boxes(catalog, mains_spec: dict[str, tuple[float, float]] | None = None) -> list[dict]:
@@ -99,12 +141,25 @@ def _plan_locked(pid: str) -> bool:
     return pid.startswith(LOCKED_PREFIXES)
 
 
-def _template_from_dict(d: dict) -> BaseTemplate:
-    """规划 dict（单出生点）→ BaseTemplate（复用 load_base_template 的解析）。
+def _template_from_dict(d: dict, spawn: str | None = None) -> BaseTemplate:
+    """规划 dict → BaseTemplate（复用 load_base_template 的解析）。
 
-    包装成 base_layout 形状（spawns 只含本方）再走同一条解析路径 ——
+    双分支（有 `spawns` 节）直接走；`spawn` 给了就只取该分支（保存/payload 的
+    单分支视图）。单分支旧格式包装成 base_layout 形状再走同一条解析 ——
     校验/合并/会话装配共用同一份解析。
     """
+    if d.get("spawns"):
+        if spawn is not None:
+            side = str(spawn)
+            if side not in d["spawns"]:
+                raise ValueError(f"规划没有 {side!r} 分支（现有：{sorted(d['spawns'])}）")
+            src = d["spawns"][side]
+            d = {"map_name": d.get("map_name"), "spawn": side,
+                 "origin": src.get("origin"), "anchor": src.get("anchor"),
+                 "build_slots": src.get("build_slots") or {},
+                 "pos_marks": src.get("pos_marks") or {}}
+        else:
+            d = {"map_name": d.get("map_name"), "spawns": d["spawns"]}
     side = str(d.get("spawn") or "bl")
     wrapped = {
         "map_name": d.get("map_name") or "LadderMap",
@@ -116,6 +171,8 @@ def _template_from_dict(d: dict) -> BaseTemplate:
             "pos_marks": d.get("pos_marks") or {},
         }},
     }
+    import tempfile
+
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False,
                                      encoding="utf-8") as f:
         yaml.safe_dump(wrapped, f, allow_unicode=True)
@@ -145,7 +202,14 @@ class MapPlanStore:
             dir.mkdir(parents=True, exist_ok=True)
             for p in sorted(dir.glob("*.yaml")):
                 self._files[p.stem] = p
-        # 预设自愈：锁定四件（空白/出厂 × 蓝/红）总是存在
+        # 单分支时代锁定预设退役（批 2 双分支取代；锁定件不可改 → 直接删是安全的）
+        for legacy in LEGACY_LOCKED:
+            p = self._files.pop(legacy, None)
+            if p is None:
+                self._mem.pop(legacy, None)
+            else:
+                p.unlink(missing_ok=True)
+        # 预设自愈：锁定两件（空白/出厂 × 双分支）总是存在
         for preset in _presets():
             if preset["id"] not in self._files:
                 self._write(preset["id"], preset)
@@ -185,20 +249,30 @@ class MapPlanStore:
             p = self._files[pid]
             updated = (p.stat().st_mtime if p is not None
                        else float(d.get("updated_at") or 0.0))
+            dual = bool(d.get("spawns"))
+            if dual:
+                spawn, sides = "dual", sorted(d["spawns"])
+                slots = sum(len((d["spawns"][s] or {}).get("build_slots") or {})
+                            for s in d["spawns"])
+            else:
+                spawn = str(d.get("spawn") or "bl")
+                sides, slots = [spawn], len(d.get("build_slots") or {})
             out.append({
                 "id": pid,
                 "title_zh": str(d.get("title_zh") or pid),
                 "map_name": str(d.get("map_name") or "unknown"),
-                "spawn": str(d.get("spawn") or "bl"),
+                "spawn": spawn,          # dual = 双分支（蓝红两页签）
+                "spawns": sides,         # 实际有哪些分支（前端页签按这个画）
                 "locked": _plan_locked(pid),
-                "slots": len(d.get("build_slots") or {}),
+                "slots": slots,
                 "updated_at": updated,
             })
         return out
 
-    def payload(self, pid: str) -> dict:
-        """该规划的 static/map 形状 payload（画布直接吃）。
+    def payload(self, pid: str, spawn: str | None = None) -> dict:
+        """该规划（指定分支）的 static/map 形状 payload（画布直接吃）。
 
+        双分支必须给 spawn（缺省 bl）；单分支旧格式自带出生点、spawn 参数忽略。
         terrain/resource_nodes 附真机采集数据（全图、无战争迷雾）；reserved 附
         预设名预留区 —— 槽位摆放要看得见不可占用区。
         """
@@ -206,8 +280,19 @@ class MapPlanStore:
             d = self._read(pid)
         if not d:
             raise KeyError(pid)
-        t = _template_from_dict(d)
-        side = str(d.get("spawn") or "bl")
+        if d.get("spawns"):
+            side = str(spawn or "bl")
+            if side not in d["spawns"]:
+                raise ValueError(f"规划 {pid!r} 没有 {side!r} 分支（现有：{sorted(d['spawns'])}）")
+            src = d["spawns"][side]
+            view = {"map_name": d.get("map_name"), "spawn": side,
+                    "origin": src.get("origin"), "anchor": src.get("anchor"),
+                    "build_slots": src.get("build_slots") or {},
+                    "pos_marks": src.get("pos_marks") or {}}
+        else:
+            view = d
+        t = _template_from_dict(view)
+        side = str(view.get("spawn") or "bl")
         layout = t.spawns.get(side)
         assert layout is not None
         layer = instantiate_spawn(t, layout, layout.origin)   # cc=origin → 零平移
@@ -217,15 +302,18 @@ class MapPlanStore:
                                           _source_mains())
         return out
 
-    def save(self, pid: str, hunks: list[dict]) -> dict:
-        """离线保存：hunks 应用到该规划（与 map_plan 提案同一套校验）。"""
+    def save(self, pid: str, hunks: list[dict], spawn: str | None = None) -> dict:
+        """离线保存：hunks 应用到该规划的**指定分支**（与 map_plan 提案同一套校验）。"""
         with self._lock:
             if _plan_locked(pid):
                 raise ValueError("预设已锁定（空白地图/出厂校准）：复制一份再改")
             d = self._read(pid)
             if not d:
                 raise KeyError(pid)
-            t = _template_from_dict(d)
+            dual = bool(d.get("spawns"))
+            if dual and spawn is None:
+                raise ValueError("双分支规划保存要给 spawn（bl|tr —— 改的是哪一侧）")
+            t = _template_from_dict(d, spawn=spawn)
             new_over, errors = apply_map_overrides({}, t, _hunks_of(hunks))
             if errors:
                 return {"ok": False, "errors": errors}
@@ -248,29 +336,54 @@ class MapPlanStore:
             state = merge_map_state(t, new_over)
             marks = {n: {k: v for k, v in e.items() if k != "name"}
                      for n, e in state["marks"].items()}
-            out = {**d, "build_slots": state["slots"], "pos_marks": marks,
-                   "updated_at": time.time()}
+            side = str(d.get("spawn") or spawn or "bl")
+            out = self._write_branch(d, side, state["slots"], marks)
             self._write(pid, out)
             return {"ok": True}
 
+    @staticmethod
+    def _write_branch(d: dict, side: str, slots: dict, marks: dict) -> dict:
+        """把分支结果写回规划 dict（双分支只动该侧；单分支平铺）。"""
+        if d.get("spawns"):
+            src = dict(d["spawns"].get(side) or {})
+            src["build_slots"], src["pos_marks"] = slots, marks
+            return {**d, "spawns": {**d["spawns"], side: src},
+                    "updated_at": time.time()}
+        return {**d, "build_slots": slots, "pos_marks": marks,
+                "updated_at": time.time()}
+
     def doc(self, pid: str) -> dict:
-        """文档形状（agent 文件工作区读写用的就是这份）：不含画布要的 static/map 大负载。"""
+        """文档形状（agent 文件工作区读写用的就是这份）：不含画布要的 static/map 大负载。
+
+        双分支 = `spawns: {bl: {build_slots, pos_marks}, tr: {…}}`；单分支旧格式
+        照旧平铺（读写都兼容，不强迫迁移）。
+        """
         with self._lock:
             d = self._read(pid)
         if not d:
             raise KeyError(pid)
-        out = {"id": pid}
-        for k in ("title_zh", "map_name", "spawn", "build_slots", "pos_marks", "updated_at"):
-            if d.get(k) is not None:
-                out[k] = d[k]
+        out: dict = {"id": pid, "title_zh": d.get("title_zh"),
+                     "map_name": d.get("map_name"), "updated_at": d.get("updated_at")}
+        if d.get("spawns"):
+            out["spawns"] = {
+                side: {"build_slots": dict((src or {}).get("build_slots") or {}),
+                       "pos_marks": dict((src or {}).get("pos_marks") or {})}
+                for side, src in d["spawns"].items()
+            }
+        else:
+            for k in ("spawn", "build_slots", "pos_marks"):
+                if d.get(k) is not None:
+                    out[k] = d[k]
         return out
 
     def save_payload(self, pid: str, doc: dict) -> dict:
-        """全量保存（agent 文件工作区的写钩子走这里，2026-08-22）。
+        """全量保存（agent 文件工作区的写钩子走这里）。
 
-        校验口径与 save(hunks) 一致：**只查本次改动的槽位**（预设存量不追溯 ——
-        预设早于预留系统，历史压线不算新账）。改动 = 新增的槽位，或 pos/size
-        变了的槽位；重叠检查覆盖「改动 × 全部」（新槽压老槽同样是冲突）。
+        双分支 doc：`spawns: {bl: {build_slots, pos_marks}, tr: {…}}`（缺的分支保留
+        现状），校验对**每个提供的分支**各跑一遍。单分支旧 doc 只对单分支规划接受。
+
+        校验口径与 save(hunks) 一致：**只查本次改动的槽位**（预设存量不追溯）。
+        改动 = 新增的槽位，或 pos/size 变了的槽位；重叠检查覆盖「改动 × 全部」。
         """
         with self._lock:
             if _plan_locked(pid):
@@ -278,73 +391,66 @@ class MapPlanStore:
             cur = self._read(pid)
             if not cur:
                 raise KeyError(pid)
-            cur_slots = dict(cur.get("build_slots") or {})
-            new_slots = {str(k): dict(v) for k, v in (doc.get("build_slots") or {}).items()}
-            changed = {n for n, e in new_slots.items()
-                       if n not in cur_slots
-                       or (cur_slots[n].get("pos") != e.get("pos")
-                           or cur_slots[n].get("size") != e.get("size"))}
-            merged = {**cur, "title_zh": str(doc.get("title_zh") or cur.get("title_zh") or pid),
-                      "map_name": str(doc.get("map_name") or cur.get("map_name") or "unknown"),
-                      "spawn": str(doc.get("spawn") or cur.get("spawn") or "bl"),
-                      "build_slots": new_slots,
-                      "pos_marks": {str(k): dict(v)
-                                    for k, v in (doc.get("pos_marks") or {}).items()},
-                      "updated_at": time.time()}
-            try:
-                t = _template_from_dict(merged)
-            except Exception as exc:  # noqa: BLE001 —— 模板解析错误要变成结构化理由
-                return {"ok": False, "errors": [{"hunk_id": None,
-                                                "text_zh": f"文档解析失败：{exc}"}]}
+            dual_cur, dual_doc = bool(cur.get("spawns")), bool(doc.get("spawns"))
+            if dual_doc and not dual_cur:
+                return {"ok": False, "errors": [{
+                    "hunk_id": None,
+                    "text_zh": "该规划是单分支旧格式：doc 请用平铺形态（spawn/build_slots/pos_marks）"}]}
+            if dual_cur and not dual_doc:
+                return {"ok": False, "errors": [{
+                    "hunk_id": None,
+                    "text_zh": "双分支规划的 doc 要用 spawns: {bl: {…}, tr: {…}} 形态"}]}
+            if not dual_cur:
+                return self._save_flat(pid, cur, doc)
+            # 双分支：逐分支校验（任一分支红 = 整体拒）
             errors: list[dict] = []
-            reserved = _reserved_boxes(self._catalog or _default_catalog(), None)
-            for a in sorted(changed):
-                ea = new_slots[a]
-                if not is_valid_slot_name(a):
-                    errors.append({"hunk_id": a,
-                                   "text_zh": f"槽位名 {a!r} 不符合简写约定"
-                                              "（D/R/F/S+序号[+挂件]，如 D17、R5、R5+；"
-                                              "中文别名写 alias_zh）"})
+            new_spawns: dict[str, dict] = {}
+            for side, src in cur["spawns"].items():
+                br = (doc.get("spawns") or {}).get(side)
+                if br is None:
+                    new_spawns[side] = src        # 缺的分支保留现状
                     continue
-                pos_a = ea.get("pos")
-                if not pos_a:
-                    continue
-                fp_a = _footprint([float(pos_a[0]), float(pos_a[1])],
-                                  int(ea.get("size") or 0))
-                for b, eb in sorted(new_slots.items()):
-                    if b == a:
-                        continue
-                    pos_b = eb.get("pos")
-                    if not pos_b:
-                        continue
-                    fp_b = _footprint([float(pos_b[0]), float(pos_b[1])],
-                                      int(eb.get("size") or 0))
-                    if _overlaps(fp_a, fp_b):
-                        errors.append({"hunk_id": a,
-                                       "text_zh": f"槽位 {a!r} 与 {b!r} 重叠"})
-                        break
-                else:
-                    for rb in reserved:
-                        if _overlaps(fp_a, (rb["tl"][0], rb["tl"][1],
-                                            rb["br"][0], rb["br"][1])):
-                            errors.append({
-                                "hunk_id": a,
-                                "text_zh": (f"槽位 {a!r} 压住{rb['label_zh']}"
-                                            "（固定建造点，不可占用）"),
-                            })
-                            break
+                cur_slots = dict((src or {}).get("build_slots") or {})
+                new_slots = {str(k): dict(v) for k, v in (br.get("build_slots") or {}).items()}
+                errs = _validate_branch_slots(cur_slots, new_slots)
+                for e in errs:
+                    e["hunk_id"] = f"{side}/{e['hunk_id']}" if e.get("hunk_id") else e.get("hunk_id")
+                errors.extend(errs)
+                new_spawns[side] = {**src, "build_slots": new_slots,
+                                    "pos_marks": {str(k): dict(v)
+                                                  for k, v in (br.get("pos_marks") or {}).items()}}
             if errors:
                 return {"ok": False, "errors": errors}
+            merged = {**cur, "title_zh": str(doc.get("title_zh") or cur.get("title_zh") or pid),
+                      "map_name": str(doc.get("map_name") or cur.get("map_name") or "unknown"),
+                      "spawns": new_spawns, "updated_at": time.time()}
             self._write(pid, merged)
             return {"ok": True}
 
+    def _save_flat(self, pid: str, cur: dict, doc: dict) -> dict:
+        """单分支旧格式的全量保存（原 save_payload 逻辑，双分支走 spawns 形态）。"""
+        cur_slots = dict(cur.get("build_slots") or {})
+        new_slots = {str(k): dict(v) for k, v in (doc.get("build_slots") or {}).items()}
+        errors = _validate_branch_slots(cur_slots, new_slots)
+        if errors:
+            return {"ok": False, "errors": errors}
+        merged = {**cur, "title_zh": str(doc.get("title_zh") or cur.get("title_zh") or pid),
+                  "map_name": str(doc.get("map_name") or cur.get("map_name") or "unknown"),
+                  "spawn": str(doc.get("spawn") or cur.get("spawn") or "bl"),
+                  "build_slots": new_slots,
+                  "pos_marks": {str(k): dict(v)
+                                for k, v in (doc.get("pos_marks") or {}).items()},
+                  "updated_at": time.time()}
+        self._write(pid, merged)
+        return {"ok": True}
+
     def create(self, raw: dict) -> dict:
-        """新建：复制既有规划（默认空白），id 缺省自动生成。"""
+        """新建：复制既有规划（默认空白双分支），id 缺省自动生成。"""
         with self._lock:
             pid = str(raw.get("id") or f"map-{uuid.uuid4().hex[:6]}")
             if pid in self._files:
                 raise ValueError(f"地图规划 id {pid!r} 已存在")
-            src = str(raw.get("copy_from") or "default-bl")
+            src = str(raw.get("copy_from") or "default")
             if src not in self._files:
                 raise ValueError(f"要复制的地图规划 {src!r} 不存在")
             d = self._read(src)
@@ -370,3 +476,8 @@ class MapPlanStore:
         """规划文件路径（内存态/不存在 = None —— 子进程会话需要真文件）。"""
         with self._lock:
             return self._files.get(pid)
+
+    @property
+    def dir(self) -> Path | None:
+        """规划目录（会话图层合并要读整个目录；内存态 = None）。"""
+        return self._dir

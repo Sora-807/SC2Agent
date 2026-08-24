@@ -302,6 +302,46 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.60 五十三轮：PLAN-V2 批 2 落地 —— 地图规划双分支 + 会话图层合并 + 默认热切（ADR-0033，2026-08-24）
+
+批 2 全部落地，后端 **954 passed / 4 skipped**（批 1 后 942，+12 行为锁）、
+前端 **386 passed + tsc 绿**、**契约零改动**（内容变化不加字段）：
+
+- **双分支文件**（`view/map_plans.py`）：一份 = `spawns: {bl, tr}` 两套
+  build_slots/pos_marks；单分支旧格式兼容可读；预设四件收敛为两件
+  （default/layout，init 时退役旧锁定件）；payload/save(hunks)/doc 读写全部带
+  spawn 分支参数，hunks 只动指定分支；全量 doc 双分支各跑几何/预留/简写校验。
+- **会话图层合并**（新 `tactical_map/merge.py`）：默认规划裸名（home 区名单 =
+  null=auto 的自动放置消费面）+ 全部规划 `规划id/名字` 命名空间键（含默认自己，
+  显式引用不随热切漂移；**槽位对象名也带前缀** —— map_static 按 name 渲染，
+  不带前缀三个规划的同名槽会互相覆盖）+ 预设固定点全局裸名；同一出生端平移
+  （全部规划同 spawn_key 到同一 CC）；默认不存在回落出厂模板（如实记 None）。
+  装配点：OfflineSession（map_plans_dir + id）与 run_session（--map-plans-dir，
+  _detect_spawn 后重建合并层）。**route 传 id 不再传路径**（子进程按目录查）。
+- **默认热切**：`POST /api/session/map-plan?id=`，offline=帧边界 pending、
+  live=控制文件 `{"op":"map"}`，都是重建合并图层 → 四方换引用 → 重发 static/map。
+  `resolve_placement_refs` 删除 —— `规划id/点位名` 直通，不存在标记执行期
+  dropped（作者错误）。
+- **null=auto 落地**（ADR-0027 修订）：placement.py null 拒绝 → 默认
+  in_region("home") 按序空位；无位 = skip(placement_collision)。注意 CC 是 5×5
+  不是 4×4 —— 测试夹具里 CC 离 2×2 补给槽太近会把槽全盖住（本轮踩过）。
+- **矿区进基础数据**（D4）：`data/ladder_map/mine_areas.yaml` 六矿区草案
+  （**坐标待真机校准**，文件头标注）+ `tactical_map/mine_areas.py` loader；
+  批 4 observe v2 以此为分区基准。
+- **前端红蓝**：spawn 从"规划过滤键"变"分支视图"（同一规划两页签，蓝红按钮
+  只切视图重拉 payload）；map-plans api 带 spawn 参数；规划下拉不再按出生点过滤
+  （dual 属于两侧）；queue-store 放置引用空间过滤兼容 dual；StartCard 兜底不变。
+- **maps 只读区适配**（agent/readonly.py）：双分支默认渲染 bl 侧 + 说明行标注；
+  索引文案更新；loadouts 默认清单 layout-bl → layout（旧值会 400）。
+- 工程教训 ×2：①heredoc 传含反斜杠/大中文串的补丁**必截断**（批 1 已踩、本轮
+  又踩两次）—— 大改一律 Write 脚本文件或 Edit 工具；②合并层的 dict 键带前缀
+  而**对象 name 不带**时，payload 渲染会静默覆盖 —— 两处都要改名。
+- 测试耗时体检（用户问）：全量 958 测 ≈116s 无病态 —— 最慢 25 个（全是子进程
+  端到端，0.55s/个冷启动底价）占一半；**开发内环改为只跑受影响文件**，全量
+  留批末。可选提速项 pytest-xdist 待用户拍板。
+
+**待办**：agent 切地图工具面等用户设计文档（REST 已先行）；矿区坐标批 4 校准。
+
 ## 0.59 五十二轮：PLAN-V2 批 1 落地 —— 队列执行账本 + skip 语义（ADR-0032，2026-08-24）
 
 批 1 六件套全部落地，后端 **942 passed / 4 skipped**（基线 915，净增 27 行为锁）、

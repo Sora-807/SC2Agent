@@ -232,14 +232,16 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   /** 放置引用默认落该空间的出厂校准布局（槽位最全，选项最丰富），没有就第一个 */
   syncRefId() {
     const st = get();
+    const planSpawn = st.plan?.spawn ?? "bl";
     const space = (st.refPlans ?? []).filter(
-      (p) => p.map_name === (st.plan?.map ?? "LadderMap") && p.spawn === (st.plan?.spawn ?? "bl"));
+      (p) => p.map_name === (st.plan?.map ?? "LadderMap")
+        && (p.spawn === "dual" || p.spawn === planSpawn));   // 批 2：dual 属于两侧
     if (space.length === 0) {
       set({ refId: null });
       void get().syncRefPayload();
       return;
     }
-    const preferred = space.find((p) => p.id === "layout-" + (st.plan?.spawn ?? "bl")) ?? space[0];
+    const preferred = space.find((p) => p.id === "layout") ?? space[0];
     const next = st.refId && space.some((p) => p.id === st.refId) ? st.refId : preferred!.id;
     if (next !== st.refId) {
       set({ refId: next });

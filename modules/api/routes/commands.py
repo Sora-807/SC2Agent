@@ -18,13 +18,10 @@ def queue_command(op: str, body: QueueCommand, request: Request) -> CommandResul
         parsed = body.to_items()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    from view.plans import resolve_placement_refs
-
-    items, ref_err = resolve_placement_refs(
-        parsed, getattr(sess, "map_plan_id", None))
-    if ref_err is not None:
-        # I8 限定引用（「规划名/点位名」）解析失败 = 请求写错了，400 带结构化理由
-        raise HTTPException(status_code=400, detail=ref_err)
+    # placement 引用（裸名 / 规划id/点位名）原样直通：会话图层带全部规划的
+    # 命名空间键（PLAN-V2 批 2），解析在 runtime 的 placement 层；不存在的
+    # 标记执行期 dropped（作者错误，不静默）。
+    items = parsed
     try:
         detail = sess.queue_op(op, body.name, items=items,
                                before_uid=body.before_uid, uid=body.uid,

@@ -33,7 +33,7 @@ from planner.build_order import ProductionModuleInstance
 from planner.planner import Planner
 from production.economy import EconomyKeeper, WorkerReservations
 from production.runtime import ProductionRuntime
-from tactical_map.base import instantiate_spawn, load_ladder_map, load_map_plan
+from tactical_map.merge import load_plan_templates, merged_layer
 from view.port import OpRing, RecordingPort
 from view.producer import FrameProducer
 from view.schema import STATIC_TOPICS
@@ -138,6 +138,7 @@ class OfflineSession:
     def __init__(self, catalog: Catalog, *, workers: int = 12, minerals: float = 400.0,
                  label: str = "离线沙盒（真引擎 + 假世界）",
                  map_plan: str | None = None,
+                 map_plans_dir=None,
                  strategy_path: str | None = None,
                  spawn: str | None = None) -> None:
         from worldsim import WorldSim
@@ -151,17 +152,20 @@ class OfflineSession:
         self.game_time = 0.0
         self.world = WorldSim(catalog=catalog, cc_pos=Point2(30.5, 30.5), minerals=minerals)
         self.world.bootstrap(workers=workers)
-        # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
-        tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
-        if spawn and spawn in tpl.spawns:
-            _, layout = spawn, tpl.spawns[spawn]      # B1：loadout 显式选出生点布局
-        else:
-            _, layout = sorted(tpl.spawns.items())[0]
-        self.layer = instantiate_spawn(tpl, layout, self.world.cc_pos)
-        # I8：预设固定建造点名进 layer —— placement 的 exact.mark 可直接引用
-        # （蓝方主矿气井1…）。名字是全图命名空间，与装载哪份规划无关。
+        # 会话图层（PLAN-V2 批 2，ADR-0033）：默认规划裸名 + 全部规划命名空间键 +
+        # 预设固定点。默认规划的 id 记下来 —— 热切（swap_map_plan）只换默认份。
+        from tactical_map.merge import load_plan_templates, merged_layer
         from tactical_map.reserved import reserved_marks
-        self.layer.pos_marks.update(reserved_marks(catalog))
+
+        self._map_dir = map_plans_dir
+        self._map_default = map_plan
+        templates = load_plan_templates(map_plans_dir)
+        spawn_key = spawn or "bl"       # loadout 显式选分支；缺省 bl（merged_layer 内部兜底）
+        self._map_spawn = spawn_key
+        merged = merged_layer(templates, map_plan, spawn_key, self.world.cc_pos,
+                              reserved_marks=reserved_marks(catalog))
+        self.layer = merged.layer
+        self._map_default = merged.default_id   # 请求的默认不存在时回落出厂（如实记）
 
         self.sink = _Collect()
         self.ring = OpRing(maxlen=400)
@@ -194,7 +198,7 @@ class OfflineSession:
         self.producer = FrameProducer(
             catalog=catalog, engine=self.engine, runtime=self.runtime, keeper=self.keeper,
             ring=self.ring, planner=Planner(catalog), region_layer=self.layer,
-            manifest=self.manifest, assembly=self.assembly, spawn=spawn or "bl",
+            manifest=self.manifest, assembly=self.assembly, spawn=self._map_spawn,
             frame_source="live", enemy_race="protoss",
             projection_plan=[ProductionModuleInstance(
                 instance_id="m0", module_ref="basic_opening", version=1, params={})],
@@ -204,6 +208,8 @@ class OfflineSession:
         # 热切 V1（批 C）：swap_strategy() 只置 pending，帧边界（tick 开头）应用 ——
         # API 线程与 pump 线程不同步地改引擎字段才是真危险。
         self._swap_pending = None
+        # 默认地图热切（PLAN-V2 批 2）：同款 pending 语义
+        self._map_swap_pending: str | None = None
 
     def _clock(self) -> float:
         return self.world.t
@@ -230,6 +236,12 @@ class OfflineSession:
             self.frames.append(refreshed)
             self._statics = [refreshed if f["topic"] == "static/strategy" else f
                              for f in self._statics]
+        # 帧边界：应用挂起的默认地图热切（批 2）—— 重建合并图层 + 换四方引用 +
+        # 重发 static/map。显式命名空间引用不受影响（键不随默认换）。
+        if self._map_swap_pending is not None:
+            new_default = self._map_swap_pending
+            self._map_swap_pending = None
+            self._apply_map_swap(new_default)
         gs = self.world.game_state()
         # 会话协议要求 `game_time` 一直反映「最新一帧」：提案的 anchor/失效判断读它。
         # 必须在这里更新，而不是依赖 producer 的某个调用路径（proposals 可能没接上）。
@@ -359,6 +371,40 @@ class OfflineSession:
                                      if self.engine.snapshot()["active_step"] in manifest.steps
                                      else manifest.initial_step),
                 "accepted_seq": self.seq}
+
+    def swap_map_plan(self, map_plan_id: str) -> dict:
+        """默认地图热切（PLAN-V2 批 2）：挂起 pending，帧边界重建合并图层。
+
+        只换**默认份**（裸名/home 区槽位表）；`规划id/点位` 命名空间引用不动。
+        新默认必须是目录里存在的规划 id —— 换成不存在的等于偷偷回落出厂。
+        """
+        from tactical_map.merge import load_plan_templates
+
+        templates = load_plan_templates(self._map_dir)
+        if map_plan_id not in templates:
+            raise ValueError(f"地图规划 {map_plan_id!r} 不存在（现有：{sorted(templates)}）")
+        self._map_swap_pending = map_plan_id
+        return {"swap": "pending", "map_plan": map_plan_id, "accepted_seq": self.seq}
+
+    def _apply_map_swap(self, new_default: str) -> None:
+        """帧边界应用：重建合并图层 → 换四方引用 → 重发 static/map。"""
+        from tactical_map.merge import load_plan_templates, merged_layer
+        from tactical_map.reserved import reserved_marks
+
+        merged = merged_layer(load_plan_templates(self._map_dir), new_default,
+                              self._map_spawn, self.world.cc_pos,
+                              reserved_marks=reserved_marks(self.catalog))
+        self.layer = merged.layer
+        self._map_default = merged.default_id
+        self.engine._region_layer = self.layer    # noqa: SLF001 —— 四方持有者同步（同 _detect_spawn 语义）
+        self.keeper._region_layer = self.layer    # noqa: SLF001
+        self.runtime._region_layer = self.layer   # noqa: SLF001
+        self.producer.region_layer = self.layer
+        refreshed = next(f for f in self.producer.statics(self.world.game_state())
+                         if f["topic"] == "static/map")
+        self.frames.append(refreshed)
+        self._statics = [refreshed if f["topic"] == "static/map" else f
+                         for f in self._statics]
 
     def set_worker_target(self, task: str, count: int) -> dict:
         """采集配额 = **目标值**（维持 N 个，幂等；ADR-0030 D2），不是"再派 N 个"。"""

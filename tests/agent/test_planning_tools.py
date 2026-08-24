@@ -336,8 +336,9 @@ def obs(api: TestClient, tmp_path: Path) -> dict:
     from agent.tools import make_tools
     mp = tmp_path / "mp"
     mp.mkdir()
-    (mp / "layout-bl.yaml").write_text(
-        "id: layout-bl\ntitle_zh: 测试出厂布局\nspawn: bl\nbuild_slots: {}\n",
+    (mp / "layout.yaml").write_text(
+        "id: layout\ntitle_zh: 测试出厂布局\n"
+        "spawns:\n  bl: {build_slots: {}}\n  tr: {build_slots: {}}\n",
         encoding="utf-8")
     return {t.name: t for t in make_tools(_client_for(api), map_plans_dir=mp)}
 

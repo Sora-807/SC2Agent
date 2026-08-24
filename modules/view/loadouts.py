@@ -5,7 +5,7 @@
 ```yaml
 id: bio-tank-bl
 title_zh: 步坦开局（蓝方）
-map_plan: layout-bl      # → runtime/map-plans/<id>.yaml（缺省 = 出厂模板）
+map_plan: layout         # → runtime/map-plans/<id>.yaml（双分支；缺省 = 出厂模板）
 strategy: tank_push      # → runtime/strategies/<id>.yaml（缺省 = 内置默认）
 plan: bio-tank-v4        # → runtime/plans/<id>.yaml（缺省 = 不自动入队）
 spawn: bl                # 可选：地图规划里的出生点布局（缺省 = 排序第一个，即现状）

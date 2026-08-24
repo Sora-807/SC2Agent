@@ -42,7 +42,7 @@ from planner.build_order import ProductionModuleInstance  # noqa: E402
 from planner.planner import Planner  # noqa: E402
 from production.economy import EconomyKeeper, WorkerReservations  # noqa: E402
 from production.runtime import ProductionRuntime  # noqa: E402
-from tactical_map.base import instantiate_spawn, load_ladder_map, load_map_plan  # noqa: E402
+from tactical_map.base import load_ladder_map, pick_spawn_layout  # noqa: E402
 from view.port import OpRing, RecordingPort  # noqa: E402
 from view.producer import FrameProducer  # noqa: E402
 from view.proposals import parse_item  # noqa: E402
@@ -110,6 +110,7 @@ class Session:
     def __init__(self, *, driver: str, reader: _CommandReader,
                  cc: Point2, map_name: str = "LadderMap",
                  map_plan: str | None = None,
+                 map_plans_dir: Path | None = None,
                  strategy_file: str | None = None,
                  spawn: str | None = None,
                  control_path: Path | None = None) -> None:
@@ -129,21 +130,22 @@ class Session:
         #: 命令改经文件 —— 父进程 append 写，帧边界 rename→读→删（无损）。
         self._control_path = Path(control_path) if control_path else None
 
-        # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
-        tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
-        self._map_tpl = tpl                    # 出生点检测要用（就近选 bl/tr 分支）
-        if spawn and spawn in tpl.spawns:
-            _, layout = spawn, tpl.spawns[spawn]      # loadout 显式选出生点布局
-        else:
-            _, layout = sorted(tpl.spawns.items())[0]  # 缺省 = 排序第一个（现状）
-        # 真机的实际出生点首帧才知道：构造期这套 layer 是**临时假定**（排序第一 = bl），
-        # 第一帧用实测 CC 重建（2026-08-24 事故修：此前锚点写死左下，出生右上时
-        # 工人被派去左下采矿、槽位/地图层全错）。sim 世界就在 bl，无需检测。
-        self._spawn_detected = driver != "sc2"
-        self.layer = instantiate_spawn(tpl, layout, cc)
-        # I8：预设固定建造点名进 layer（与 OfflineSession 同一语义，见 api/session.py）
+        # 会话图层（PLAN-V2 批 2）：默认规划裸名 + 全部规划命名空间键 + 预设固定点。
+        # 真机的实际出生点首帧才知道：构造期这套 layer 是**临时假定**（bl 分支），
+        # 第一帧用实测 CC 重建（2026-08-24 事故修）。sim 世界就在 bl，无需检测。
+        from tactical_map.merge import load_plan_templates, merged_layer
         from tactical_map.reserved import reserved_marks
-        self.layer.pos_marks.update(reserved_marks(self.catalog))
+
+        self._map_dir = map_plans_dir
+        self._map_default_req = map_plan
+        self._map_spawn = spawn or "bl"
+        merged = merged_layer(load_plan_templates(map_plans_dir), map_plan,
+                              self._map_spawn, cc,
+                              reserved_marks=reserved_marks(self.catalog))
+        self.layer = merged.layer
+        self._map_default = merged.default_id
+        self._map_cc = cc                     # 出生点检测后更新为实测 CC
+        self._spawn_detected = driver != "sc2"
 
         clock = lambda: self.game_time  # noqa: E731
         self.reservations = WorkerReservations()
@@ -251,12 +253,13 @@ class Session:
     # ---- 出生点检测（2026-08-24 事故修：真机随机 bl/tr，构造期不知道）----
 
     def _detect_spawn(self, gs: GameState) -> str | None:
-        """实测我方 CC 位置 → 就近选模板分支 → 重建 layer 并同步给全部持有者。
+        """实测我方 CC 位置 → 就近选出生分支 → 重建**合并图层**并同步给全部持有者。
 
         CC 找不到（异常局面）= 保持临时假定的 layer，meta 不带 spawn 键（如实）。
         """
         from game import Owner
-        from tactical_map.base import instantiate_spawn, pick_spawn_layout
+        from tactical_map.base import load_ladder_map, pick_spawn_layout
+        from tactical_map.merge import load_plan_templates, merged_layer
         from tactical_map.reserved import reserved_marks
 
         name = self.catalog.burnysc2_name_for("terran/commandcenter")
@@ -264,16 +267,44 @@ class Session:
                    if u.owner is Owner.SELF and u.type_name == name), None)
         if cc is None:
             return None
-        key, layout = pick_spawn_layout(self._map_tpl, cc)
-        self.layer = instantiate_spawn(self._map_tpl, layout, cc)
-        self.layer.pos_marks.update(reserved_marks(self.catalog))
-        # 持有 layer 的四方全部换到实测层（引擎动作解析/经济锚点/摆放/静态面）
+        templates = load_plan_templates(self._map_dir)
+        default_tpl = templates.get(self._map_default_req or "") or load_ladder_map()
+        key, _layout = pick_spawn_layout(default_tpl, cc)
+        merged = merged_layer(templates, self._map_default_req, key, cc,
+                              reserved_marks=reserved_marks(self.catalog))
+        self._apply_layer(merged)
+        self._map_spawn = key
+        self._map_cc = cc
+        return key
+
+    def _apply_layer(self, merged) -> None:
+        """换合并图层：四方持有者同步 + 生产面 spawn 跟随（与 _detect_spawn 同语义）。"""
+        self.layer = merged.layer
+        self._map_default = merged.default_id
+        # 持有 layer 的四方全部换到新层（引擎动作解析/经济锚点/摆放/静态面）
         self.engine._region_layer = self.layer
         self.keeper._region_layer = self.layer
         self.runtime._region_layer = self.layer
         self.producer.region_layer = self.layer
-        self.producer.spawn = key
-        return key
+        self.producer.spawn = merged.spawn_key
+
+    def _swap_map_plan(self, plan_id: str) -> None:
+        """默认地图热切（批 2）：重读目录（文件可能改过）→ 重建合并图层 →
+        重发 static/map。新默认不存在在这里抛 → _apply 兜底变 error 控制行，
+        会话继续跑旧默认。显式命名空间引用不受影响（键不随默认换）。"""
+        from tactical_map.merge import load_plan_templates, merged_layer
+        from tactical_map.reserved import reserved_marks
+
+        templates = load_plan_templates(self._map_dir)
+        if plan_id not in templates:
+            raise ValueError(f"地图规划 {plan_id!r} 不存在（现有：{sorted(templates)}）")
+        merged = merged_layer(templates, plan_id, self._map_spawn, self._map_cc,
+                              reserved_marks=reserved_marks(self.catalog))
+        self._apply_layer(merged)
+        if self._last_gs is not None:
+            for frame in self.producer.statics(self._last_gs):
+                if frame["topic"] == "static/map":
+                    _emit(frame)     # 事件式静态面：热切后补发新图
 
     # ---- 命令 ----
 
@@ -301,6 +332,10 @@ class Session:
             elif op == "swap":
                 # 热切 V1（批 C）：整份策略文件切换，帧边界应用（本方法就在帧边界被调）
                 self._swap_strategy(str(cmd["strategy"]))
+                _emit({"_": "ack", "op": op, "seq": self.seq})
+            elif op == "map":
+                # 默认地图热切（批 2）：帧边界重建合并图层 + 重发 static/map
+                self._swap_map_plan(str(cmd["plan"]))
                 _emit({"_": "ack", "op": op, "seq": self.seq})
             elif op == "speed":
                 # 仿真模式变速（倍数即时生效；sc2 落 bot 配速，sim 缩放节拍睡眠）
@@ -506,7 +541,9 @@ def main() -> int:
     ap.add_argument("--strategy-file", default=None,
                     help="策略文件（strategy+assembly 两段 YAML）；缺省 = 内置常量")
     ap.add_argument("--map-plan", default=None,
-                    help="地图规划文件路径（会话装配用它；缺省 = 手写出厂模板）")
+                    help="默认地图规划 id（合并图层的裸名份；缺省 = 手写出厂模板）")
+    ap.add_argument("--map-plans-dir", default=None,
+                    help="地图规划目录（会话图层 = 全部规划合并；缺省 = 只用默认份）")
     ap.add_argument("--spawn", default=None, choices=("bl", "tr"),
                     help="出生点布局（地图规划 spawns 的键；缺省 = 排序第一个）")
     ap.add_argument("--control-file", default=None,
@@ -526,6 +563,7 @@ def main() -> int:
     try:
         session = Session(driver=args.driver, reader=reader, cc=Point2(30.5, 30.5),
                           map_name=args.map, map_plan=args.map_plan,
+                          map_plans_dir=Path(args.map_plans_dir) if args.map_plans_dir else None,
                           strategy_file=args.strategy_file,
                           spawn=args.spawn,
                           control_path=Path(args.control_file) if args.control_file else None)

@@ -214,8 +214,8 @@ class MapsArea(ReadOnlyArea):
                 pass
             if plan_id and (self._root / f"{plan_id}.yaml").is_file():
                 return self._root / f"{plan_id}.yaml", f"live → 会话规划 {plan_id}"
-            return self._root / "layout-bl.yaml", \
-                "live 无会话或未指名地图规划 → 出厂 bl 布局（tr 侧用 maps/layout-tr/）"
+            return self._root / "layout.yaml", \
+                "live 无会话或未指名地图规划 → 出厂校准布局（双分支，默认显示 bl 侧）"
         path = self._root / f"{src}.yaml"
         if not path.is_file():
             raise WorkspaceError(
@@ -241,10 +241,18 @@ class MapsArea(ReadOnlyArea):
             from game.catalog import load_all
 
             self._catalog = load_all()
+        # 双分支规划（批 2）：文件路径没有分支位 —— 默认渲染 bl 侧（说明行标注）
+        spawns = doc.get("spawns") or {}
+        if spawns:
+            bl = spawns.get("bl") or {}
+            slots = bl.get("build_slots") or {}
+            note = (note + "；" if note else "") + "双分支规划默认显示 bl 侧"
+        else:
+            slots = doc.get("build_slots") or {}
         try:
             text = render_region(
                 (int(m["x1"]), int(m["y1"]), int(m["x2"]), int(m["y2"])),
-                doc.get("build_slots") or {}, self._catalog,
+                slots, self._catalog,
                 step=int(m["step"] or 1), title=m["src"])
         except ValueError as exc:
             raise WorkspaceError(str(exc)) from None
@@ -269,7 +277,9 @@ class MapsArea(ReadOnlyArea):
         out += [f"| `{r['id']}` | {r['title_zh']}（spawn {r['spawn']}） | {r['slots']} |"
                 for r in rows]
         out += ["", "示例：`read maps/live/38_27_52_41_s2.md` —— 主矿补给站方阵 + 工厂区。",
-                "`default-*` 是空白预设（无槽位，只有地形/预设点）；出厂校准布局在 `layout-bl/tr`。"]
+                "`default` 是空白预设（无槽位，只有地形/预设点）；`layout` 是出厂校准布局。",
+                "批 2 起规划是双分支（bl+tr 一份文件）；文件渲染默认取 bl 侧 —— "
+                "对局的实时图层用 observe（按实际出生端实例化）。"]
         return "\n".join(out) + "\n"
 
 

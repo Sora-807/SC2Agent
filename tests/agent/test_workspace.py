@@ -66,7 +66,7 @@ def test_ls_lists_plans_map_plans_and_scratch(ws: ApiWorkspace):
     ws.write_text("memory.md", "# 记忆\n偏好：速二矿\n")
     paths = ws.visible_paths()
     assert "plans/default.yaml" in paths
-    assert "map-plans/default-bl.yaml" in paths
+    assert "map-plans/default.yaml" in paths and "map-plans/layout.yaml" in paths
     assert "memory.md" in paths
 
 
@@ -146,33 +146,42 @@ def _dump(doc: dict) -> str:
 
 
 def test_map_plan_locked_preset_refused_but_readable(ws: ApiWorkspace, api: TestClient):
-    text = ws.read_text("map-plans/layout-bl.yaml")
-    assert "build_slots" in text and "D16" in text
+    text = ws.read_text("map-plans/layout.yaml")
+    assert "build_slots" in text and "D16" in text, "双分支 doc 的分支内仍能看到槽位"
+    assert "spawns:" in text and "bl:" in text and "tr:" in text
     with pytest.raises(WorkspaceError) as ei:
-        ws.edit_text("map-plans/layout-bl.yaml", "spawn: bl", "spawn: tr")
+        ws.edit_text("map-plans/layout.yaml",
+                     "title_zh: 出厂校准布局（蓝红双分支）",
+                     "title_zh: 改预设")
     assert "锁定" in str(ei.value)
 
 
 def test_map_plan_full_write_roundtrip_and_change(ws: ApiWorkspace, api: TestClient):
-    """复制 layout-bl 为副本再整体重写：预设存量槽位不追溯（diff 校验），改动落盘。"""
+    """复制 layout 为副本再整体重写（双分支 doc）：改动只落 bl 分支，tr 不动。"""
     import yaml
-    doc = yaml.safe_load(ws.read_text("map-plans/layout-bl.yaml"))
+    doc = yaml.safe_load(ws.read_text("map-plans/layout.yaml"))
     doc = {**doc, "id": "agent-mw1", "title_zh": "文件改出来的布局"}
-    api.post("/api/map-plans", json={"id": "agent-mw1", "copy_from": "layout-bl"})
+    api.post("/api/map-plans", json={"id": "agent-mw1", "copy_from": "layout"})
     ws.read_text("map-plans/agent-mw1.yaml")
     # 加一个新槽位（开放空间坐标，来自 barracks 定位修复扫描的安全区）
-    doc = {**doc, "build_slots": {**(doc.get("build_slots") or {}),
-                                  "R7": {"pos": [96.5, 80.5], "size": 3,
-                                               "kind": "production"}}}
+    bl = doc["spawns"]["bl"]
+    doc = {**doc, "spawns": {**doc["spawns"],
+                             "bl": {**bl, "build_slots": {**(bl.get("build_slots") or {}),
+                                                          "R7": {"pos": [96.5, 80.5], "size": 3,
+                                                                 "kind": "production"}}}}}
     ws.write_text("map-plans/agent-mw1.yaml", _dump(doc))
-    slots = api.get("/api/map-plans/agent-mw1/doc").json()["build_slots"]
-    assert "R7" in slots
+    back = api.get("/api/map-plans/agent-mw1/doc").json()
+    assert "R7" in back["spawns"]["bl"]["build_slots"]
+    assert "R7" not in back["spawns"]["tr"]["build_slots"], "只动写到的分支"
     assert any(r.area == "map_plan" for r in ws._changes.drain())
 
 
 def test_map_plan_new_file_via_write_copies_blank(ws: ApiWorkspace, api: TestClient):
-    ws.write_text("map-plans/agent-mw2.yaml",
-                  "id: agent-mw2\ntitle_zh: 文件新建的布局\nbuild_slots: {}\npos_marks: {}\n")
+    ws.write_text("map-plans/agent-mw2.yaml", (
+        "id: agent-mw2\ntitle_zh: 文件新建的布局\n"
+        "spawns:\n"
+        "  bl: {build_slots: {}, pos_marks: {}}\n"
+        "  tr: {build_slots: {}, pos_marks: {}}\n"))
     rows = {r["id"]: r for r in api.get("/api/map-plans").json()}
     assert "agent-mw2" in rows
 
@@ -180,13 +189,15 @@ def test_map_plan_new_file_via_write_copies_blank(ws: ApiWorkspace, api: TestCli
 def test_map_plan_overlap_refused_on_full_write(ws: ApiWorkspace, api: TestClient):
     """新槽位压到既有槽位 → 全量写被拒，理由可读（改掉再试是合法的）。"""
     import yaml
-    api.post("/api/map-plans", json={"id": "agent-mw3", "copy_from": "layout-bl"})
+    api.post("/api/map-plans", json={"id": "agent-mw3", "copy_from": "layout"})
     doc = yaml.safe_load(ws.read_text("map-plans/agent-mw3.yaml"))
-    anchor = sorted((doc.get("build_slots") or {}).items())[0]
-    doc = {**doc, "build_slots": {**(doc.get("build_slots") or {}),
-                                  "D30": {"pos": anchor[1]["pos"],
-                                               "size": anchor[1].get("size") or 2,
-                                               "kind": "supply"}}}
+    slots = doc["spawns"]["bl"]["build_slots"]
+    anchor = sorted(slots.items())[0]
+    doc = {**doc, "spawns": {**doc["spawns"],
+                             "bl": {"build_slots": {**slots,
+                                                    "D30": {"pos": anchor[1]["pos"],
+                                                            "size": anchor[1].get("size") or 2,
+                                                            "kind": "supply"}}}}}
     ws.read_text("map-plans/agent-mw3.yaml")
     with pytest.raises(WorkspaceError) as ei:
         ws.write_text("map-plans/agent-mw3.yaml", _dump(doc))
@@ -220,7 +231,7 @@ def test_grep_across_plans(ws: ApiWorkspace):
 
 def test_glob_finds_yaml_by_area(ws: ApiWorkspace):
     assert "plans/default.yaml" in ws.glob("*.yaml", "plans/")
-    assert "map-plans/default-bl.yaml" in ws.glob("*.yaml", "map-plans/")
+    assert "map-plans/default.yaml" in ws.glob("*.yaml", "map-plans/")
 
 
 # ---------------- 策略区（二十七轮「开放写策略，免审」） ----------------

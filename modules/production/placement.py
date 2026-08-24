@@ -32,7 +32,10 @@ def resolve_placement(
         return (None, None, "build 缺 region_layer（placement 解析需要区域层）")
     placement = head.placement
     if placement is None:
-        return (None, None, "build 缺 placement（ADR-0027：placement 为 null 的 build 不通过）")
+        # ADR-0027 修订（PLAN-V2 批 2）：placement null = **自动放置** ——
+        # 默认图层（home 区 = 默认规划的裸名槽位表）按声明序找空位；
+        # 无位可放 = placement_collision skip（批 1 语义），不是作者错误。
+        placement = PlacementInRegion("home")
     if isinstance(placement, PlacementExact):
         if placement.mark in attempted:
             return (None, None, None)  # 唯一候选已失败

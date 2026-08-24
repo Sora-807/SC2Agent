@@ -1,10 +1,11 @@
 /**
- * 地图规划客户端（P2 切片 1）—— 默认地图锁定 + 复制新建 + 出生点读取。
+ * 地图规划客户端（P2 切片 1 → PLAN-V2 批 2 双分支）—— 默认地图锁定 + 复制新建。
  *
- * 一个地图规划一份 YAML（runtime/map-plans/，base_layout 同构）。离线域直改文件
- * （用户拍板不走审批）；保存 = 草稿 hunks 应用到指定出生点分支，校验与 map_plan
- * 提案同一套（重叠/重名 400 带结构化理由）。payload 是 static/map 形状 ——
- * 画布直接渲染，terrain 由前端叠加夹具地形。
+ * 一个地图规划一份 YAML（runtime/map-plans/，base_layout 同构；批 2 起**一份 =
+ * bl+tr 双分支**，单分支旧格式兼容）。离线域直改文件（用户拍板不走审批）；
+ * 保存 = 草稿 hunks 应用到指定分支，校验与 map_plan 提案同一套（重叠/重名 400
+ * 带结构化理由）。payload 是 static/map 形状 —— 画布直接渲染，terrain 由前端
+ * 叠加夹具地形。
  */
 import { API_BASE } from "../store/frames";
 import type { MapStatic } from "../contract";
@@ -13,8 +14,10 @@ export interface MapPlanMeta {
   id: string;
   title_zh: string;
   map_name: string;
-  /** 规划属于哪个出生点（规划 = 某地图 × 某方的一种布局，用户拍板的模型） */
+  /** bl | tr（单分支旧格式）| dual（批 2 双分支：蓝红两页签看一份规划） */
   spawn: string;
+  /** 该规划实际有哪些分支（dual 才有；前端页签按这个画） */
+  spawns?: string[];
   locked: boolean;
   slots: number;
   updated_at: number;
@@ -56,17 +59,18 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 
 export const listMapPlans = (): Promise<MapPlanMeta[]> => call("/api/map-plans");
 
-export const getMapPlanPayload = (id: string): Promise<MapStatic> =>
-  call(`/api/map-plans/${id}`);
+/** 指定分支的 payload（双分支规划必给 spawn = 编辑器蓝/红页签；单分支忽略） */
+export const getMapPlanPayload = (id: string, spawn?: string): Promise<MapStatic> =>
+  call(`/api/map-plans/${id}${spawn ? `?spawn=${spawn}` : ""}`);
 
 export const createMapPlan = (body: {
   id?: string; title_zh?: string; copy_from?: string;
 }): Promise<MapPlanMeta> => call("/api/map-plans", jsonInit("POST", body));
 
 export const saveMapPlan = (
-  id: string, hunks: MapPlanSaveHunk[],
+  id: string, hunks: MapPlanSaveHunk[], spawn?: string,
 ): Promise<{ ok: boolean }> =>
-  call(`/api/map-plans/${id}`, jsonInit("PUT", { hunks }));
+  call(`/api/map-plans/${id}`, jsonInit("PUT", { hunks, spawn }));
 
 export const removeMapPlan = (id: string): Promise<{ ok: boolean }> =>
   call(`/api/map-plans/${id}`, { method: "DELETE" });

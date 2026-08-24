@@ -345,17 +345,21 @@ def test_research_dropped_with_reason():
     assert len(rt.dropped) == 1 and "upgrade" in rt.dropped[0][1]
 
 
-def test_build_missing_placement_dropped_not_blocking():
-    """ADR-0027 反例：缺 placement 的 build 丢弃并继续，不卡死整队。"""
+def test_build_missing_placement_now_auto_places():
+    """ADR-0027 修订（批 2）：缺 placement 的 build = 自动放置（默认图层按序空位），
+    不再是作者错误丢弃；图层无位才是 skip(placement_collision)。"""
     port = _Port()
     rt = _runtime(port)
     rt.submit_queue("open", [
         QueueItem(op="build", type="terran/supplydepot"),
         QueueItem(op="train", type="terran/scv"),
     ])
-    rt.on_game_state(_gs([_u(1, "COMMANDCENTER")], minerals=200))
-    assert any("placement" in r for _, r in rt.dropped)
-    assert len(port.submitted) == 1 and port.submitted[0].action == "train"  # 后续项继续
+    # CC 是 5×5：放 (7.5,7.5)（tl=5..9），别盖住 s1(2..3)/s2(5..6,y2..3) 补给槽
+    gs = _gs([_u(1, "COMMANDCENTER", x=7.5, y=7.5), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs)
+    assert rt.dropped == [], "null placement 不再 dropped（自动放置）"
+    assert any(o.action == "build" for o in port.submitted), "按 home 区槽位自动发出建造"
+    assert rt.queue("open").items[0].status == "in_progress"
 
 
 def test_build_region_slot_auto_pick_and_blocked_when_full():

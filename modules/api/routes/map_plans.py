@@ -1,7 +1,7 @@
 """地图规划文件（P2 切片 1）：默认地图锁定 + 复制新建 + 出生点读取。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 router = APIRouter()
 
@@ -12,10 +12,13 @@ def map_plans_list(request: Request) -> list[dict]:
 
 
 @router.get("/api/map-plans/{pid}")
-def map_plans_payload(pid: str, request: Request) -> dict:
-    """该规划的 static/map 形状 payload（规划自带地图+出生点，画布直接渲染）。"""
+def map_plans_payload(pid: str, request: Request, spawn: str | None = Query(None)) -> dict:
+    """该规划的 static/map 形状 payload（画布直接渲染）。
+
+    `spawn`：双分支规划选哪一侧（编辑器蓝/红页签；缺省 bl）；单分支旧格式忽略。
+    """
     try:
-        return request.app.state.map_plans.payload(pid)
+        return request.app.state.map_plans.payload(pid, spawn=spawn)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
     except ValueError as exc:
@@ -55,9 +58,10 @@ def map_plans_create(body: dict, request: Request) -> dict:
 
 @router.put("/api/map-plans/{pid}")
 def map_plans_save(pid: str, body: dict, request: Request) -> dict:
-    """离线保存：hunks 应用到该规划（与 map_plan 提案同一套校验，不走审批）。"""
+    """离线保存：hunks 应用到该规划的指定分支（与 map_plan 提案同一套校验，不走审批）。"""
     try:
-        out = request.app.state.map_plans.save(pid, list(body.get("hunks") or []))
+        out = request.app.state.map_plans.save(pid, list(body.get("hunks") or []),
+                                               spawn=body.get("spawn"))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"没有地图规划 {pid!r}") from None
     except ValueError as exc:

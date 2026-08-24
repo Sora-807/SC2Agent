@@ -106,7 +106,7 @@ export const MODE_SOURCES: Record<Mode, SourceKind[]> = {
 
 /**
  * 会话装配的地图规划 id 兜底（2026-08-21 实时驾驶整改）：
- * 旧硬编码默认值 "default" 已随预设改名（default-bl/tr、layout-bl/tr）退役 ——
+ * 旧硬编码默认值与单分支预设（default-bl/tr、layout-bl/tr）已随批 2 双分支退役 ——
  * 发一个不存在的 id 会被后端 400，而那个 400 曾被 UI 吞掉 = 「点启动真机没反应」。
  * 规则：当前值仍在清单里就保持；否则落清单第一个；清单空 → null（不带参数）。
  */
