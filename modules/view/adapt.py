@@ -23,6 +23,7 @@ from view.schema import (
     BranchHitView,
     CompositionView,
     DroppedView,
+    EnemyClusterView,
     TrainingView,
     EconomyFrame,
     EconomyNodeView,

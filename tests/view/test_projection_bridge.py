@@ -220,3 +220,29 @@ def test_world_inflight_completes_in_empty_queue_projection():
     done = [e for e in frame.events if e.kind == "completed"]
     assert any(e.stable_id == "terran/supplydepot" for e in done), \
         "在建的补给站应在空队列投影里落成"
+
+
+def test_world_frame_with_enemies_renders_clusters():
+    """批 6 崩溃回归（真机启动即挂）：adapt 用了 EnemyClusterView 却没导入——
+    带敌方单位的 world_frame 必须能产帧且聚类非空。"""
+    from game import GameState, Grid, Owner, Point2, Unit
+    from game.catalog import load_all
+    from view.adapt import world_frame
+
+    CAT = load_all()
+    g = Grid(1, 1, [[0]])
+    gs = GameState(seq=1, game_time=5.0, minerals=100, vespene=0,
+                   supply_used=12, supply_cap=13,
+                   units=[Unit(tag=1, type_name="COMMANDCENTER",
+                               position=Point2(30, 30), owner=Owner.SELF,
+                               hp=1, hp_max=1, shield=0, energy=0, build_progress=1.0),
+                          Unit(tag=2, type_name="MARINE",
+                               position=Point2(31, 31), owner=Owner.ENEMY,
+                               hp=1, hp_max=1, shield=0, energy=0, build_progress=1.0),
+                          Unit(tag=3, type_name="MARINE",
+                               position=Point2(32, 31), owner=Owner.ENEMY,
+                               hp=1, hp_max=1, shield=0, energy=0, build_progress=1.0)],
+                   map_size=(176, 160), creep=g, visibility=g, resources=[])
+    f = world_frame(gs, CAT)
+    assert f.enemy_clusters and f.enemy_clusters[0].count == 2
+    assert f.enemy_clusters[0].by_stable_id == {"terran/marine": 2}
