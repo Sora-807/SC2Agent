@@ -230,6 +230,12 @@ function MapPlanning(props: { apiOk: boolean; initialId?: string | null }) {
           slotsOverride={proj.slots}
           onBlankClick={st.placeMode ? place : () => st.patch({ selectedName: null })}
           draggableSlots={st.placeMode === null ? proj.slots : null}
+          validateSlotDrop={(pos, size, name) =>
+            previewPlacement({
+              mode: "slot", pos, size,
+              slots: proj.slots.filter((x) => x.name !== name),  // 被拖槽自身不算重叠
+              placeableAt, reserved,
+            }).ok}
           onSlotDrop={dropSlot}
           ghost={preview}
           onHover={setHoverPos}

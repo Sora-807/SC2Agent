@@ -89,6 +89,9 @@ export function MapCanvas(props: {
   onBlankClick?: (worldPos: [number, number]) => void;
   /** F14 2b：可拖动的槽位（编辑器投影）。命中时拖动槽位而不是平移画布 */
   draggableSlots?: SlotView[] | null;
+  /** 槽位拖动 ghost 的合法性（true=绿/false=红，与 F16 放置预览同色）。
+   *  判定归页侧（previewPlacement 单点）；画布每帧问一次（拖动中才调）。 */
+  validateSlotDrop?: (pos: [number, number], size: number, name: string) => boolean;
   /** F14 2b：槽位拖到新位置（世界坐标，未吸附）松手 */
   onSlotDrop?: (name: string, worldPos: [number, number]) => void;
   /** F16：放置预览（吸附后的锚点 + 合法性着色）；画布只画，吸附/校验在页侧 */
@@ -289,6 +292,7 @@ export function MapCanvas(props: {
               drag.current.mode = "slot";
               drag.current.slotName = name;
               slotGhost.current = { name, pos: [wx, wy] };
+              dirty.current += 1;   // ghost 起笔就要画（原位转虚线）
             }
           }
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -322,7 +326,15 @@ export function MapCanvas(props: {
           if (d.mode === "slot") {
             const r = e.currentTarget.getBoundingClientRect();
             const [wx, wy] = screenToWorld(vp!, e.clientX - r.left, e.clientY - r.top);
-            slotGhost.current = { name: d.slotName!, pos: [wx, wy] };
+            // 吸附格点（footprint 整数格，与落点 previewPlacement 同规则）+ bump 重绘：
+            // ghost 是 ref 直改，绘制循环空转跳过（painted===dirty）不重画就永远冻在起点
+            const meta = (props.draggableSlots ?? []).find((x) => x.name === d.slotName);
+            const gs = meta?.size ?? 2;
+            slotGhost.current = {
+              name: d.slotName!,
+              pos: [Math.round(wx - gs / 2) + gs / 2, Math.round(wy - gs / 2) + gs / 2],
+            };
+            dirty.current += 1;
             return;   // 槽位拖动不吃 pan
           }
           // **函数式**更新：React 18 自动批处理下，同一批里的多个 pointermove 若都读
@@ -464,6 +476,7 @@ function paint(
 ): void {
   const { map, world, production, economy } = props;
   const alpha = motion.alpha;
+  const ghostSlotName = motion.ghostSlotName;
   const names = shortNameMap(props.catalog);
 
   // 底：terrain 为 null 时用纯色 —— 后端 B4 之前不伪造地形（不静默）
@@ -509,6 +522,17 @@ function paint(
       const color = slotColor(s.kind);
       const selected = props.selectedName === s.name;
       if (planning) {
+        // 拖动中的原位置：虚线空心（看得出"从哪拖出来的"；实体跟着鼠标走）
+        if (ghostSlotName === s.name) {
+          ctx.strokeStyle = color;
+          ctx.globalAlpha = 0.5;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 3]);
+          ctx.strokeRect(sx, sy, side, side);
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+          continue;
+        }
         // 实线框 + 名字 + 选中高亮：编辑时必须看得见放在哪、叫什么
         ctx.globalAlpha = selected ? 1 : ALPHA_BUDGET.slotsActive;
         if (selected) {
@@ -773,14 +797,23 @@ function paint(
   if (ghost) {
     const meta = (props.draggableSlots ?? []).find((s) => s.name === ghost.name);
     const size = meta?.size ?? 2;
+    // 与 F16 放置预览同款效果（用户拍板「要有放置时一样的感觉」）：
+    // 绿=可放 / 红=非法（重叠/压预留/地形），淡填充 + 虚线框 + 名字
+    const ok = props.validateSlotDrop
+      ? props.validateSlotDrop(ghost.pos, size, ghost.name)
+      : true;
+    const color = ok ? "#34d399" : "#f87171";
     const tl = slotTl(ghost.pos, size);
     const [sx, sy] = worldToScreen(vp, tl[0], tl[1] + size);
-    ctx.strokeStyle = "rgba(125,211,252,0.9)";
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([4, 2]);
-    ctx.strokeRect(sx, sy, size * vp.scale, size * vp.scale);
+    const side = size * vp.scale;
+    ctx.fillStyle = rgba(color, 0.18);
+    ctx.fillRect(sx, sy, side, side);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash(SHAPE.slot.dash);
+    ctx.strokeRect(sx, sy, side, side);
     ctx.setLineDash([]);
-    ctx.fillStyle = "rgba(125,211,252,0.9)";
+    ctx.fillStyle = color;
     ctx.font = fontCss("note");
     ctx.fillText(ghost.name, sx + 2, sy + (vp.scale * size) / 2);
   }
