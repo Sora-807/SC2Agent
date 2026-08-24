@@ -265,6 +265,7 @@ export function MapCanvas(props: {
         prevWorld: prev.current?.world ?? null,
         alpha,
         slotGhost: slotGhost.current,
+        ghostSlotName: slotGhost.current?.name ?? null,
       });
     };
     raf = requestAnimationFrame(draw);
@@ -346,7 +347,10 @@ export function MapCanvas(props: {
             if (ghost) props.onSlotDrop?.(d.slotName, ghost.pos);
             return;
           }
-          if (!vp || !props.world) return;
+          // 守卫只看视口（规划页 world=null：放置/取消选中必须在无 world 帧时
+          // 也能触发——旧守卫 `!props.world` 直接 return 把 onBlankClick 全吞了，
+          // 症状=悬浮预览绿、点击无反应、拖拽正常）
+          if (!vp) return;
           // 超过容差 = 这是一次平移，不是点选（否则拖完图松手会误选/误清选中）
           if (d.travel > CLICK_SLOP) return;
           const r = e.currentTarget.getBoundingClientRect();
@@ -366,7 +370,8 @@ export function MapCanvas(props: {
               return;
             }
           }
-          const hit = nearestUnit(props.world, wx, wy, 12 / vp.scale);
+          const hit = props.world
+            ? nearestUnit(props.world, wx, wy, 12 / vp.scale) : null;
           props.onSelect(hit === null ? null : { kind: "unit", tag: hit });
           if (hit === null) props.onBlankClick?.([wx, wy]);
         }}
@@ -432,8 +437,9 @@ interface Motion {
   prevWorld: WorldFrame | null;
   /** 0..1，1 = 完全用当帧坐标 */
   alpha: number;
-  /** 槽位拖动 ghost（F14 2b；null = 没有在拖） */
+  /** 槽位拖动 ghost（F14 2b；null = 没有在拖）；ghostSlotName = 被拖槽名（原位画虚线用） */
   slotGhost: { name: string; pos: [number, number] } | null;
+  ghostSlotName: string | null;
 }
 
 /** stable_id → 短名（catalog 是 zh 文案唯一真相源，红线 C4/B13）；unknown/* 无条目 */

@@ -136,6 +136,21 @@ export function QueueSidebar() {
           {st.busy ? "试算中…" : "试算"}
         </button>
         {st.msg && <div className="mt-1 text-label text-[color:var(--warn-fg)]">{st.msg}</div>}
+        {st.conflict && (
+          <div className="mt-1.5 rounded border border-l2 bg-inset p-1.5">
+            <div className="text-label text-[color:var(--err-fg)]">
+              文件在你编辑期间被改过（通常是 agent）—— 保存会覆盖对方的改动，二选一：
+            </div>
+            <div className="mt-1.5 flex gap-1.5">
+              <button className="btn btn-warn flex-1 justify-center"
+                      title="以我的草稿为准，全量覆盖文件"
+                      onClick={() => void st.resolveConflict(true)}>用我的覆盖</button>
+              <button className="btn btn-ghost flex-1 justify-center"
+                      title="丢弃我的草稿，重新加载文件现行内容"
+                      onClick={() => void st.resolveConflict(false)}>采用对方的</button>
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* 前瞻警报：与实时风险面板同一数据模型（后端 AlertView）+ 同一渲染组件。

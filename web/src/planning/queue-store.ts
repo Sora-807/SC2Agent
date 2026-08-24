@@ -25,6 +25,10 @@ interface QueueStore {
   horizon: number;
   /** 试算（真 planner 干跑，不需要会话）—— 草稿板 + 已保存对照板，同一组件 */
   sim: PlanSimResult | null;
+  /** 打开时的文件指纹（updated_at）—— 保存前对账，防 agent 并发改写被静默覆盖 */
+  baseUpdatedAt: number | null;
+  /** 冲突态：文件在我编辑期间被别人（通常是 agent）改过 —— 二选一未决 */
+  conflict: { theirUpdatedAt: number } | null;
   baseSim: PlanSimResult | null;
   /** 对照板默认收起（用户拍板：平时只看草稿，不占横屏） */
   showBase: boolean;
@@ -36,6 +40,8 @@ interface QueueStore {
   refresh(): Promise<PlanMeta[]>;
   open(id: string): Promise<void>;
   save(): Promise<void>;
+  /** 冲突二选一：用我的覆盖（跳过对账强存）/ 采用对方的（重开丢弃草稿） */
+  resolveConflict(mine: boolean): Promise<void>;
   create(copyFrom: string | null): Promise<void>;
   /** I12-B3：从参考模块（内置战术库）落地成新规划 —— 模板是唯一真相源 */
   createFromModule(moduleId: string): Promise<void>;
@@ -63,6 +69,8 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   newName: "",
   horizon: 300,
   sim: null,
+  baseUpdatedAt: null,
+  conflict: null,
   baseSim: null,
   showBase: false,
   refPlans: null,
@@ -115,6 +123,8 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
     const p = await getPlan(id);
     set({
       plan: p,
+      baseUpdatedAt: p.updated_at,
+      conflict: null,
       title: p.title_zh,
       items: draftFromJson(p.queue),
       dirty: false,
@@ -130,6 +140,17 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
   async save() {
     const st = get();
     if (!st.plan || st.plan.locked) return;
+    // 并发对账（保存=全量替换，会静默抹掉 agent 的并发改动）：文件指纹变了 → 二选一
+    try {
+      const cur = await getPlan(st.plan.id);
+      if (st.baseUpdatedAt !== null && cur.updated_at !== st.baseUpdatedAt) {
+        set({ conflict: { theirUpdatedAt: cur.updated_at },
+              msg: null });
+        return;
+      }
+    } catch {
+      /* 对账拿不到就照存（离线/后端闪断不该挡保存） */
+    }
     try {
       const p = await savePlan(st.plan.id, {
         title_zh: st.title || st.plan.title_zh, map: st.plan.map, spawn: st.plan.spawn,
@@ -140,6 +161,8 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
         title: p.title_zh,
         dirty: false,
         msg: "已保存 " + p.id,
+        baseUpdatedAt: p.updated_at,
+        conflict: null,
         baseSim: p.queue.length > 0
           ? await simulatePlan(p.queue, { horizon: st.horizon, planId: p.id }).catch(() => null)
           : null,
@@ -147,6 +170,17 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
       await get().refresh();
     } catch (err) {
       set({ msg: "保存失败：" + (err as Error).message });
+    }
+  },
+
+  async resolveConflict(mine) {
+    const st = get();
+    if (!st.conflict || !st.plan) return;
+    if (mine) {
+      set({ baseUpdatedAt: st.conflict.theirUpdatedAt, conflict: null });
+      await get().save();   // 指纹对齐到对方版本 → 对账通过 → 覆盖生效
+    } else {
+      await get().open(st.plan.id);   // 采用对方的：重开即丢草稿（dirty 清零）
     }
   },
 
