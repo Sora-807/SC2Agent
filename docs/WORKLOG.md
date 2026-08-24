@@ -302,6 +302,32 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.65 五十八轮：仿真放置近似模型（批 2 漏账补上，用户拍板口径，2026-08-24）
+
+用户问出「规划和地图绑定怎么设计的、仿真要不要绑」——核查发现 PLAN-V2 批 2
+落点写了「仿真近似归批 3」但批 3 清单里丢了，**仿真一直是放置盲**（干跑永远
+乐观，live 会 skip 的规划干跑全绿）。用户拍板口径：**引用可选、报错不阻断
+仿真、可一键关**。落地：
+
+- **planner/slots_model.SlotPool**（新）：图层 home 区槽位表近似——（类别,
+  尺寸）过滤按声明序消耗（与 placement.py 自动找位同规则）；exact 按槽位名
+  占位（同名二次占用=冲突）；挂件/气矿不占槽（不建模母建筑容量，如实标注）；
+  spawn 取 bl（标准开局近似）。
+- **接入**：Build op +mark 字段；queue_to_ops 传 mark + 可选池校验（标记不在
+  图层 → 摘除进「未入仿」**仿真继续**，D6 分工；命名空间引用只对池来源同 id
+  剥前缀，指向其他规划的近似不建模按自动找位）；planner _feasible peek（耗尽
+  → skip(placement_collision)，闭集 key 在仿真侧终于有真值来源）+ _start 开工
+  即占位（live 同语义）。
+- **REST**：`simulate_plan(+map_plan, +placement)`——默认开（出厂模板槽位，
+  与无会话默认图层一致）；map_plan 换图层来源（from_session/queue_name 自动
+  取会话默认规划）；placement=false 完全关（旧行为）。响应带 placement_source。
+  静态体检（horizon=0）加 exact 标记校验（placement_ref 错误，不阻断）。
+  skipped 警报文案按 reason 分流（placement→扩图层建议，prereq→插建造项）。
+- **规划-地图绑定维持软绑定**（不强制）：plan=纯队列，绑定发生在会话默认图层
+  与放置引用（裸名跟默认 / 命名空间钉死），ADR-0033 原设计不变。
+- 后端 **993 passed / 4 skipped**；两个旧测试锁的「placement 完全不进投影」
+  是旧设计，更新为「mark 进、坐标不进」。
+
 ## 0.64 五十七轮：PLAN-V2 批 6 落地 —— 收尾 + 三项债务清偿（全案完，2026-08-24）
 
 后端 **989 passed / 4 skipped**、前端 **396 + tsc 绿**、契约零改动。PLAN-V2 六批全完。

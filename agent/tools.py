@@ -442,12 +442,18 @@ def make_planning_tools(client: ApiClient,
             body["initial_state"] = args["initial_state"]
             note = args["initial_state"] if isinstance(args["initial_state"], str) else "内联"
             src_note.append(f"起点 {note}")
+        if args.get("map_plan"):
+            body["map_plan"] = str(args["map_plan"])
+        if args.get("placement") is False:
+            body["placement"] = False
         try:
             r = client.plans_simulate(body)
         except ApiError as exc:
             return f"干跑失败：{_err(exc)}"
         title = "＋".join(src_note) or "草稿队列"
         title += f"（horizon {horizon:g}s）"
+        if r.get("placement_source"):
+            title += f"｜含放置近似：{r['placement_source']}"
         return _clip(_render_sim_v2(r, title))
 
     async def export_snapshot(args: dict) -> str:
@@ -678,7 +684,11 @@ def make_planning_tools(client: ApiClient,
                                                          "description": "采样开始秒（默认 0，只看某段）"},
                                         "initial_state": {"description":
                                                           "起点：字符串=引用 initial-states/<id>（read initial-states/ 看有哪些），"
-                                                          "对象=内联一次性 {minerals,gas,supply_used,supply_cap,workers,buildings,units,upgrades}"}},
+                                                          "对象=内联一次性 {minerals,gas,supply_used,supply_cap,workers,buildings,units,upgrades}"},
+                                        "map_plan": {"type": "string",
+                                                     "description": "放置近似的图层来源（默认出厂模板；给地图规划 id 用它的槽位）"},
+                                        "placement": {"type": "boolean",
+                                                      "description": "默认 true=含放置近似（槽位耗尽→skipped placement_collision；exact 标记不存在→未入仿+体检报错但仿真继续）；false=完全不仿真槽位"}},
                          "additionalProperties": False},
              function=simulate_plan),
         Tool(name="export_snapshot",

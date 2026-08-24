@@ -190,3 +190,45 @@ def test_assign_workers_in_queue_status_and_static_check(client):
         "queue": [{"op": "assign_workers", "task": "scout", "count": 1,
                    "uid": "q01"}]})
     assert r3.status_code == 400 and "未知 worker task" in r3.text
+
+
+def test_placement_approximation_modes(client):
+    """放置近似（用户拍板 2026-08-24）：引用可选、报错不阻断、可一键关。"""
+    # 默认开（出厂模板）：20 座补给站超 16 槽 → skipped placement_collision + 扩图建议
+    r = client.post("/api/plans/simulate", json={
+        "queue": [{"op": "build", "type": "terran/supplydepot", "count": 20}],
+        "horizon": 200})
+    out = r.json()
+    assert out["placement_source"] == "出厂模板"
+    st = out["queue_status"][0]
+    assert st["status"] == "skipped" and st["reason"] == "placement_collision"
+    assert any(a["kind"] == "placement_collision" and "扩图层" in a["text_zh"]
+               for a in out["alerts"])
+    # placement=false：完全不仿真槽位（旧行为，全完成）
+    r2 = client.post("/api/plans/simulate", json={
+        "queue": [{"op": "build", "type": "terran/supplydepot", "count": 20}],
+        "horizon": 200, "placement": False})
+    out2 = r2.json()
+    assert out2["placement_source"] is None
+    assert out2["queue_status"][0]["status"] == "completed"
+    # map_plan=layout + 坏 exact 标记：静态体检报 placement_ref（error 但不阻断）
+    r3 = client.post("/api/plans/simulate", json={
+        "horizon": 0, "map_plan": "layout",
+        "queue": [{"op": "build", "type": "terran/supplydepot", "count": 1,
+                   "placement": {"kind": "exact", "mark": "Z99"}, "uid": "q01"}]})
+    assert any(a["kind"] == "placement_ref" and "Z99" in a["text_zh"]
+               for a in r3.json()["alerts"])
+    # 好标记 D1 通过；动态干跑里坏标记摘除进「未入仿」、后续项继续仿真
+    r4 = client.post("/api/plans/simulate", json={
+        "horizon": 0, "map_plan": "layout",
+        "queue": [{"op": "build", "type": "terran/supplydepot", "count": 1,
+                   "placement": {"kind": "exact", "mark": "D1"}, "uid": "q01"}]})
+    assert not any(a["kind"] == "placement_ref" for a in r4.json()["alerts"])
+    r5 = client.post("/api/plans/simulate", json={
+        "map_plan": "layout", "horizon": 60,
+        "queue": [{"op": "build", "type": "terran/supplydepot", "count": 1,
+                   "placement": {"kind": "exact", "mark": "Z99"}, "uid": "q01"},
+                  {"op": "train", "type": "terran/marine", "count": 1, "uid": "q02"}]})
+    out5 = r5.json()
+    assert any("Z99" in s.get("reason", "") for s in out5["skipped"]), out5["skipped"]
+    assert out5["queue_status"], "摘除坏标记后其余队列继续仿真"

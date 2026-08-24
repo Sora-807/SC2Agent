@@ -34,9 +34,31 @@ class QueueOps:
     skipped: list[tuple[str, str]] = field(default_factory=list)   # (op 名, 原因)
 
 
-def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None) -> QueueOps:
-    """`QueueItem` 列表 → planner op 序列。未知/不可投影的项进 `skipped`，不静默丢。"""
+def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None,
+                 slot_pool=None) -> QueueOps:
+    """`QueueItem` 列表 → planner op 序列。未知/不可投影的项进 `skipped`，不静默丢。
+
+    `slot_pool`（放置近似模型，批 2 漏账补）：给了才做 exact 标记校验 ——
+    标记不在图层 = 作者错误，摘除进 skipped（**仿真继续**，D6 分工）；
+    命名空间引用（"规划id/名"）只对池来源同 id 的剥前缀，指向其他规划的
+    引用近似不建模（该按自动找位处理，与 live 合并图层的语义差距如实存在）。
+    """
     out = QueueOps()
+
+    def _mark_of(it) -> str | None:
+        """exact 引用 → 槽位名（池来源同 id 的命名空间引用剥前缀）。"""
+        from game.production import PlacementExact
+        p = it.placement
+        if not isinstance(p, PlacementExact) or not isinstance(p.mark, str):
+            return None
+        mark = p.mark
+        if "/" in mark and slot_pool is not None and slot_pool.source_id:
+            prefix, _, bare = mark.partition("/")
+            if prefix == slot_pool.source_id:
+                return bare
+            return None   # 指向别的规划：近似不建模（按自动找位）
+        return mark
+
     for it in items:
         op = it.op if isinstance(it.op, QueueOp) else QueueOp(str(it.op))
         count = max(1, int(it.count))
@@ -44,10 +66,18 @@ def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None) -> Queu
             if not it.type:
                 out.skipped.append(("build", "缺 type"))
                 continue
-            if catalog is not None and catalog.by_stable_id(it.type) is None:
+            entry = catalog.by_stable_id(it.type) if catalog is not None else None
+            if catalog is not None and entry is None:
                 out.skipped.append(("build", f"catalog 没登记 {it.type}"))
                 continue
-            out.ops.extend(Build(it.type, uid=it.uid) for _ in range(count))
+            mark = _mark_of(it)
+            if (mark is not None and slot_pool is not None and entry is not None
+                    and slot_pool.handles(entry) and mark not in slot_pool.marks()):
+                out.skipped.append(("build",
+                                    f"placement 标记 {mark!r} 不在图层"
+                                    f"（{slot_pool.source_label}）—— 改名或换图层来源"))
+                continue
+            out.ops.extend(Build(it.type, uid=it.uid, mark=mark) for _ in range(count))
         elif op is QueueOp.TRAIN:
             if not it.type:
                 out.skipped.append(("train", "缺 type"))

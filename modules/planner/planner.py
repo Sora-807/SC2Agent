@@ -46,7 +46,7 @@ class Planner:
 
     def project(self, gs: GameState, seq: list, until: float, *,
                 until_complete: bool = False, tail: float = 0.0,
-                initial=None) -> ProjectionCurve:
+                initial=None, slot_pool=None) -> ProjectionCurve:
         """从 gs 快照 + production_sequence 投影到 until 秒。
 
         until_complete（2026-08-22 二十三轮用户拍板）：跑到**队列完成**为止 ——
@@ -66,6 +66,7 @@ class Planner:
         会话导出快照），跳过 derive_from(gs) —— gs 仍要给（seq 语义/签名兼容），
         但状态以 initial 为准。
         """
+        self._slot_pool = slot_pool   # 放置近似模型（None = 不建模，旧行为）
         st = initial if initial is not None else derive_from(gs, self._catalog)
         queue = expand(seq) if seq else []
         curve = ProjectionCurve()
@@ -237,10 +238,15 @@ class Planner:
             if "production_capacity" in r or "训练槽" in r:
                 return (False, "无产槽", True, None)
             return (False, r, True, None)
-        # classify 判 ready —— 规划器本地还有两类检查（classify 看不见 builder 与
-        # 科技槽特化：free_producers 适配层已算「该单位能用的槽」，builder 是 sim 特有）
+        # classify 判 ready —— 规划器本地还有三类检查（classify 看不见 builder、
+        # 放置与科技槽特化：free_producers 适配层已算「该单位能用的槽」）
         if isinstance(op, Build):
             e = self._catalog.by_stable_id(op.type)
+            if (e is not None and getattr(self, "_slot_pool", None) is not None
+                    and self._slot_pool.handles(e)):
+                err = self._slot_pool.peek(e, getattr(op, "mark", None))
+                if err is not None:
+                    return (False, err, False, "placement_collision")
             if e is not None and "addon" not in e.capabilities \
                     and st.idle_workers < 1 and st.mineral_workers < 1:
                 return (False, "无builder", self._income_coming(st), None)
@@ -316,6 +322,8 @@ class Planner:
             e = self._catalog.by_stable_id(op.type)
             st.minerals -= e.cost.minerals
             st.gas -= e.cost.vespene
+            if getattr(self, "_slot_pool", None) is not None and self._slot_pool.handles(e):
+                self._slot_pool.take(e, getattr(op, "mark", None))   # 开工即占位（live 同语义）
             if e is not None and "addon" not in e.capabilities:
                 # 常规建筑：拉 SCV 建造（挂件由母建筑自建，不拉 SCV）
                 if st.idle_workers >= 1:

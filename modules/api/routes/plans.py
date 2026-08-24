@@ -133,12 +133,37 @@ def plans_simulate(body: dict, request: Request) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"initial_state 不合法：{exc}") from None
 
+    # ---- 放置近似（用户拍板 2026-08-24：引用可选、报错不阻断、可关）----
+    # placement=true（默认）→ 槽位建模：耗尽 skip(placement_collision)、
+    # exact 标记不存在摘除进「未入仿」（仿真继续）；map_plan 指定图层来源
+    #（缺省 = 出厂模板；from_session 优先会话默认规划）；placement=false 关掉。
+    slot_pool = None
+    placement_src = None
+    if body.get("placement", True):
+        from tactical_map.base import load_ladder_map
+        from tactical_map.merge import load_plan_templates
+        from planner.slots_model import SlotPool
+
+        mp = body.get("map_plan")
+        if not mp and (body.get("from_session") or body.get("queue_name")):
+            sess0 = state.session
+            mp = (getattr(sess0, "map_plan_id", None)
+                  or getattr(sess0, "_map_default", None)) if sess0 else None
+        templates = load_plan_templates(state.map_plans.dir)
+        tpl = templates.get(mp) if mp else None
+        if tpl is None:
+            tpl = load_ladder_map()
+            placement_src = "出厂模板"
+        else:
+            placement_src = str(mp)
+        slot_pool = SlotPool.from_template(tpl, source_id=(str(mp) if tpl else None))
+
     # 草稿/规划文件项没有 uid（uid 是会话账本概念）—— 干跑也要状态表可引用：
     # 给缺 uid 的项分配显示用 q01…（在线队列项带真 uid，原样保留）
     for i, it in enumerate(items, start=1):
         if getattr(it, "uid", None) is None:
             it.uid = f"q{i:02d}"
-    translated = queue_to_ops(items, catalog)
+    translated = queue_to_ops(items, catalog, slot_pool)
 
     # ---- horizon=0：静态体检（不跑投影；D2 的 audit 合并路径） ----
     if horizon <= 0:
@@ -146,6 +171,26 @@ def plans_simulate(body: dict, request: Request) -> dict:
         buildings = dict(initial_st.buildings) if initial_st is not None else {}
         cap = initial_st.supply_cap if initial_st is not None else 0
         alerts = static_check(items, catalog, buildings, cap)
+        if slot_pool is not None:
+            from game.production import PlacementExact
+            for i, it in enumerate(items):
+                p_ = getattr(it, "placement", None)
+                if not isinstance(p_, PlacementExact):
+                    continue
+                e_ = catalog.by_stable_id(it.type) if it.type else None
+                if e_ is None or not slot_pool.handles(e_):
+                    continue
+                mark = p_.mark
+                if isinstance(mark, str) and "/" in mark and slot_pool.source_id:
+                    prefix, _, bare = mark.partition("/")
+                    mark = bare if prefix == slot_pool.source_id else None
+                if mark and mark not in slot_pool.marks():
+                    alerts.append({
+                        "severity": "error", "kind": "placement_ref",
+                        "text_zh": (f"uid={getattr(it, 'uid', None) or f'#{i}'} "
+                                    f"placement 标记 {mark!r} 不在图层"
+                                    f"（{slot_pool.source_label}）—— 改槽位名或换图层"),
+                        "uid": getattr(it, "uid", None)})
         rows = [{"uid": getattr(it, "uid", None) or f"#{i}",
                  "item": f"{it.op.value} {it.type or ''}" + (f" ×{it.count}" if it.count > 1 else ""),
                  "status": "pending", "started_at": None, "completed_at": None,
@@ -159,7 +204,7 @@ def plans_simulate(body: dict, request: Request) -> dict:
     planner = Planner(catalog)
     curve = planner.project(
         opening_game_state(catalog), list(translated.ops), horizon,
-        until_complete=True, tail=30.0, initial=initial_st)
+        until_complete=True, tail=30.0, initial=initial_st, slot_pool=slot_pool)
     sim_end = curve.points[-1].t if curve.points else horizon
     frame = projection_frame(
         curve, based_on_seq=0, based_on_game_time=0.0, horizon=sim_end,
@@ -217,17 +262,24 @@ def plans_simulate(body: dict, request: Request) -> dict:
     for row in curve.queue_status:
         if row["status"] != "skipped":
             continue
+        advice = ("扩图层槽位（map-plans）或减少该类建筑数量"
+                  if row["reason"] == "placement_collision"
+                  else f"在 {row['uid']} 前插建造项，或移除该项")
         alerts.append(AlertView(
-            id=f"skipped/{row['uid']}", kind="prereq_missing", severity="error",
+            id=f"skipped/{row['uid']}",
+            kind=("placement_collision" if row["reason"] == "placement_collision"
+                  else "prereq_missing"),
+            severity="error",
             at=0.0, eta=None,
             text_zh=(f"uid={row['uid']} {row['item']} skipped：{row['detail'] or row['reason']}"
-                     f" —— 在 {row['uid']} 前插建造项，或移除该项"),
+                     f" —— {advice}"),
             source="projection",
             payload={"uid": row["uid"], "reason": row["reason"]}))
     # 附加键不覆盖 frame 自带键（source/skipped 已在 frame 里）；queue_source 是来源说明
     return {**to_json(frame), "alerts": to_json(alerts),
             "queue_status": curve.queue_status, "samples": samples,
-            "final": final, "queue_source": source_note}
+            "final": final, "queue_source": source_note,
+            "placement_source": placement_src}
 
 
 # ---- 模块模板（I12-B3 最小版）：参考模块一键落地成规划文件 ----

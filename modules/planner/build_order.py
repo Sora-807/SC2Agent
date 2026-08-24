@@ -26,6 +26,7 @@ class Op:
 class Build(Op):
     type: str                       # 稳定 ID "terran/factory"
     uid: str | None = None
+    mark: str | None = None         # exact 引用的槽位名（放置近似模型用；None=自动找位）
 
 
 @dataclass

@@ -71,18 +71,21 @@ def test_translation_is_one_to_one_and_expands_count():
     ]
     out = queue_to_ops(items, CAT)
     assert out.ops == [
-        Build("terran/barracks"),
+        Build("terran/barracks", mark="rax_1"),
         Train("terran/marine"), Train("terran/marine"), Train("terran/marine"),
         AssignWorkers("gas", 3),
     ]
     assert out.skipped == []
 
 
-def test_placement_does_not_enter_projection():
-    """planner 只数建筑数不放置（position 归 live runtime）。"""
+def test_placement_mark_enters_but_position_does_not():
+    """放置近似（2026-08-24）：exact 的**槽位名**进投影（近似模型按名占位），
+    in_region/null = 自动找位（mark=None）；坐标永远不进（position 归 live runtime）。"""
     out = queue_to_ops([QueueItem(op=QueueOp.BUILD, type="terran/barracks",
                                   placement=PlacementExact(mark="rax_1"))], CAT)
-    assert out.ops == [Build("terran/barracks")]
+    assert out.ops == [Build("terran/barracks", mark="rax_1")]
+    out2 = queue_to_ops([QueueItem(op=QueueOp.BUILD, type="terran/barracks")], CAT)
+    assert out2.ops == [Build("terran/barracks", mark=None)]
 
 
 def test_unprojectable_items_are_skipped_with_reason():
