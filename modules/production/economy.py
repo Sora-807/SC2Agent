@@ -128,7 +128,7 @@ class EconomyKeeper:
         workers = self._domain_workers(gs)
         self.reservations.prune(frozenset(u.tag for u in gs.units))
         nodes = self._nodes(gs)
-        current, foreign = self._current_assignment(workers, nodes)
+        current, foreign = self._current_assignment(workers, nodes, gs)
         plan = self._plan(gs, workers, nodes, current, foreign)
         self._last_plan = plan
         ops: list[Operation] = []
@@ -220,7 +220,7 @@ class EconomyKeeper:
 
     # ---- 实际态（从 orders 派生 + 往返记忆）----
 
-    def _current_assignment(self, workers: list, nodes: list[_Node]):
+    def _current_assignment(self, workers: list, nodes: list[_Node], gs=None):
         """每个工人的当前在岗矿脉。返回 (cur, foreign)：
 
         - cur: tag -> 矿脉/气井 tag | None（None = 不在岗、可派）；
@@ -244,6 +244,26 @@ class EconomyKeeper:
         node_tags = {n.tag for n in nodes}
         cur: dict[int, int | None] = {}
         foreign: set[int] = set()
+        done_buildings = self._completed_buildings(gs) if gs is not None else {}
+        by_tag_all = {u.tag: u for u in (gs.units if gs is not None else ())}
+
+        def _stale_build(w) -> bool:
+            """残留建造单：订单指向的建筑**已完工** —— SC2 完工后不清这个单
+            （真机实测挂 45s+），维持器把它误判成外来订单就永远不接管，SCV
+            站在房子旁边发呆。完工单可以安全顶掉（gather 顶它无副作用）；
+            在建中（progress<1）不是残留 —— 保持 foreign（§0.46 保护不动）。"""
+            for o in w.orders:
+                if o.target_tag is not None:
+                    u = by_tag_all.get(o.target_tag)
+                    if u is not None and u.tag in done_buildings:
+                        return True
+                if o.target_pos is not None:
+                    for b in done_buildings.values():
+                        if ((b.position.x - o.target_pos.x) ** 2
+                                + (b.position.y - o.target_pos.y) ** 2) <= 9.0:
+                            return True
+            return False
+
         for w in workers:
             target = next((o.target_tag for o in w.orders if o.target_tag in node_tags), None)
             if target is not None:
@@ -257,18 +277,29 @@ class EconomyKeeper:
                     or getattr(w, "is_carrying_vespene", False)):
                 mem = self._harvest_mem.get(w.tag)
                 cur[w.tag] = mem if mem in node_tags else None   # 记住的矿没了=真空闲
-                if w.orders and not mining_family:
+                if w.orders and not mining_family and not _stale_build(w):
                     foreign.add(w.tag)   # 扛货但被外来能力征走（建造/移动…）→ 不接管
                 continue
             self._harvest_mem.pop(w.tag, None)
             cur[w.tag] = None
-            if w.orders and not mining_family:
+            if w.orders and not mining_family and not _stale_build(w):
                 foreign.add(w.tag)
         alive = {w.tag for w in workers}
         for tag in list(self._harvest_mem):    # 离场的工人（阵亡/被租借出领地）记忆作废
             if tag not in alive:
                 self._harvest_mem.pop(tag, None)
         return cur, foreign
+
+    def _completed_buildings(self, gs) -> dict[int, object]:
+        """场上**已完工**的己方建筑（残留建造单判定用；只看 role=building）。"""
+        out: dict[int, object] = {}
+        for u in gs.units:
+            if u.owner is Owner.SELF and u.build_progress >= 1.0:
+                e = self._catalog.by_burnysc2_name(
+                    self._catalog.normalize_burnysc2_name(u.type_name.upper()))
+                if e is not None and e.role and e.role.value == "building":
+                    out[u.tag] = u
+        return out
 
     def _may_retask(self, tag: int, seq: int) -> bool:
         last = self._last_retask.get(tag)
