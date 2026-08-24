@@ -67,7 +67,7 @@ def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None) -> Queu
                 out.skipped.append(("assign_workers", "缺 task"))
                 continue
             # 目标值语义（ADR-0030 D2）：count = 维持几个
-            out.ops.append(AssignWorkers(str(task), count))
+            out.ops.append(AssignWorkers(str(task), count, uid=it.uid))
         elif op is QueueOp.CANCEL:
             out.skipped.append(("cancel", "planner 没有对应 op（取消不进投影）"))
         else:

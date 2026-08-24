@@ -157,3 +157,36 @@ def test_simulate_from_session_uses_live_state_and_queue(client):
     st = [q["status"] for q in out["queue_status"]]
     assert "skipped" in st
     client.post("/api/session/stop")
+
+
+def test_assign_workers_in_queue_status_and_static_check(client):
+    """批 3 遗漏回归：assign_workers 项必须出现在队列执行状态表（瞬时完成），
+    静态体检不得把任务名当 catalog ID 误报「catalog 不认」。"""
+    r = client.post("/api/plans/simulate", json={
+        "queue": [
+            {"op": "build", "type": "terran/supplydepot", "count": 1},
+            {"op": "assign_workers", "type": "gas", "task": "gas", "count": 3,
+             "uid": "q02"},
+        ], "horizon": 60})
+    qs = {q["uid"]: q for q in r.json()["queue_status"]}
+    assert qs["q02"]["status"] == "completed", "瞬时调度项：当帧完成"
+    assert qs["q02"]["item"] == "assign_workers gas ×3"
+    assert qs["q02"]["started_at"] is not None
+
+    r2 = client.post("/api/plans/simulate", json={
+        "horizon": 0,
+        "queue": [
+            {"op": "assign_workers", "type": "gas", "task": "gas", "count": 3,
+             "uid": "q01"},
+            {"op": "train", "type": "terran/marine", "count": 1, "uid": "q02"},
+        ]})
+    alerts = r2.json()["alerts"]
+    assert not any("catalog 不认" in a["text_zh"] for a in alerts), "任务名≠类型名，别误报"
+    assert any("产出建筑" in a["text_zh"] for a in alerts), "真缺口（缺兵营）照报"
+
+    # 坏任务名在 parse 层就被拒（比静态体检更早一道门，400 带原因）
+    r3 = client.post("/api/plans/simulate", json={
+        "horizon": 0,
+        "queue": [{"op": "assign_workers", "task": "scout", "count": 1,
+                   "uid": "q01"}]})
+    assert r3.status_code == 400 and "未知 worker task" in r3.text

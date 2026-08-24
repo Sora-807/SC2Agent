@@ -494,5 +494,5 @@ class Planner:
         if isinstance(op, (Build, Train, Research)):
             return op.type
         if isinstance(op, AssignWorkers):
-            return f"assign_{op.task}"
+            return f"assign_workers {op.task} ×{op.count}"
         return None

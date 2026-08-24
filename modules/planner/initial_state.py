@@ -139,6 +139,17 @@ def static_check(items: list, catalog: Catalog, buildings: dict[str, int],
         sid = getattr(it, "type", None)
         op = getattr(it, "op", None)
         op = op.value if hasattr(op, "value") else op
+        if op == "assign_workers":
+            # type 是任务名（gas 不是 catalog ID）—— 按任务闭集校验，别查 catalog
+            task = getattr(it, "task", None)
+            task = task.value if hasattr(task, "value") else task
+            if task not in ("mineral", "gas", "idle"):
+                alerts.append({"severity": "error", "kind": "unknown_type",
+                               "text_zh": (f"{uid} assign_workers：task 必须是 "
+                                           f"mineral|gas|idle（当前 {task!r}）"
+                                           "—— type 字段对它是冗余的"),
+                               "uid": uid})
+            continue
         entry = catalog.by_stable_id(sid) if sid else None
         if sid and entry is None:
             alerts.append({"severity": "error", "kind": "unknown_type",
