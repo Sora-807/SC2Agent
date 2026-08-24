@@ -130,3 +130,145 @@ improvement-notes.md I1-I9 + templates/ 三份，**是输入不是规范** —�
 runtime skip-and-continue 与 dropped 分工；propose before_uid（含错位回归）；
 双分支装载（bl/tr 各验）+ 热切帧边界；simulate 四段输出快照测试（模板对齐）；
 observe v2 段落快照；矿区表与用户草案表对账；catalog 生成幂等。
+
+---
+
+## 7. 执行细节附录（防上下文压缩丢失 —— 2026-08-24 立项时核过代码，逐批落点）
+
+**基线**：提交 `b202068`（§0.51-0.58 全部成果）；测试基线 = 后端 915 passed /
+4 skipped、前端 386 passed + tsc 绿；契约 **REV=17**；max_turns=500 / 轮预算
+1M token / 活性看门狗**已落地勿重做**（agent/talk.py）。PLAN-ROUND3 的 G 批
+（复盘投影截断线）已落地，不在 V2 范围。
+
+**红线速记**：vendor/agentic 不改（接缝=子类/drop/特判挂我方层）；文件契约走
+REST 同一入口；REV 每批一次性 +1（不逐字段），契约只增不改（`.default()` 兜底
+旧录像）；zh 命名两形态（实体 _zh 兄弟字段；枚举英 key→中文映射表）；中文名
+取 catalog display_name_zh（C4）；前端不自算判定（C3）。**已踩过的坑**：
+①live.py describe() 持 `_lock` 时派生读取不得再取锁（普通 Lock 不可重入）；
+②只读区 `exists()` 必须与 `read()` 同源（vendor read 的 contains 预检会把
+WorkspaceError 吞成假 not-found —— maps 和 _lib.yaml 两次事故同款）；
+③`produced_by=None` 是**所有建筑**的属性（工兵建造），不能拿它认起始建筑。
+
+### 批 1 落点：队列执行模型
+
+- `game/production.py`：QueueItem +`uid`（默认 None；runtime 入队时分配
+  per-queue 递增 `q01…`，重排/插入不变）。
+- **新模块** `modules/production/semantics.py`：`classify(item, view) →
+  ready | pending(reason) | skip(reason)`。数据视图 view = 资源 + 就绪建筑 +
+  在途/队列前序 + 产位占用。消费方三处：runtime._drain、planner 仿真、
+  simulate 健康检查。reason 枚举（SKIP_REASON_ZH 映射）：`prereq_missing` /
+  `placement_collision`；**production_capacity 建议归 pending**（槽满是瞬态，
+  "等一等就满足"；挂升级警报：capacity-pending 超 60s → warn）—— 此点偏离
+  agent 文档，执行时向用户确认一次。
+- `modules/production/runtime.py`：_drain 重构 —— classify=pending → 队首等待
+  （资源类照旧）；skip → 标记 + 继续**下一项**（队首冻结退役）；_note_block/
+  blocked 字段随状态机重写。in_progress 判定：TRAIN 用 `_trainings` 账本
+  （G3 已建，含 started_at）+ world producing；BUILD 用 `_build_flights`。
+  dropped（R7）保留给语法/作者错误（D6）。
+- `modules/view/adapt.py` + `web/src/contract/index.ts`：QueueItemView
+  +`uid/status/reason`；status 四值 `pending/in_progress/completed/skipped`
+  （STATUS_ZH：等待中/执行中/已完成/已跳过）。
+- propose/queue 命令改 `before_uid`：`view/proposals.py` hunk payload、
+  `api/routes/session.py` queue_op（insert/remove/reorder）、
+  `agent/tools.py` propose schema、前端 `planning/QueueTable.tsx` +
+  `api/commands.ts`。旧 index 入参一并迁移（同仓前后端，不保双轨）。
+- **删除**：planner `_supply_guard`（planner.py ~L111-142 + 调用点 ~L86）、
+  `auto_supply` 参数（routes/plans.py simulate + tools.py，H 批产物）。
+- D1 警报三情形落点：①前瞻 = simulate 健康检查扫描（skip 项 + prereq 缺口
+  vs 终态）；②③live 被打掉 = alerts.py 用 runtime `_ever_ready`（E 批已建）
+  判"曾有现无"→ prereq_missing 家族 + uid 建议。新 kind `supply_capped`
+  （warn：used≥cap 且队列/在途无供给建筑，建议插 depot before uid）；
+  旧 `supply_block` 前瞻警报删除。
+- ADR-0032（状态机/skip/no-cascade）+ ADR-0027 修订（null=auto，批 2 落地）。
+
+### 批 2 落点：地图规划改版
+
+- 文件形态：map-plans/<id>.yaml 增 `spawns: {bl: {…}, tr: {…}}` 双分支；
+  单分支（`spawn:` + 平铺）兼容 —— `load_map_plan`（tactical_map/base.py
+  ~L121）已包一层，双分支直通。保存校验对两分支各跑几何校验。
+- **图层合并**（新 helper，建议 tactical_map/merge.py）：默认规划槽位=裸名 +
+  其余规划槽位=`规划id/名字` 键（同一 instantiate_spawn 平移，按实际出生点
+  pick_spawn_layout 选分支）+ catalog reserved_marks 全局裸名。装配点：
+  `api/session.py` OfflineSession ~L155-165；live 子进程 tools/run_session.py
+  （_detect_spawn 后）。`view/plans.py resolve_placement_refs`（~L86-114）
+  删跨规划拒绝，前缀直通。
+- null=auto：`production/placement.py` ~L34 的 null 拒绝改为默认
+  in_region("home")；planner 侧无层 —— **仿真需要槽位近似模型**（批 3 依赖）：
+  从默认规划槽位集合按声明序消耗（类别/尺寸过滤同 placement.py），
+  产出 placement_collision skip。注意：批 2 只落数据通道，仿真近似归批 3。
+- 默认热切：`POST /api/session/map-plan?id=`，帧边界挂起 → 重建合并图层 →
+  换 runtime/keeper/engine/producer 的 region_layer 引用 → 重发 static/map
+  （抄 swap_strategy：api/session.py ~L348 / run_session swap 通道）。
+  start_session 的 map_plan = 初始默认。裸名在新默认缺失 → 作者错误 dropped。
+- 前端红蓝：编辑器按分支两页签；驾驶/复盘按会话 meta.spawn 显示对应侧。
+- 矿区进基础数据：tactical_map/data/ladder_map/ 增 mine_areas
+  （name/side/bbox），用户草案：蓝主[38,25,50,40] 蓝二[65,70,80,80]
+  中岛[95,90,115,105] 红主[108,64,120,75] 红二[118,115,135,130]
+  红三[98,98,108,108] —— **待校准**，作批 4 验收基准。
+- agent 切地图工具面：等用户文档（REST 先行）。
+
+### 批 3 落点：simulate_plan v2
+
+- `routes/plans.py plans_simulate`：+`sample_interval`(10)/`sample_start`(0)/
+  `initial_state`(str 引用｜object 内联)/`queue_name`(在线队列)/`from_session`。
+- ProjectionPoint 已逐秒采样 → 输出层抽取；采样点增字段在渲染时派生：
+  workers 分任务（mineral/gas 已有；building=并发在途建造数，idle=总数减，
+  scouting=0 占位=编组派生）、产位 normal_cap/tech_cap 从 st.buildings+
+  挂件构成推导（bare=1、reactor=2 普通；techlab=1 科技；building_addon=0）。
+  近似处如实标注。
+- 队列状态表：**uid 穿透 planner Op**（ops_to_items/Build/Train +uid 字段），
+  终值映射回 status/started_at/completed_at/reason；事件时间线段落删除。
+- initial-states/：runtime/initial-states/<id>.yaml + REST CRUD + 工作区
+  虚拟目录（ApiWorkspace _split 加分支，同 plans 模式）；校验：workers 各分项
+  和=SCV 总数、catalog 类型存在、supply_cap 与建筑构成一致。
+- export_snapshot（agent 工具 + GET /api/session/export）：从 live 帧拼
+  initial-state + 剩余队列（带 uid/status）。**缺口**：upgrades 导出需要
+  已完成研究账本（runtime research 记账，类比 _trainings）—— 小任务。
+- from_session：export 逻辑内联进 simulate 起点。
+- 健康检查按归一模板：error=stalled/prereq_missing；warn=idle_production
+  （产位空闲>15s）/resource_float/supply_capped；info=assembly_gap 仅带装配。
+- audit 合并路径打通：`simulate_plan(queue_name, horizon=0)`=静态体检。
+
+### 批 4 落点：observe v2
+
+- `view/observe.py` 重构为**帧驱动渲染**（输入=ViewFrame 组，live 当前帧与
+  录像帧同路）—— 这是 source/time 的前提；recap.py 已有 jsonl 帧解析可复用。
+- 无 bbox 两块按模板：全局（资源/工人分任务/建筑汇总含挂件+在建/部队汇总/
+  生产序列汇总= _trainings+队列 train 计数）+ 矿区（基础数据 mine_areas；
+  建筑表坐标/挂件/正在做什么；部队表集群/血量%/绝对血量，`敌方：` 前缀
+  仅当前视野内；历史踪迹仍在 enemy_contact 警报，不混入）。
+- EnemyClusterView（schema.py ~L404 stub）落地：own+enemy 就近聚类
+  （网格桶半径≈5 格），HP=均值%/总和。
+- 自动 step：agent/tools.py `_region_grid` 删 step 参数 → 取最小 step≥1 使
+  列×行 ≤14，输出标注实际 step（14×14 上限保留，用户批注）。
+
+### 批 5 落点：数据与初始化
+
+- catalog 手册：tools/ 已有 dump 工具链（game_data_dump.json 单源）→ 生成
+  workspace 端 markdown（terran 完整 11 字段 / 虫神参考 9 字段，模板已归一）；
+  **serve_api 启动时幂等再生成**（防 catalog 演进漂移）；matchups 从
+  memory/strategy-notes 种子。
+- `plans/` → `production-plans/`：agent/workspace.py PLAN_PREFIX/_split、
+  磁盘目录、seeds/模板/测试/UI 文案。**REST 路径 /api/plans 不改**（内部名，
+  避免无谓 churn；虚拟目录名对齐即可）。
+- 初始化模块（新 agent/bootstrap.py，泛化 memory_seed「只补缺失」）：
+  首运/启动创建默认库存 = 系统提示词快照（system/prompt.md，取
+  spec.SYSTEM_PROMPT 生成）、工作区设计文档、游戏·数据手册（catalog 生成）、
+  memory 种子。
+- scouting 派生：workers.scouting = 被 flow 组 lease 的 SCV 数
+  （reservations/allocator 交叉）；`repair` op 不在 OP_CATALOG → ISSUES 立项。
+
+### 批 6 落点：收尾
+
+- audit_queue 工具删除（simulate_plan 吸收，D2）；spec.py 提示词更新
+  （uid/before_uid/simulate v2/observe v2 用法）；seeds 同步；ISSUES/WORKLOG
+  收档；全量回归 + 提交。
+
+### 提交与执行纪律
+
+- 每批后端+前端全绿即提交一次（消息引用批号与 §0.5x），不攒大包。
+- 批内契约改动一次 REV+1；改 `web/src/contract/index.ts` 必同步后端 REV
+  （schema.py L72）与 contract.test 两侧。
+- 行为锁先行：先写表驱动测试锁语义，再动实现（分类器/状态机/双分支装载）。
+- 执行顺序默认 1→2→3→4→5→6；批 5 可穿插。批 1 的 production_capacity
+  归 pending 微调、矿区草案坐标两处，执行时找用户确认。
