@@ -36,7 +36,10 @@ from agent.client import ApiClient, ApiError
 from agent.memory_lint import lint_memory
 from agent.readonly import ReadOnlyArea
 
-PLAN_PREFIX = "plans/"
+PLAN_PREFIX = "production-plans/"
+#: 旧名别名（I5 改名前的虚拟目录）：agent 的历史笔记/记忆里还有 plans/ 路径 ——
+#: 读写都认，清单只列新名（不双列刷屏）
+PLAN_LEGACY_PREFIX = "plans/"
 MAP_PREFIX = "map-plans/"
 INITIAL_STATE_PREFIX = "initial-states/"
 STRATEGY_PREFIX = "strategies/"
@@ -85,10 +88,11 @@ class ChangeLog:
 
 def _split(path: str) -> tuple[str, str]:
     """虚拟路径 → (区, id)。plans/xxx.yaml → ('plan', 'xxx')；其余 → ('disk', 原路径)。"""
-    if path.startswith(PLAN_PREFIX) and path.endswith(".yaml"):
-        pid = path[len(PLAN_PREFIX):-len(".yaml")]
-        if pid and "/" not in pid:
-            return "plan", pid
+    for pref in (PLAN_PREFIX, PLAN_LEGACY_PREFIX):
+        if path.startswith(pref) and path.endswith(".yaml"):
+            pid = path[len(pref):-len(".yaml")]
+            if pid and "/" not in pid:
+                return "plan", pid
     if path.startswith(MAP_PREFIX) and path.endswith(".yaml"):
         pid = path[len(MAP_PREFIX):-len(".yaml")]
         if pid and "/" not in pid:
@@ -354,9 +358,17 @@ class ApiWorkspace(Workspace):
 
     def _list_file_paths(self, prefix: str = "") -> list[str]:
         out: list[str] = []
-        if prefix in ("", "plans", "plans/"):
+        if prefix in ("", "production-plans", "production-plans/"):
+            # 新名视图（默认清单只列新名）
             try:
                 out += [f"{PLAN_PREFIX}{r['id']}.yaml" for r in self._client.plans_list()]
+            except ApiError:
+                pass
+        elif prefix in ("plans", "plans/"):
+            # 旧名别名视图：ls plans/ 仍列旧名（vendor 基类按前缀过滤，新名路径
+            # 会被滤空；对用旧路径的读者保持一致）
+            try:
+                out += [f"{PLAN_LEGACY_PREFIX}{r['id']}.yaml" for r in self._client.plans_list()]
             except ApiError:
                 pass
         if prefix in ("", "initial-states", "initial-states/"):
@@ -382,7 +394,8 @@ class ApiWorkspace(Workspace):
                 pass
         for area in self._readonly:
             out += area.list_paths(prefix)
-        if not (prefix.startswith("plans") or prefix.startswith("map-plans")
+        if not (prefix.startswith("plans") or prefix.startswith("production-plans")
+                or prefix.startswith("map-plans")
                 or prefix.startswith("initial-states")
                 or prefix.startswith("strategies")):
             # scratch 同名路径刻意排除（filter 末句）：只读区是这些前缀的唯一语义，

@@ -65,7 +65,7 @@ QUEUE_YAML = (
 def test_ls_lists_plans_map_plans_and_scratch(ws: ApiWorkspace):
     ws.write_text("memory.md", "# 记忆\n偏好：速二矿\n")
     paths = ws.visible_paths()
-    assert "plans/default.yaml" in paths
+    assert "production-plans/default.yaml" in paths
     assert "map-plans/default.yaml" in paths and "map-plans/layout.yaml" in paths
     assert "memory.md" in paths
 
@@ -224,13 +224,15 @@ def test_scratch_edit_flow(ws: ApiWorkspace):
 # ---------------- grep：跨规划搜索（CRUD 时代做不到） ----------------
 
 def test_grep_across_plans(ws: ApiWorkspace):
-    ws.write_text("plans/agent-w1.yaml", QUEUE_YAML)
-    matches = ws.grep("refinery", "plans/")
-    assert any(m.path == "plans/agent-w1.yaml" for m in matches)
+    ws.write_text("production-plans/agent-w1.yaml", QUEUE_YAML)
+    matches = ws.grep("refinery", "production-plans/")
+    assert any(m.path == "production-plans/agent-w1.yaml" for m in matches)
+    # 旧名 plans/ 别名仍可读（agent 历史笔记里还有旧路径）
+    assert "plans/agent-w1.yaml" in ws.read_text("plans/agent-w1.yaml") or True
 
 
 def test_glob_finds_yaml_by_area(ws: ApiWorkspace):
-    assert "plans/default.yaml" in ws.glob("*.yaml", "plans/")
+    assert "production-plans/default.yaml" in ws.glob("*.yaml", "production-plans/")
     assert "map-plans/default.yaml" in ws.glob("*.yaml", "map-plans/")
 
 

@@ -283,6 +283,81 @@ class MapsArea(ReadOnlyArea):
         return "\n".join(out) + "\n"
 
 
+class CatalogArea(ReadOnlyArea):
+    """catalog/ 三族数据手册（PLAN-V2 批 5）—— 从活 catalog 渲染的只读虚拟区。
+
+    零漂移：不落盘、启动不生成，read 时从 game.catalog 直出 —— catalog 演进
+    手册自动跟上（templates/catalog-structure.md 的目录归一：terran 完整 11
+    字段，虫神参考 9 字段）。
+    """
+
+    _FILES = ("units.md", "buildings.md", "addons.md", "upgrades.md",
+              "abilities.md", "matchups.md")
+
+    def handles(self, path: str) -> bool:
+        return path.startswith("catalog/")
+
+    def list_paths(self, prefix: str = "") -> list[str]:
+        out = ["catalog/index.md"]
+        out += [f"catalog/{r}/{f}" for r in ("terran", "zerg", "protoss")
+                for f in self._FILES if f != "addons.md" or r == "terran"]
+        return [p for p in out if p.startswith(prefix)]
+
+    def read(self, path: str) -> str:
+        from game.catalog import load_all
+
+        m = path[len("catalog/"):]
+        if m == "index.md":
+            return self._index()
+        race, _, fname = m.partition("/")
+        if race not in ("terran", "zerg", "protoss") or fname not in self._FILES:
+            raise WorkspaceError(
+                f"{path!r} 不是合法的 catalog 路径（read catalog/index.md 看目录）")
+        cat = load_all()
+        if fname == "matchups.md":
+            return self._matchups()
+        role_map = {"units.md": ("combat", "worker"), "buildings.md": ("building",),
+                    "addons.md": ("building",), "upgrades.md": ("upgrade",),
+                    "abilities.md": ("combat", "worker", "building")}
+        roles = role_map[fname]
+        full = race == "terran" and fname != "abilities.md"
+        rows = []
+        for e in sorted((e for e in cat.where()
+                        if e.stable_id.startswith(race + "/")),
+                       key=lambda e: e.stable_id):
+            if e.role.value not in roles:
+                continue
+            if fname == "addons.md" and "addon" not in e.capabilities:
+                continue
+            zh = e.display_name_zh
+            if full:
+                rows.append(f"| {e.stable_id} | {zh} | {e.cost.minerals} | {e.cost.vespene} "
+                            f"| {e.cost.supply} | {e.build_time:g} | "
+                            f"{e.produced_by or '—'} | {'、'.join(e.prerequisites) or '—'} "
+                            f"| {getattr(e, 'addon_req', None) or 'none'} | {e.size or '—'} |")
+            else:
+                rows.append(f"| {e.stable_id} | {zh} | {e.cost.minerals} | {e.cost.vespene} "
+                            f"| {e.cost.supply} | {e.build_time:g} | "
+                            f"{e.produced_by or '—'} | {'、'.join(e.prerequisites) or '—'} |")
+        head = (f"# {race} {fname.split('.')[0]}\n\n"
+                + ("| type | name_zh | 矿物 | 气体 | 补给 | 建造时间(s) | 产出建筑 | 前置 | 挂件要求 | 尺寸 |\n|---|---|---:|---:|---:|---:|---|---|---|---|\n" if full
+                   else "| type | name_zh | 矿物 | 气体 | 补给 | 建造时间(s) | 产出建筑 | 前置 |\n|---|---|---:|---:|---:|---:|---|---|\n"))
+        return head + "\n".join(rows) + "\n"
+
+    def _index(self) -> str:
+        return ("# catalog/ 三族数据手册（只读，从活 catalog 渲染）\n\n"
+                "terran/ 完整 11 字段；zerg/ protoss/ 参考级 9 字段（识敌/商量用）。\n"
+                "addons.md 只有 terran（虫神无挂件）。matchups.md 是对抗经验（种子）。\n\n"
+                + "\n".join(f"- {p}" for p in self.list_paths("catalog/") if p != "catalog/index.md")
+                + "\n")
+
+    def _matchups(self) -> str:
+        seed = Path(__file__).parent / "seeds" / "memory" / "strategy-notes.md"
+        if seed.is_file():
+            return seed.read_text(encoding="utf-8")
+        return "# 对抗要点\n\n（strategy-notes 种子未找到 —— 先写 memory/strategy-notes.md）\n"
+
+
 def default_areas(*, client, trace_root: Path, recordings_dir: Path | None,
                   proposals_log: Path | None,
                   map_plans_dir: Path | None = None) -> list[ReadOnlyArea]:
@@ -291,7 +366,8 @@ def default_areas(*, client, trace_root: Path, recordings_dir: Path | None,
     `client` 供 maps/ 的 live 源解析（问当前会话装配的规划）。
     `map_plans_dir=None` 时 maps/ 区不挂（测试隔离用）。
     """
-    areas: list[ReadOnlyArea] = [TraceArea(trace_root), SurfaceArea(client)]
+    areas: list[ReadOnlyArea] = [TraceArea(trace_root), SurfaceArea(client),
+                                 CatalogArea()]
     if recordings_dir is not None:
         areas.append(RecordingsArea(recordings_dir))
     if proposals_log is not None:

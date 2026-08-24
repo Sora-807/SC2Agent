@@ -145,6 +145,10 @@ def main() -> int:
     ap.add_argument("--no-kill", action="store_true",
                     help="端口被上一代后端占用时不自动清理（默认自动树杀后重启）")
     args = ap.parse_args()
+    # I5 改名兜底：新目录不存在而旧 runtime/plans 存在 → 沿用旧目录（用户数据不丢）
+    if not Path(args.plans).is_dir() and (ROOT / "runtime/plans").is_dir():
+        args.plans = str(ROOT / "runtime/plans")
+        print(f"  [I5] production-plans 目录不存在，沿用旧 runtime/plans（改名迁移待手动）")
     if not ensure_port_free(args.host, args.port, auto_kill=not args.no_kill):
         return 1
     print(f"view API → http://{args.host}:{args.port}/api/health")

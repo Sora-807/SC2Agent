@@ -120,14 +120,17 @@ def _worker_split(world: dict | None, econ: dict | None, prod: dict | None) -> d
     scouting 恒 0（D3：侦查是编组派生）。总数对不上时如实标注 other。"""
     tasks = {t.get("task"): int(t.get("actual") or 0) for t in (econ or {}).get("tasks") or []}
     building = len((prod or {}).get("in_flight") or [])
-    total = sum(1 for u in (world or {}).get("units") or []
-                if u.get("owner") == "self" and (u.get("stable_id") or "").endswith("/scv"))
+    scvs = [u for u in (world or {}).get("units") or []
+            if u.get("owner") == "self" and (u.get("stable_id") or "").endswith("/scv")]
+    total = len(scvs)
+    # D3：侦查 = 编入 flow 组的 SCV（group_id 非空）—— 仿真侧恒 0（无编组）
+    scouting = sum(1 for u in scvs if u.get("group_id"))
     mineral = tasks.get("mineral", 0)
     gas = tasks.get("gas", 0)
     idle = tasks.get("idle", 0)
-    other = max(0, total - mineral - gas - idle - building)
+    other = max(0, total - mineral - gas - idle - building - scouting)
     return {"mineral": mineral, "gas": gas, "building": building,
-            "scouting": 0, "idle": idle, "other": other, "total": total}
+            "scouting": scouting, "idle": idle, "other": other, "total": total}
 
 
 _ADDON_ZH = {"techlab": "科技实验室", "reactor": "反应堆"}

@@ -123,7 +123,9 @@ def test_unconfigured_llm_shows_reason_not_crash(api: TestClient, tmp_path: Path
 def test_chat_agent_can_use_planning_tools(api: TestClient, tmp_path: Path):
     script = [
         LLMResponse(Message("assistant", None, [
-            ToolCall("c1", "ls", {"path": "plans/"})]), 0, 0, "fake"),
+            # I5 改名后 ls 走新路径（plans/ 旧名仍可 read/write，但 vendor 的
+            # ScopedWorkspace 按 visible_paths 过滤前缀 —— 清单只认新名）
+            ToolCall("c1", "ls", {"path": "production-plans/"})]), 0, 0, "fake"),
         _done("有一份默认规划（锁定），共 22 项。"),
     ]
     talk = _talk(api, script, tmp_path)
@@ -151,7 +153,9 @@ def test_agent_message_carries_tool_steps(api: TestClient, tmp_path: Path):
     """
     script = [
         LLMResponse(Message("assistant", None, [
-            ToolCall("c1", "ls", {"path": "plans/"})]), 0, 0, "fake"),
+            # I5 改名后 ls 走新路径（plans/ 旧名仍可 read/write，但 vendor 的
+            # ScopedWorkspace 按 visible_paths 过滤前缀 —— 清单只认新名）
+            ToolCall("c1", "ls", {"path": "production-plans/"})]), 0, 0, "fake"),
         _done("两份规划。"),
     ]
     talk = _talk(api, script, tmp_path)
@@ -160,7 +164,8 @@ def test_agent_message_carries_tool_steps(api: TestClient, tmp_path: Path):
     assert agent_msg["role"] == "agent"
     tools = [s for s in agent_msg.get("steps", []) if s["kind"] == "tool"]
     assert any(s["tool"] == "ls" for s in tools)
-    assert any("default.yaml" in s["preview"] for s in tools)
+    assert any("default.yaml" in s["preview"] for s in tools
+               if s["tool"] in ("ls", "glob"))
     assert all(s["duration_ms"] >= 0 for s in tools)
 
 

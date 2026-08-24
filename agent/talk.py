@@ -270,9 +270,11 @@ class AgentTalk:
         self._round_activity = time.monotonic()   # 活性看门狗的时间戳（事件到达刷新）
         # 记忆工作区种子（2026-08-23 用户拍板）：目录丢了/换机器，从随库模板自动补齐
         #（只补缺失，用户的修改永远优先）
+        from agent.bootstrap import ensure_defaults
         from agent.memory_seed import seed_memory_workspace
 
         seed_memory_workspace(self._workspace_root)
+        ensure_defaults(self._workspace_root)   # 批 5 初始化模块：只补缺失
         self._target = target
         self._max_turns = max_turns
         self._changes = ChangeLog()

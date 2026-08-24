@@ -35,7 +35,7 @@ DEFAULT_FRAME_DIR = Path("web/public/fixtures")
 DEFAULT_PROPOSAL_LOG = Path("runtime/proposals.jsonl")
 #: 规划文件的**建议**落点（同提案日志的姿态：runtime 数据不进版本库）。
 #: `create_app` 默认**不持久化**（内存态）—— 理由同上：测试不传路径就不互污染。
-DEFAULT_PLANS_DIR = Path("runtime/plans")
+DEFAULT_PLANS_DIR = Path("runtime/production-plans")   # I5 改名；旧 runtime/plans 由 serve_api 兜底识别
 #: 地图规划文件的**建议**落点（同上）
 DEFAULT_MAP_PLANS_DIR = Path("runtime/map-plans")
 #: 对局记录的**建议**落点（二十六轮：复盘要有真数据源 —— live 帧流同步落 JSONL）。

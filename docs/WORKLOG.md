@@ -302,6 +302,28 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.63 五十六轮：PLAN-V2 批 5 落地 —— catalog 手册 + production-plans 改名 + scouting 派生 + 初始化模块（2026-08-24）
+
+后端 **991 passed / 4 skipped**（批 4 后 968，+23）、契约零改动：
+
+- **catalog/ 只读虚拟区**（agent/readonly.CatalogArea）：三族手册从**活 catalog**
+  渲染（terran 完整 11 字段 / 虫神参考 9 字段 / addons 仅人族 / matchups 种子）——
+  零漂移：不落盘、启动不生成，catalog 演进手册自动跟上。
+- **plans/ → production-plans/**（I5）：工作区主名 + 磁盘默认目录
+  （runtime/production-plans，serve_api 兜底旧 runtime/plans 沿用）；REST
+  /api/plans 不改（内部名避免 churn）。**旧名 plans/ 保留 read/write 别名**
+  （split 层双前缀；agent 历史笔记不废）——但 vendor ScopedWorkspace 的
+  ls/glob 按 visible_paths 过滤前缀，清单只认新名（踩过：ls plans/ 空）。
+- **scouting 派生**（D3）：observe 工人五分的侦查 = 编入 flow 组的 SCV
+  （group_id 非空）计数；仿真侧恒 0（无编组）。`repair` op 不在 OP_CATALOG
+  → ISSUES 立项。
+- **初始化模块**（agent/bootstrap.py，泛化 memory_seed「只补缺失」）：首运创建
+  workspace.md（工作区地图指路）+ system/prompt.md（系统提示词快照）；
+  AgentTalk 起动时挂接；幂等、用户修改永远优先。
+
+前端 theme.test 有 1 个失败（avatar/AvatarLab.tsx 的 text-xs）——是并行新增的
+未跟踪文件（用户侧 WIP），不在本批范围，未动。
+
 ## 0.62 五十五轮：PLAN-V2 批 4 落地 —— observe v2 两块输出 + 集群 + 自动 step（2026-08-24）
 
 批 4 全部落地，后端 **968 / 4s**、前端 **386 + tsc 绿**、契约零改动：
