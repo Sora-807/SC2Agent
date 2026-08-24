@@ -333,6 +333,10 @@ class Session:
                 # 热切 V1（批 C）：整份策略文件切换，帧边界应用（本方法就在帧边界被调）
                 self._swap_strategy(str(cmd["strategy"]))
                 _emit({"_": "ack", "op": op, "seq": self.seq})
+            elif op == "export":
+                # 批 6 清偿③：导出在**有 GameState 的这一侧**直出（最准），
+                # 父进程只转发 —— 消掉帧 join 近似（building 工人数/工人分类）
+                self._export_snapshot(cmd)
             elif op == "map":
                 # 默认地图热切（批 2）：帧边界重建合并图层 + 重发 static/map
                 self._swap_map_plan(str(cmd["plan"]))
@@ -357,10 +361,32 @@ class Session:
                 _emit({"_": "error", "detail": f"未知命令 op {op!r}"})
                 return
             if op == "queue":
-                _emit({"_": "ack", "op": op, "seq": self.seq})
+                pass   # ack 由 _queue_op 薄壳发（带队列长度）
         except Exception as exc:                      # noqa: BLE001
             # 一条坏命令不该弄死会话：报错继续（R7 降级但不静默）
             _emit({"_": "error", "detail": f"命令 {op} 失败：{type(exc).__name__}: {exc}"})
+
+    def _export_snapshot(self, cmd: dict) -> None:
+        """op=export：derive_from(gs) → state_to_doc + 剩余队列（uid/status）。"""
+        from planner.initial_state import state_to_doc
+        from planner.sim_state import derive_from
+        from view.encode import to_json
+
+        gs = self._last_gs
+        if gs is None:
+            _emit({"_": "export-result", "id": cmd.get("id"), "error": "还没有帧"})
+            return
+        st = derive_from(gs, self.catalog)
+        doc = state_to_doc(st, self.catalog)
+        q = self.runtime.queue(str(cmd.get("name") or "main"))
+        rows = [{"op": it.op.value, "type": it.type, "count": it.count,
+                 "placement": None, "task": it.task.value if it.task else None,
+                 "uid": it.uid, "status": it.status, "reason": it.reason}
+                for it in (list(q.items) if q else []) if it.status != "completed"]
+        _emit({"_": "export-result", "id": cmd.get("id"),
+               "initial_state": to_json(doc), "queue": rows,
+               "game_time": round(self.game_time, 1),
+               "note": "upgrades 需 research 记账（未建）—— 如实空表"})
 
     def _project(self, cmd: dict) -> None:
         """按给定队列算一条投影并回给父进程（`id` 用于配对请求与回复）。"""
@@ -399,43 +425,15 @@ class Session:
                     _emit(frame)     # 事件式静态面：swap 后补发新图
 
     def _queue_op(self, cmd: dict) -> None:
-        from api.commands import QUEUE_OPS
+        """queue op 分发薄壳（批 6 清偿①）：单点在 api.commands.apply_queue_op ——
+        与 OfflineSession 同一份实现；live 父进程只转发 JSON 不到这层。"""
+        from api.commands import apply_queue_op
 
-        name = str(cmd.get("name") or "main")
-        kind = str(cmd.get("kind") or "")
         items = [parse_item(i) for i in (cmd.get("items") or [])]
-        q = self.runtime.queue(name)
-        if kind not in QUEUE_OPS:
-            raise ValueError(f"未知队列 kind {kind!r}（{'|'.join(sorted(QUEUE_OPS))}）")
-        if kind == "submit":
-            self.runtime.submit_queue(name, items)
-        elif kind == "append":
-            self.runtime.append(name, items)
-        elif kind == "prepend":
-            self.runtime.prepend(name, items)
-        elif kind == "insert":
-            self.runtime.insert(name, cmd.get("before_uid"), items)
-        elif kind == "replace_head":
-            if not items:
-                raise ValueError("replace_head：缺 items（要换上的新队首；清空请用 clear）")
-            self.runtime.replace_head(name, items)
-        elif kind == "clear":
-            self.runtime.clear(name)
-        elif kind == "remove":
-            uid = str(cmd.get("uid") or "")
-            target = self.runtime.item_by_uid(name, uid) if uid else None
-            if q is None or target is None:
-                raise ValueError(f"remove：队列 {name!r} 没有 uid={uid!r} 的项")
-            self.runtime.remove(name, target)
-        elif kind == "reorder":
-            order = [str(x) for x in (cmd.get("order") or [])]
-            if q is None:
-                raise ValueError(f"reorder：队列 {name!r} 不存在")
-            uids = [it.uid for it in q.items]
-            if sorted(order) != sorted(uids) or len(set(order)) != len(order):
-                raise ValueError(f"reorder：order 必须是全部 uid（{uids}）的一个排列")
-            by_uid = {it.uid: it for it in q.items}
-            self.runtime.reorder(name, [by_uid[u] for u in order])
+        out = apply_queue_op(self.runtime, str(cmd.get("kind") or ""), str(cmd.get("name") or "main"),
+                             items=items, before_uid=cmd.get("before_uid"),
+                             uid=cmd.get("uid"), order=cmd.get("order"), seq=self.seq)
+        _emit({"_": "ack", "op": "queue", "seq": self.seq, **out})
 
 
 # ---------------- 两种驱动 ----------------

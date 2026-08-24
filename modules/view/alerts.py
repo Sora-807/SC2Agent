@@ -147,7 +147,7 @@ class AlertService:
     def _queue_alerts(self, gs: GameState, production: dict | None) -> list[AlertView]:
         if not production:
             return []
-        from production.semantics import CAPACITY_WARN_SECS, is_capacity_wait
+        from constraint.semantics import CAPACITY_WARN_SECS, is_capacity_wait
 
         out: list[AlertView] = []
         for q in production["queues"]:
@@ -241,7 +241,7 @@ class AlertService:
         已卡人口 **且** 队列/在途没有任何供给建筑 —— 建议插 depot，带 before_uid。
         队列里已排就闭嘴（等它建成就好）。"""
         from planner.economy import DEFAULT_ECON
-        from production.semantics import STATUS_IN_PROGRESS, STATUS_PENDING
+        from constraint.semantics import STATUS_IN_PROGRESS, STATUS_PENDING
 
         if gs.supply_used < gs.supply_cap or gs.supply_cap >= 200:
             return []

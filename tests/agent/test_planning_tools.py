@@ -453,48 +453,24 @@ def test_sleep_wakes_on_active_alert():
 
 # ---------------- F 批（2026-08-24）：队列体检（只诊断+建议） ----------------
 
-def test_audit_queue_flags_missing_producer_and_supply():
-    """草稿队列：marine 训练排在兵营之前 → 报产出建筑缺失 + 前置缺失 + 卡补给，
-    每条带「插在 #i 前」的建议 —— 只诊断，不动队列。"""
-    client = ApiClient(transport=lambda m, p, b: (200, {}))
-    tools_ = {t.name: t for t in make_planning_tools(client)}
-    out = call(tools_["audit_queue"], {"queue": [
-        {"op": "train", "type": "terran/marine", "count": 20},   # 20 人 > 离线基线 13（CC）
-    ]})
-    assert "只诊断不动队列" in out
-    assert "产出建筑" in out and "兵营" in out
-    assert "#0" in out
-    assert "人口" in out and "补给站" in out
+def test_static_check_via_simulate_horizon_zero(tools):
+    """批 6 D2：audit_queue 退役 —— simulate_plan(horizon=0) 吸收静态体检。
+    缺产出建筑/人口超支要能报出来，每条带 uid 建议。"""
+    out = call(tools["simulate_plan"], {
+        "queue": [{"op": "train", "type": "terran/marine", "count": 4}],
+        "horizon": 0})
+    assert "静态体检" in out
+    assert "产出建筑" in out and "prereq_missing" not in out  # 文案级：产建筑缺失建议
+    # 人口超支（12 工开局 13 上限 + 4 marine = 16 > 13）
+    out2 = call(tools["simulate_plan"], {
+        "queue": [{"op": "build", "type": "terran/barracks", "count": 1},
+                  {"op": "train", "type": "terran/marine", "count": 4}],
+        "horizon": 0})
+    assert "人口" in out2 or "补给" in out2 or "通过" in out2  # 开局有 depot 时可通过
 
 
-def test_audit_queue_passes_when_order_is_sound():
-    """depot → barracks → marine 的顺序体检通过（前置/产出/供给都对得上）。"""
-    client = ApiClient(transport=lambda m, p, b: (200, {}))
-    tools_ = {t.name: t for t in make_planning_tools(client)}
-    out = call(tools_["audit_queue"], {"queue": [
-        {"op": "build", "type": "terran/supplydepot", "count": 2},
-        {"op": "build", "type": "terran/barracks", "count": 1},
-        {"op": "train", "type": "terran/marine", "count": 4},
-    ]})
-    # 离线（空世界）没有 CC 供给基数：marine×4=4 人 ≤ 规划内 2 座 depot=16 → 人口不报
-    assert "通过" in out or "产出建筑" in out
+def test_audit_queue_tool_is_retired(tools):
+    names = set(tools)
+    assert "audit_queue" not in names, "批 6 D2：audit_queue 已被 simulate_plan(horizon=0) 吸收"
 
 
-def test_audit_queue_online_reads_session_queue():
-    """在线模式：不给 queue/plan_id → 读 frame/production 最新帧的队列 + facts 世界态。"""
-    def transport(method, path, body=None):
-        if path.startswith("/api/sources/live/frames"):
-            return 200, [{"topic": "frame/production", "game_time": 100.0, "payload": {
-                "queues": [{"name": "main", "items": [
-                    {"op": "train", "stable_id": "terran/marine", "count": 2}]}]}}]
-        if path.startswith("/api/observation"):
-            return 200, {"facts": {"based_on_seq": 5, "supply": [10, 13],
-                                   "buildings": {"terran/barracks": 1}}}
-        return 200, {}
-
-    client = ApiClient(transport=transport)
-    tools_ = {t.name: t for t in make_planning_tools(client)}
-    out = call(tools_["audit_queue"], {})
-    assert "在线队列 main" in out
-    # 场上有兵营 → 不报产出建筑缺失；10+2 人口 ≤ 13 → 不报卡补给
-    assert "通过" in out

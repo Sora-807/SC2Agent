@@ -16,7 +16,7 @@ from game import GameState, Owner, Point2, QueueItem
 from constraint.checks import check_addon, check_build, check_gas, occupied_cells
 from tactical_map.placement import BuildSlot
 
-from production.semantics import SKIP_PLACEMENT_COLLISION, Verdict, VerdictKind
+from constraint.semantics import SKIP_PLACEMENT_COLLISION, Verdict, VerdictKind
 from production.worker import Emission, NODE_RADIUS
 
 

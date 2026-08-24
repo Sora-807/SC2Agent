@@ -316,50 +316,13 @@ class OfflineSession:
     def queue_op(self, op: str, name: str, *, items: list[QueueItem] | None = None,
                  before_uid: str | None = None, uid: str | None = None,
                  order: list[str] | None = None) -> dict:
-        """生产队列工具 op（S11：轻量，不走 validate/compile，执行时按语义门控）。
+        """生产队列工具 op（S11）：薄壳 —— 分发单点在 api.commands.apply_queue_op
+        （批 6 清偿①：与 run_session 子进程同一份实现，三份拷贝归一）。"""
+        from api.commands import apply_queue_op
 
-        引用一律走 **uid**（ADR-0032 账本）：已执行项保留在队列里，下标会漂移。
-        `insert`：before_uid = 插到哪项之前（None=追加）；`remove`：uid；
-        `reorder`：order = 当前全部 uid 的一个排列。
-        `replace_head`：原子换第一个待执行项（remove pending 队首 + 插入一步完成）。
-        """
-        from api.commands import QUEUE_OPS
-
-        if op not in QUEUE_OPS:
-            raise ValueError(f"未知队列 op {op!r}（{'|'.join(sorted(QUEUE_OPS))}）")
-        q = self.runtime.queue(name)
-        if op == "submit":
-            self.runtime.submit_queue(name, items or [])
-        elif op == "append":
-            self.runtime.append(name, items or [])
-        elif op == "prepend":
-            self.runtime.prepend(name, items or [])
-        elif op == "insert":
-            self.runtime.insert(name, before_uid, items or [])
-        elif op == "replace_head":
-            if not items:
-                raise ValueError("replace_head：缺 items（要换上的新队首；清空请用 clear）")
-            self.runtime.replace_head(name, items)
-        elif op == "clear":
-            self.runtime.clear(name)
-        elif op == "remove":
-            if uid is None:
-                raise ValueError("remove：缺 uid（要删的队列项）")
-            target = self.runtime.item_by_uid(name, uid)
-            if q is None or target is None:
-                raise ValueError(f"remove：队列 {name!r} 没有 uid={uid!r} 的项")
-            self.runtime.remove(name, target)
-        elif op == "reorder":
-            if q is None or order is None:
-                raise ValueError(f"reorder：队列 {name!r} 不存在或缺 order")
-            uids = [it.uid for it in q.items]
-            if sorted(order) != sorted(uids) or len(set(order)) != len(order):
-                raise ValueError(
-                    f"reorder：order 必须是队列 {name!r} 全部 uid（{uids}）的一个排列")
-            by_uid = {it.uid: it for it in q.items}
-            self.runtime.reorder(name, [by_uid[u] for u in order])
-        after = self.runtime.queue(name)
-        return {"queue": name, "items": len(after.items) if after else 0, "accepted_seq": self.seq}
+        return apply_queue_op(self.runtime, op, name, items=items,
+                              before_uid=before_uid, uid=uid, order=order,
+                              seq=self.seq)
 
     def swap_strategy(self, manifest, assembly=None) -> dict:
         """热切 V1（批 C）：挂起 pending，**下一个帧边界**（tick 开头）应用并重发

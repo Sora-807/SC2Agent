@@ -116,7 +116,7 @@ def test_simulate_needs_no_session(client: TestClient):
     assert body["points"][0]["supply_used"] >= 12, "12 SCV 开局"
     # 枪兵需要兵营 —— 没造兵营就是前瞻警报（stalled：前置没）
     stalls = [e for e in body["events"] if e["kind"] == "stalled"]
-    assert stalls and stalls[0]["reason"] == "前置没"
+    assert stalls and stalls[0]["reason"].startswith("前置没"), stalls[0]["reason"]
     # 前瞻警报与实时警报同一模型（AlertView：severity/text_zh），前端同一组件渲染
     assert any(a["kind"] == "plan_stalled" and a["severity"] == "error"
                and "前置" in a["text_zh"] for a in body["alerts"])

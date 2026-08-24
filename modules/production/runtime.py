@@ -6,7 +6,7 @@
 `q.items` 里标 status（pending/in_progress/completed/skipped），不再摘除；
 uid（q01… per-queue 递增、重排不变）是 before_uid 引用的稳定锚点。
 
-1. 每项经 `production.semantics.classify`（单点权威，planner/健康检查共享）：
+1. 每项经 `constraint.semantics.classify`（单点权威，planner/健康检查共享）：
    - ready → 执行（emit）；count>1 逐帧补发，余量让给后续项；
    - pending（矿/气/人口未齐、前置/产出建筑在途或在队列、训练槽满）→ 队首等待，
      **不再越序执行后续项**（顺序语义保留）；
@@ -44,7 +44,7 @@ from constraint.checks import check_build, check_train
 
 from production.flights import BuildFlightsMixin
 from production.placement import resolve_placement
-from production.semantics import (
+from constraint.semantics import (
     SKIP_PLACEMENT_COLLISION,
     STATUS_COMPLETED,
     STATUS_IN_PROGRESS,

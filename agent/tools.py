@@ -301,7 +301,7 @@ def make_planning_tools(client: ApiClient,
 
         事件时间线段落已删除 —— 段落 2 的 started_at/completed_at 就是它。
         """
-        from production.semantics import SKIP_REASON_ZH, STATUS_ZH
+        from constraint.semantics import SKIP_REASON_ZH, STATUS_ZH
 
         out = [f"# 干跑 {title}"]
         if r.get("static"):
@@ -486,123 +486,6 @@ def make_planning_tools(client: ApiClient,
 
     # ---- 会话（「开启游戏」两模式，2026-08-23 用户拍板收敛）----
 
-    async def audit_queue(args: dict) -> str:
-        """F 批（2026-08-24 用户拍板：**只诊断 + 给建议**，agent 按建议手动插入）。
-        在线队列（不给 queue/plan_id = 当前会话的队列，用 name=队列名选）或离线队列
-        （plan_id 规划文件 / 显式 queue）跑体检：卡补给 / 前置不在场也不在队列 /
-        产出建筑缺失。每条建议给「插什么、插在剩余队列哪个下标之前」。"""
-        from game.catalog import load_all
-        from planner.economy import DEFAULT_ECON
-
-        items = args.get("queue")
-        pid = str(args.get("plan_id") or "").strip() or None
-        online = not items and not pid
-        if not items and pid:
-            try:
-                items = client.plan_get(pid)["queue"]
-            except ApiError as exc:
-                return f"取规划失败：{_err(exc)}"
-        if online:
-            try:
-                payload = client.latest_frame("frame/production") or {}
-            except ApiError as exc:
-                return f"取在线队列失败：{_err(exc)}"
-            qs = payload.get("queues") or []
-            name = str(args.get("name") or "main")
-            q = next((x for x in qs if x.get("name") == name), None)
-            if q is None:
-                have = [x.get("name") for x in qs]
-                return f"拒绝：在线队列 {name!r} 不存在（现有：{have or '无'}）"
-            # 账本化（ADR-0032）后帧里含已完成/已跳过的历史项 —— 体检只看还没执行的
-            items = [{"op": it.get("op"), "type": it.get("stable_id"),
-                      "count": it.get("count") or 1, "uid": it.get("uid")}
-                     for it in (q.get("items") or [])
-                     if it.get("status") in (None, "pending", "in_progress")]
-        if not isinstance(items, list) or not items:
-            return "拒绝：没有可体检的队列（queue/plan_id 至少给一个；在线模式先入队）"
-
-        # 世界态（在线才有；离线按空世界 —— 只查顺序/结构问题）
-        ready: dict[str, int] = {}
-        used = cap = 0.0
-        if online:
-            try:
-                facts = client.observation(source="live", text=False).get("facts") or {}
-                ready = {str(k).split(":")[0]: int(v)
-                         for k, v in (facts.get("buildings") or {}).items()}
-                supply = facts.get("supply") or [0, 0]
-                used, cap = float(supply[0] or 0), float(supply[1] or 0)
-            except ApiError:
-                pass
-        catalog = load_all()
-        if not online:
-            # 离线空世界基线：种族主基地默认在场（开局必然有）—— 离线体检查的是
-            # **顺序/结构**问题，不是「有没有基地」。注意 produced_by=None 是所有
-            # 建筑的属性（工兵建造），不能拿它认「起始建筑」。
-            mains = {"terran": "terran/commandcenter", "protoss": "protoss/nexus",
-                     "zerg": "zerg/hatchery"}
-            race = next((str(it.get("type") or "").split("/")[0]
-                         for it in items if "/" in str(it.get("type") or "")), "terran")
-            main_id = mains.get(race)
-            if main_id and catalog.by_stable_id(main_id) is not None:
-                ready[main_id] = ready.get(main_id, 0) + 1
-                cap += DEFAULT_ECON.supply_provided.get(main_id, 0)
-        issues: list[str] = []
-        queued_builds: dict[str, int] = {}
-        planned_cap = 0.0
-
-        def _ref(i: int, it: dict) -> str:
-            """建议的插入锚点：在线有 uid 用 uid（账本引用），离线用序号。"""
-            return f"uid={it['uid']}" if it.get("uid") else f"#{i}"
-
-        for i, it in enumerate(items):
-            op = str(it.get("op") or "")
-            sid = str(it.get("type") or "")
-            try:
-                count = max(1, int(it.get("count") or 1))
-            except (TypeError, ValueError):
-                count = 1
-            entry = catalog.by_stable_id(sid)
-            if entry is None:
-                issues.append(f"[error] #{i} {op} {sid}：catalog 不认 —— 先修类型名")
-                continue
-            zh = entry.display_name_zh
-            for req in entry.prerequisites:
-                req_e = catalog.by_stable_id(req)
-                if req != sid and ready.get(req, 0) + queued_builds.get(req, 0) < 1:
-                    issues.append(
-                        f"[warn] {_ref(i, it)} {zh}：前置 {req_e.display_name_zh if req_e else req}"
-                        f" 既不在场、队列更早处也没有 —— 建议在 {_ref(i, it)} 前插入其建造项")
-            if op == "build":
-                queued_builds[sid] = queued_builds.get(sid, 0) + count
-                planned_cap += DEFAULT_ECON.supply_provided.get(sid, 0) * count
-            elif op == "train":
-                pb = entry.produced_by
-                if pb and ready.get(pb, 0) + queued_builds.get(pb, 0) < 1:
-                    pb_e = catalog.by_stable_id(pb)
-                    issues.append(
-                        f"[error] {_ref(i, it)} {zh}：产出建筑"
-                        f"{pb_e.display_name_zh if pb_e else pb}不在场、队列里也没排"
-                        f" —— 先建它，否则该项会被跳过（skipped/prereq_missing）")
-                used += entry.cost.supply * count
-                if used > cap + planned_cap and cap + planned_cap < 200:
-                    deficit = used - cap - planned_cap
-                    issues.append(
-                        f"[error] {_ref(i, it)} {zh}×{count}：累计要人口 {used:.0f} >"
-                        f" 可用 {cap + planned_cap:.0f} —— 建议在 {_ref(i, it)} 前插补给站"
-                        f"（还差 {deficit:.0f} 人口，一座 +8）")
-                    planned_cap += DEFAULT_ECON.supply_provided["terran/supplydepot"]
-        target = (f"在线队列 {args.get('name') or 'main'}" if online
-                  else f"规划 {pid}" if pid else "草稿队列")
-        out = [f"队列体检（{target}，{len(items)} 项）—— 只诊断不动队列："]
-        if issues:
-            out.append(f"发现 {len(issues)} 处：")
-            out += [f"- {s}" for s in issues]
-            out.append("按建议手动插（在线走 propose hunk insert，before_uid = 目标项的 qXX uid；"
-                       "离线直接 edit 规划文件），插完 audit_queue 复查。")
-        else:
-            out.append("通过：没发现卡补给 / 前置缺失 / 产出建筑缺失。")
-        return "\n".join(out)
-
     async def start_session(args: dict) -> str:
         mode = str(args.get("mode") or "fast")
         if mode not in ("normal", "fast"):
@@ -777,7 +660,8 @@ def make_planning_tools(client: ApiClient,
                           "队列四选一：queue 显式草稿 / plan_id 规划文件 / queue_name 在线队列 / "
                           "from_session 当前会话。起点三选一：initial_state（字符串=引用 "
                           "initial-states/<id>，对象=内联）/ from_session / 缺省标准开局。"
-                          "horizon=0 = 只做静态体检（不跑投影）。**改过规划必须干跑** —— "
+                          "horizon=0 = 只做静态体检（不跑投影，吸收了原 audit_queue：前置/产出建筑/人口对账）。"
+                          "**改过规划必须干跑** —— "
                           "没有试算的改动不算完成。"),
              parameters={"type": "object",
                          "properties": {"queue": {"type": "array", "items": {"type": "object"}},
@@ -806,20 +690,6 @@ def make_planning_tools(client: ApiClient,
                                                "description": "存成 initial-states/<id>.yaml（省略 = 只返回不落盘）"}},
                          "additionalProperties": False},
              function=export_snapshot),
-        Tool(name="audit_queue",
-             description=("队列体检（只诊断+给建议，不自动改）：检测卡补给/卡科技（前置不在场"
-                          "也不在队列）/产出建筑缺失，每条建议给「插什么、插到哪个 uid 之前」。"
-                          "对象三选一：不给参数=当前会话在线队列（name 选队列名，只看未执行项）、"
-                          "plan_id=离线规划文件、queue=显式草稿。改法自己动手"
-                          "（在线 propose hunk insert / 离线 edit 规划文件），插完复查。"),
-             parameters={"type": "object",
-                         "properties": {"queue": {"type": "array", "items": {"type": "object"},
-                                                  "description": "显式草稿队列（op/type/count 项）"},
-                                        "plan_id": {"type": "string", "description": "离线规划 id"},
-                                        "name": {"type": "string",
-                                                 "description": "在线队列名（默认 main）"}},
-                         "additionalProperties": False},
-             function=audit_queue),
         Tool(name="start_session",
              description=("开启游戏（真 SC2 对局，两种模式）。mode=fast 仿真模式（默认）："
                           "快进跑完看**实际游戏结果** —— 验证策略/装配/规划就用它，不用问用户；"

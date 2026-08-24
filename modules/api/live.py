@@ -229,6 +229,11 @@ class LiveSession:
                     "payload": obj.get("terrain"),
                 }
                 need_frame = True
+            elif kind == "export-result":
+                slot = self._pending.get(int(obj.get("id") or -1))
+                if slot is not None:
+                    slot[1] = obj
+                    slot[0].set()
             elif kind == "projection":
                 slot = self._pending.get(int(obj.get("id") or -1))
                 if slot is not None:
@@ -439,6 +444,28 @@ class LiveSession:
         self._send({"op": "map", "plan": str(map_plan_id)})
         return {"swap": "dispatched", "map_plan": str(map_plan_id),
                 "accepted_seq": self.seq}
+
+    def export_via_subprocess(self, name: str = "main", timeout: float = 5.0) -> dict | None:
+        """批 6 清偿③：导出请求发进子进程（有 GameState 的一侧算最准），
+        等结果（投影往返同一模式）。失败/超时 = None（调用方回退帧拼装）。"""
+        with self._lock:
+            self._next_req += 1
+            req = self._next_req
+            slot: list = [threading.Event(), None]
+            self._pending[req] = slot
+        try:
+            self._send({"op": "export", "id": req, "name": name})
+        except (RuntimeError, OSError):
+            with self._lock:
+                self._pending.pop(req, None)
+            return None
+        if not slot[0].wait(timeout):
+            with self._lock:
+                self._pending.pop(req, None)
+            return None
+        with self._lock:
+            self._pending.pop(req, None)
+        return slot[1]
 
     def tick(self) -> None:
         """手动步进一次 = 等一帧。子进程按墙钟自推，父进程的 `tick` 只是"等到新帧"。

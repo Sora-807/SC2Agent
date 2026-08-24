@@ -54,7 +54,7 @@ class QueueItem:
 
     执行账本字段（ADR-0032）：uid 由 runtime 入队时分配（per-queue 递增 q01…，
     重排/插入不变 —— before_uid 引用的稳定锚点）；status 四值闭集
-    （production.semantics.QUEUE_STATUSES），已执行项**保留在队列里**不再摘除；
+    （constraint.semantics.QUEUE_STATUSES），已执行项**保留在队列里**不再摘除；
     reason 只在 skipped 时有值（SKIP_REASONS 闭集 key）。规划文件/草稿里的项
     这些字段全是默认值（pending/None）。
     """

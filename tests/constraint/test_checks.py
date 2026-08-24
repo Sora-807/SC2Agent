@@ -1,7 +1,7 @@
 """constraint 可行性校验：build/train 的门控项逐一断言（资源/供给/前置/放置）。"""
 from game import GameState, Grid, Owner, Point2, Unit
 from game.catalog import load_all
-from constraint.checks import check_assign_workers, check_build, check_resources, check_train
+from constraint.checks import check_build, check_resources, check_train
 
 CAT = load_all()
 
@@ -69,10 +69,6 @@ def test_check_resources_vespene():
     from game import Cost
     reasons = check_resources(_gs(minerals=200, vespene=50), Cost(minerals=0, vespene=100, supply=0))
     assert any("瓦斯" in x for x in reasons)
-
-
-def test_check_assign_workers_always_ok():
-    assert check_assign_workers().ok  # P0：无资源门控，立即发
 
 
 

@@ -133,11 +133,3 @@ def check_train(gs: GameState, catalog: Catalog, stable_id: str) -> ConstraintRe
         reasons.append(f"缺就绪产出建筑 {e.produced_by}")
     return ConstraintResult(not reasons, tuple(reasons))
 
-
-def check_assign_workers() -> ConstraintResult:
-    """assign_workers 无资源门控（P0：立即发，饱和/溢出由 WorkerAllocator 处理）。
-
-    注：生产运行时不调它（自己直接处理 ASSIGN_WORKERS），目前只有单测在用 —— 属"被测试养着的死 API"，
-    清理挂在 docs/REFACTOR.md §3 死代码清单（经济维持器已落地 ADR-0030）。
-    """
-    return ConstraintResult(True)

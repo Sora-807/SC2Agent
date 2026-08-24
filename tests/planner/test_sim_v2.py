@@ -44,13 +44,22 @@ def test_curve_queue_status_completed_with_times():
 
 
 def test_curve_queue_status_skipped_reason_closed_set():
-    """死局（前置不在场也不在队列）→ skipped + prereq_missing；后续项 pending 不级联标 skip。"""
+    """死局（前置不在场也不在队列）→ skipped + prereq_missing；后续项 pending 不级联标 skip。
+
+    批 6 清偿②后语义归一（D6/D8）：矿/气/人口缺 = pending（哪怕无收入死等），
+    只有 classify 判 skip（前置根本不在）才 skipped —— 夹具带够气，锁真前置缺口。
+    """
+    from planner.initial_state import state_from_doc
     p = Planner(CAT)
     ops = queue_to_ops([
         QueueItem(op="train", type="terran/siegetank", count=1, uid="q01"),   # 没工厂/挂件
         QueueItem(op="train", type="terran/marine", count=1, uid="q02"),      # 排在死局后面
     ], CAT).ops
-    curve = p.project(_gs(), ops, 30, until_complete=True)
+    st0 = state_from_doc({"minerals": 600, "gas": 300, "supply_used": 8,
+                          "supply_cap": 13,   # 坦克吃 3 人口：留余量，别让供给挡住前置判定
+                          "workers": {"mineral": 12},
+                          "buildings": {"terran/commandcenter": 1}}, CAT)
+    curve = p.project(_gs(), ops, 30, until_complete=True, initial=st0)
     st = {q["uid"]: q for q in curve.queue_status}
     assert st["q01"]["status"] == "skipped"
     assert st["q01"]["reason"] == "prereq_missing"

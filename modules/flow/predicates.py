@@ -348,10 +348,6 @@ def _p_arrived(ctx: EvalCtx, slot, target, radius) -> bool:
     return distance(c, t) <= float(radius)
 
 
-def _p_group_center(ctx: EvalCtx, slot) -> Point2 | None:
-    return group_center(ctx, slot)
-
-
 def _p_distance_between(ctx: EvalCtx, slot_a, slot_b) -> float:
     a = group_center(ctx, slot_a)
     b = group_center(ctx, slot_b)

@@ -6,7 +6,7 @@
 from game.catalog import load_all
 from game.production import QueueItem
 
-from production.semantics import (
+from constraint.semantics import (
     SKIP_PLACEMENT_COLLISION,
     SKIP_PREREQ_MISSING,
     STATUS_ZH,
@@ -14,7 +14,7 @@ from production.semantics import (
     classify,
     is_capacity_wait,
 )
-from production.semantics import ExecView  # noqa: F401（测试装配用）
+from constraint.semantics import ExecView  # noqa: F401（测试装配用）
 
 CAT = load_all()
 
@@ -150,14 +150,14 @@ def test_build_skip_when_prereq_nowhere():
 
 
 def test_skip_reason_closed_set_and_zh():
-    from production.semantics import SKIP_REASONS, SKIP_REASON_ZH
+    from constraint.semantics import SKIP_REASONS, SKIP_REASON_ZH
     assert set(SKIP_REASONS) == {SKIP_PREREQ_MISSING, SKIP_PLACEMENT_COLLISION}
     assert set(SKIP_REASON_ZH) == set(SKIP_REASONS)
     assert all(SKIP_REASON_ZH.values())
 
 
 def test_status_zh_covers_four_values():
-    from production.semantics import QUEUE_STATUSES
+    from constraint.semantics import QUEUE_STATUSES
     assert set(QUEUE_STATUSES) == {"pending", "in_progress", "completed", "skipped"}
     assert STATUS_ZH["pending"] == "等待中"
     assert STATUS_ZH["skipped"] == "已跳过"

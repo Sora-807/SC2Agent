@@ -5,18 +5,22 @@
 """
 from constraint.checks import (
     ConstraintResult,
-    check_assign_workers,
+    check_addon,
     check_build,
+    check_gas,
     check_prerequisites,
     check_resources,
     check_train,
+    occupied_cells,
 )
 
 __all__ = [
     "ConstraintResult",
-    "check_assign_workers",
+    "check_addon",
     "check_build",
+    "check_gas",
     "check_prerequisites",
     "check_resources",
     "check_train",
+    "occupied_cells",
 ]

@@ -14,8 +14,11 @@ from __future__ import annotations
 
 def export_snapshot(sess, catalog) -> dict:
     """会话 → {initial_state: doc, queue: [...(uid/status 带账)]}。"""
-    if hasattr(sess, "proc"):          # LiveSession：从帧拼
-        return _export_live(sess, catalog)
+    if hasattr(sess, "proc"):          # LiveSession：优先子进程直出（清偿③），
+        out = sess.export_via_subprocess()  # 有 GameState 的一侧算最准
+        if out is not None and out.get("initial_state") is not None:
+            return out
+        return _export_live(sess, catalog)  # 回退：帧拼装（近似处见 docstring）
     from planner.initial_state import state_to_doc
     from planner.sim_state import derive_from
 

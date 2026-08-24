@@ -1,4 +1,4 @@
-"""production.semantics：队列项执行语义的**单点权威**（PLAN-V2 批 1，ADR-0032）。
+"""constraint.semantics：队列项执行语义的**单点权威**（PLAN-V2 批 1，ADR-0032）。
 
 一套执行语义，三个消费方：live runtime（_drain 门控）、planner 仿真（批 3 接入）、
 simulate 健康检查（批 3 接入）。语义改一处，三处同步 —— 不再各写一套判据。

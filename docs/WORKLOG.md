@@ -302,6 +302,38 @@ output_tokens 一直在 trace 的 llm_call 里记着。
 预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
 前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
 
+## 0.64 五十七轮：PLAN-V2 批 6 落地 —— 收尾 + 三项债务清偿（全案完，2026-08-24）
+
+后端 **989 passed / 4 skipped**、前端 **396 + tsc 绿**、契约零改动。PLAN-V2 六批全完。
+
+- **audit_queue 退役**（D2）：工具删除（18→17），`simulate_plan(horizon=0)`
+  静态体检路径吸收（批 3 已通，本批补文案与测试锁）；spec 提示词同步。
+- **清偿①命令分发归一**：queue op 的 dispatch 三份拷贝收敛为
+  `api/commands.apply_queue_op` 单点（OfflineSession 与 run_session 子进程共用，
+  LiveSession 本就只转发）；ack 由薄壳统一发（去重）。
+- **清偿②classify 接入 planner**：`_feasible` 改四元组 (ok/reason/wait/skip_key)，
+  classify 单点判定 + 规划器时序精化（收入/顶满 200/研究槽本地保留）；
+  `_dead_reason` 垫片删除。**语义归一（D6/D8 对齐）**：矿/气/人口缺 = pending
+  （哪怕无收入死等也只发 stalled 事件不 skip），只有 classify 判 skip（前置根本
+  不在）才 skipped。ExecView 适配层槽语义修正（普通单位总占用<总槽、科技单位
+  算溢出占用——B15 三方一致）。**分层红线踩线**：planner import production.semantics
+  被架构测试抓住 → semantics **移入 constraint/**（两层的公共下层，本就是可行性
+  校验域）——ADR-0032 注记更新。
+- **清偿③live export 下沉子进程**：控制命令 `op=export`（投影往返同款 id 配对），
+  子进程用真 GameState derive_from 直出（工人分类/建造数最准），父进程只转发；
+  失败/超时回退帧拼装。
+- **提示词 v2 同步**（spec.py）：工作区清单（production-plans 新名/双分支地图规划/
+  initial-states/catalog 手册）、observe 两块描述、simulate 四段用法（horizon=0/
+  initial_state/queue_name/from_session/export_snapshot）。
+- **死代码扫尾**（REFACTOR §3）：`_p_group_center` 零引用删除；`check_assign_workers`
+  「被测试养着的死 API」删除 + constraint/__init__ 导出面倒挂修正（补活导出
+  check_addon/check_gas/occupied_cells）。其余清单项复核已有消费者（留）。
+- **ADR-0034** 补档（auto_supply 移除——批 1 落地、清单欠档）。
+- PLAN-V2 收档头标注全案完成 + 六批提交号。
+
+**遗留**：矿区坐标真机校准（mine_areas.yaml 草案）；agent 切地图工具面（等用户
+设计文档，REST 已先行）；B6 planner 三族化挂账（YAGNI）；repair op ISSUES 立项。
+
 ## 0.63 五十六轮：PLAN-V2 批 5 落地 —— catalog 手册 + production-plans 改名 + scouting 派生 + 初始化模块（2026-08-24）
 
 后端 **991 passed / 4 skipped**（批 4 后 968，+23）、契约零改动：

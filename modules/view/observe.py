@@ -487,7 +487,7 @@ def _production_text(prod: dict | None, zh) -> str:
     """
     if not prod:
         return ""
-    from production.semantics import SKIP_REASON_ZH, STATUS_ZH
+    from constraint.semantics import SKIP_REASON_ZH, STATUS_ZH
 
     out = []
     for q in prod.get("queues", []):

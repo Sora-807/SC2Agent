@@ -18,6 +18,7 @@ from game.catalog import Catalog, Role
 from planner.build_order import AssignWorkers, Build, Op, Research, Train, expand
 from planner.curve import ProjectionCurve, ProjectionEvent
 from planner.economy import DEFAULT_ECON, EconomyParams
+from constraint.semantics import ExecView, VerdictKind, classify
 from planner.sim_state import InFlight, SimState, derive_from
 from planner.slots import is_tech_unit, reactor_map, slot_capacity, techlab_map
 
@@ -29,17 +30,6 @@ SUPPLY_MAX = 200
 #: until_complete 的封顶（秒）：越过 until 之后最多再跑这么久 —— 队列死局时
 #: 「永远仿真不到」的部分在此停住（1 小时足够任何真开局跑完）
 COMPLETION_CAP = 3600.0
-
-
-def _dead_reason(reason: str | None) -> tuple[str, str]:
-    """死局原因（_feasible 的中文 reason）→ 闭集 skip key + detail。
-
-    闭集 = production.semantics.SKIP_REASONS（prereq_missing / placement_collision）。
-    仿真的死局几乎全是「前置永远建不出」（prereq_missing）；供给顶满 200 与
-    无收入属于环境死局，也归 prereq_missing（detail 如实带原话）。仿真不放置，
-    placement_collision 只有后续槽位近似模型才会产生。
-    """
-    return "prereq_missing", str(reason or "")
 
 
 class Planner:
@@ -115,7 +105,7 @@ class Planner:
                 st.in_flight = [f for f in st.in_flight if f.progress < f.build_time]
             # 4. 消费队列（可行性门控）
             while queue:
-                ok, reason, wait = self._feasible(queue[0], st)
+                ok, reason, wait, skip_key = self._feasible(queue[0], st)
                 if not ok:
                     # 等待（攒钱/排队/等在途落成）是顺序执行的正常时序，不是警报；
                     # 只有死局（前置永远建不出 / 供给顶到上限 / 收入永远为 0）才记 stalled。
@@ -123,13 +113,12 @@ class Planner:
                         curve.events.append(ProjectionEvent(
                             "stalled", self._op_label(queue[0]), st.t, reason))
                         stalled_recorded.add(id(queue[0]))
-                        # 账本：死局队首 → skipped 候选（reason 映射闭集；循环每秒
-                        # break，这里记一次即可 —— 后续项 pending 不级联）
+                        # 账本（批 6 清偿②）：skip_key 来自 classify 闭集直通 ——
+                        # 规划器本地死局（无收入/顶满200）没有 skip_key → 项留 pending
                         uid = getattr(queue[0], "uid", None)
-                        if uid is not None and uid not in dead_head:
-                            key, detail = _dead_reason(reason)
-                            dead_head[uid] = key
-                            ledger[uid]["detail"] = detail
+                        if skip_key is not None and uid is not None and uid not in dead_head:
+                            dead_head[uid] = skip_key
+                            ledger[uid]["detail"] = reason
                     break
                 stalled_recorded.discard(id(queue[0]))
                 uid = getattr(queue[0], "uid", None)
@@ -186,100 +175,119 @@ class Planner:
             used[f.producer] = n + 1
             f.progress += 1
 
-    def _feasible(self, op: Op, st: SimState) -> tuple[bool, str | None, bool]:
-        if isinstance(op, Build):
-            e = self._catalog.by_stable_id(op.type)
-            if e is None:
-                return (False, f"未知型 {op.type}", False)
-            if st.minerals < e.cost.minerals:
-                return (False, "缺矿", self._income_coming(st))
-            if st.gas < e.cost.vespene:
-                return (False, "缺气", self._gas_coming(st))
-            for p in e.prerequisites:
-                if st.buildings.get(p, 0) < 1:
-                    in_flight = any(f.type == p for f in st.in_flight)
-                    return (False, "前置没", in_flight)
-            if st.idle_workers < 1 and st.mineral_workers < 1:
-                return (False, "无builder", self._income_coming(st))
-            return (True, None, False)
-        if isinstance(op, Train):
-            e = self._catalog.by_stable_id(op.type)
-            if e is None:
-                return (False, f"未知型 {op.type}", False)
-            if st.minerals < e.cost.minerals:
-                return (False, "缺矿", self._income_coming(st))
-            if st.gas < e.cost.vespene:
-                return (False, "缺气", self._gas_coming(st))
-            if st.supply_used + e.cost.supply > st.supply_cap:
-                # 供给守卫已删（D7）：cap<200 时缺供给算等待（人可以插 depot ——
-                # 警报层 supply_capped 给建议）；顶满 200 才是死局
-                return (False, "缺供给", st.supply_cap < 200)
-            for p in e.prerequisites:
-                if st.buildings.get(p, 0) < 1:
-                    in_flight = any(f.type == p for f in st.in_flight)
-                    return (False, "前置没", in_flight)
-            if e.produced_by:
-                # B15 产槽模型：科技单位（前置含本产建筑的 techlab）只能用科技槽；
-                # 普通单位优先普通槽（reactor 双倍），普通满后溢出到空闲科技槽。
-                # 旧代码只数「母建筑数 − busy」——techlab 母建筑被当普通槽，
-                # 坦克在普通工厂上也能"同时开工"。
-                techlab_sid = self._techlab_of.get(e.produced_by)
-                normal_cap, tech_cap = slot_capacity(
-                    e.produced_by, st.buildings, st.addons, techlab_sid)
-                # 在产分桶：普通单位溢出到科技槽时占的是科技槽 —— 不追踪具体槽位，
-                # 用「溢出量 = max(0, bn − normal_cap)」推导科技槽占用（贪心：普通单位
-                # 先占满普通槽才溢出，与用户拍板的优先序一致）。
-                busy_tech = 0
-                busy_normal = 0
-                for f in st.in_flight:
-                    if f.kind != "train" or f.producer != e.produced_by:
-                        continue
-                    if f.type in self._tech_units:
-                        busy_tech += 1
-                    else:
-                        busy_normal += 1
-                if e.stable_id in self._tech_units:
-                    tech_taken = busy_tech + max(0, busy_normal - normal_cap)
-                    if tech_cap - tech_taken <= 0:
-                        # 槽全忙 = 排队等待；槽为 0 且没有 techlab 在建 = 死局
-                        wait = tech_cap > 0 or (
-                            techlab_sid is not None
-                            and any(f.type == techlab_sid for f in st.in_flight))
-                        return (False, "无科技槽", wait)
-                elif busy_normal + busy_tech >= normal_cap + tech_cap:
-                    # 普通单位任何空槽都能用（普通 + 溢出），总占用满才算无产槽
-                    reactor_sid = self._reactor_of.get(e.produced_by)
-                    wait = (normal_cap + tech_cap) > 0 or any(
-                        f.type == e.produced_by
-                        or (reactor_sid is not None and f.type == reactor_sid)
-                        for f in st.in_flight)
-                    return (False, "无产槽", wait)
-            return (True, None, False)
+    def _feasible(self, op: Op, st: SimState) -> tuple[bool, str | None, bool, str | None]:
+        """可行性门控（批 6 清偿②）：**classify 单点** + 规划器时序精化。
+
+        返回 (ok, reason, wait, skip_key)：
+        - skip_key 非 None = classify 判 skip（闭集 prereq_missing/placement_collision）
+          —— 账本直接记 skipped；
+        - 规划器本地死局（矿/气无收入、供给顶满 200、无 builder）只发 stalled 事件
+          （wait=False），**不**给 skip_key —— 项按 D8 留 pending（矿/气/人口缺 = 等待）。
+        """
+        from planner.build_order import AssignWorkers, Build, Research, Train
+        from game.production import QueueOp as _QO
+
         if isinstance(op, Research):
+            # classify 不覆盖 research（产出建筑=研究槽语义不同）—— 本地分支
             e = self._catalog.by_stable_id(op.type)
             if e is None:
-                return (False, f"未知型 {op.type}", False)
+                return (False, f"未知型 {op.type}", False, None)
             if st.minerals < e.cost.minerals:
-                return (False, "缺矿", self._income_coming(st))
+                return (False, "缺矿", self._income_coming(st), None)
             if st.gas < e.cost.vespene:
-                return (False, "缺气", self._gas_coming(st))
-            for p in e.prerequisites:
-                if st.buildings.get(p, 0) < 1:
-                    in_flight = any(f.type == p for f in st.in_flight)
-                    return (False, "前置没", in_flight)
+                return (False, "缺气", self._gas_coming(st), None)
+            for p_ in e.prerequisites:
+                if st.buildings.get(p_, 0) < 1:
+                    wait = any(f.type == p_ for f in st.in_flight)
+                    return (False, "前置没", wait, None)
             if e.produced_by:
                 producers = st.buildings.get(e.produced_by, 0)
                 busy = sum(1 for f in st.in_flight
                            if f.kind == "research" and f.producer == e.produced_by)
                 if producers - busy <= 0:
-                    wait = producers > 0 or any(
-                        f.type == e.produced_by for f in st.in_flight)
-                    return (False, "无研究槽", wait)
-            return (True, None, False)
-        if isinstance(op, AssignWorkers):
-            # best-effort：有多少派多少，不卡（真机 steward 也是自适应不卡）
-            return (True, None, False)
-        return (False, "未知 op", False)
+                    wait = producers > 0 or any(f.type == e.produced_by
+                                                for f in st.in_flight)
+                    return (False, "无研究槽", wait, None)
+            return (True, None, False, None)
+
+        class _Item:   # planner Op → classify 的 QueueItem 形态 shim
+            pass
+
+        it = _Item()
+        it.op = (_QO.BUILD if isinstance(op, Build)
+                 else _QO.TRAIN if isinstance(op, Train) else _QO.ASSIGN_WORKERS)
+        it.type = getattr(op, "type", None)
+        it.count = 1
+        it.placement = None
+        it.task = getattr(op, "task", None)
+        v = classify(it, self._catalog, self._exec_view(op, st))
+        if v.kind is VerdictKind.SKIP:
+            # reason 带「前置没」前缀：alerts.from_curve 按这个词过滤 stalled 事件
+            return (False, f"前置没（{v.detail or v.reason}）", False, v.reason)
+        if v.kind is VerdictKind.PENDING:
+            r = v.reason or ""
+            if "晶体矿不足" in r:                      # 规划器精化：收入还会不会来
+                return (False, "缺矿", self._income_coming(st), None)
+            if "高能瓦斯不足" in r:
+                return (False, "缺气", self._gas_coming(st), None)
+            if "供给不足" in r:                        # 顶满 200：等待变死局事件
+                return (False, "缺供给", st.supply_cap < 200, None)
+            if "等前置" in r or "等产出建筑" in r:
+                return (False, "前置没", True, None)
+            if "production_capacity" in r or "训练槽" in r:
+                return (False, "无产槽", True, None)
+            return (False, r, True, None)
+        # classify 判 ready —— 规划器本地还有两类检查（classify 看不见 builder 与
+        # 科技槽特化：free_producers 适配层已算「该单位能用的槽」，builder 是 sim 特有）
+        if isinstance(op, Build):
+            e = self._catalog.by_stable_id(op.type)
+            if e is not None and "addon" not in e.capabilities \
+                    and st.idle_workers < 1 and st.mineral_workers < 1:
+                return (False, "无builder", self._income_coming(st), None)
+        return (True, None, False, None)
+
+    def _exec_view(self, op: Op, st: SimState) -> ExecView:
+        """SimState → classify 的 ExecView（批 6 清偿②的适配层）。
+
+        - queued_types = ∅：仿真顺序消费，队首之前的 op 已解析（在场或在途）——
+          与 runtime 的账本前序语义一致（分类器词表不降级）；
+        - free_producers 只算当前 op 的产出建筑，且**按单位特化**：科技单位要
+          空闲科技槽，普通单位普通槽满可溢到科技槽（B15 同款槽模型）。
+        """
+        producer = None
+        op_type = getattr(op, "type", None)
+        entry = self._catalog.by_stable_id(op_type) if op_type else None
+        if isinstance(op, Train) and entry is not None:
+            producer = entry.produced_by
+        free: frozenset[str] = frozenset()
+        if producer:
+            techlab_sid = self._techlab_of.get(producer)
+            normal_cap, tech_cap = slot_capacity(producer, st.buildings,
+                                                 st.addons, techlab_sid)
+            busy_n = busy_t = 0
+            for f in st.in_flight:
+                if f.kind != "train" or f.producer != producer:
+                    continue
+                if f.type in self._tech_units:
+                    busy_t += 1
+                else:
+                    busy_n += 1
+            # 槽占用语义与旧 _feasible/B15 三方一致：普通单位可用任意空槽
+            # （总占用 < 总槽）；科技单位只认科技槽（普通溢出也占科技槽）
+            is_tech = op_type in self._tech_units
+            free_normal = busy_n + busy_t < normal_cap + tech_cap
+            tech_taken = busy_t + max(0, busy_n - normal_cap)
+            free_tech = tech_cap - tech_taken > 0
+            if (free_tech if is_tech else free_normal):
+                free = frozenset({producer})
+        return ExecView(
+            minerals=st.minerals, vespene=st.gas,
+            supply_used=st.supply_used, supply_cap=st.supply_cap,
+            ready_types=frozenset(st.buildings.keys()),
+            inflight_types=frozenset(f.type for f in st.in_flight),
+            queued_types=frozenset(),
+            free_producers=free,
+        )
 
     # ---- 等待/死局判据 ----
 

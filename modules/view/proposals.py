@@ -163,7 +163,7 @@ def parse_item(raw: dict) -> QueueItem:
             placement = PlacementInRegion(region=str(p["region"]), index=p.get("index"))
         else:
             raise ValueError(f"未知 placement.kind {p.get('kind')!r}（exact|in_region）")
-    from production.semantics import QUEUE_STATUSES
+    from constraint.semantics import QUEUE_STATUSES
     status = str(raw.get("status") or "pending")
     if status not in QUEUE_STATUSES:
         status = "pending"  # 旧值（队首阻塞/未处理）归一到 pending —— 语义等价

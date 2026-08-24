@@ -92,8 +92,8 @@ EXPECTED_TOOLS = {
     # 语义动作（文件表达不了的：干跑/会话/战术素材）。
     # 2026-08-23 工具审视 19→17：write_surface/read_current_strategy 退役；
     # 2026-08-24 +stop_session（对称：能开游戏也要能关，防孤儿 SC2）
-    # +audit_queue（F 批 2026-08-24：队列体检只诊断+建议，17→18）
-    "simulate_plan", "audit_queue", "start_session", "stop_session", "sleep",
+    # audit_queue 已退役（批 6 D2：simulate_plan horizon=0 吸收），18→18
+    "simulate_plan", "start_session", "stop_session", "sleep",
     "list_modules", "read_module",
     "export_snapshot",
 }
