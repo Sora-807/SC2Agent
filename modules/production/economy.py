@@ -99,6 +99,10 @@ class EconomyKeeper:
         self.reservations = reservations or WorkerReservations()
         self.policy = policy or EconomyPolicy()
         self._last_retask: dict[int, int] = {}  # tag -> 上次改派的 gs.seq（防抖）
+        # 2026-08-24 真机事故修：工人往返送矿的那一段，订单目标是**基地**不是矿脉
+        # （Return 单），旧逻辑把它当"空闲"→ 冷却一过就改派 → 采矿被打断、排队的
+        # 建造单也被 gather 顶掉。记忆 = 每个工人最近一次的采矿目标，送矿途中沿用。
+        self._harvest_mem: dict[int, int] = {}   # tag -> 矿脉/气井 tag
         self._op_seq = 0
         self._last_plan: dict[int, int | None] = {}  # 上一帧的目标分配（仅用于 snapshot 展示）
         self._last_emitted_count = 0
@@ -124,8 +128,8 @@ class EconomyKeeper:
         workers = self._domain_workers(gs)
         self.reservations.prune(frozenset(u.tag for u in gs.units))
         nodes = self._nodes(gs)
-        current = self._current_assignment(workers, nodes)
-        plan = self._plan(gs, workers, nodes, current)
+        current, foreign = self._current_assignment(workers, nodes)
+        plan = self._plan(gs, workers, nodes, current, foreign)
         self._last_plan = plan
         ops: list[Operation] = []
         for tag, node_tag in plan.items():
@@ -214,16 +218,57 @@ class EconomyKeeper:
         big = layer.big_regions.get(big_id)
         return big.anchor if big is not None else None
 
-    # ---- 实际态（从 orders 派生，无内部状态）----
+    # ---- 实际态（从 orders 派生 + 往返记忆）----
 
-    @staticmethod
-    def _current_assignment(workers: list, nodes: list[_Node]) -> dict[int, int | None]:
+    def _current_assignment(self, workers: list, nodes: list[_Node]):
+        """每个工人的当前在岗矿脉。返回 (cur, foreign)：
+
+        - cur: tag -> 矿脉/气井 tag | None（None = 不在岗、可派）；
+        - foreign: **外来订单**（build/move/attack 等非采矿族）的工人集合 ——
+          维持器对它们整体不动（不占名额、不改派、不进候选）。
+
+        在岗的认定（2026-08-24 真机事故修）：
+        - 订单直接指向当前节点（Gather/Harvest 单）→ 在岗，记忆刷新；
+        - 订单指向别处但在运矿/运气（Return 单，目标是基地）→ **沿用记忆的在岗节点**
+          —— 往返送矿那一段不是空闲。旧逻辑把它当空闲，冷却一过就改派到别的矿，
+          采矿被打断、收入归零；
+        - 采矿族订单指向已消失的节点（矿采空的过渡帧）→ 不在岗但仍归维持器管（重派活矿）。
+
+        §0.53 补两处：
+        - **扛货的工人也可能被外来征用**（SCV 常扛着矿被派去建造）—— 扛货但订单
+          是外来能力（build/move…）同样进 foreign，否则维持器的 gather 会顶掉刚发
+          的建造单（真机：0% 补给站被弃两次的最后一环）；
+        - 采矿族判定改按**能力名**（Gather/Harvest/Return 子串），不再要求
+          target_tag —— 驱动曾整字段丢失（§0.53 根因①），能力名在两种驱动下都稳。
+        """
         node_tags = {n.tag for n in nodes}
         cur: dict[int, int | None] = {}
+        foreign: set[int] = set()
         for w in workers:
             target = next((o.target_tag for o in w.orders if o.target_tag in node_tags), None)
-            cur[w.tag] = target  # None = 空闲或在做别的事（建造/移动）
-        return cur
+            if target is not None:
+                cur[w.tag] = target
+                self._harvest_mem[w.tag] = target
+                continue
+            mining_family = any(
+                any(k in (o.ability or "").lower() for k in ("gather", "harvest", "return"))
+                for o in w.orders)
+            if bool(getattr(w, "is_carrying_minerals", False)
+                    or getattr(w, "is_carrying_vespene", False)):
+                mem = self._harvest_mem.get(w.tag)
+                cur[w.tag] = mem if mem in node_tags else None   # 记住的矿没了=真空闲
+                if w.orders and not mining_family:
+                    foreign.add(w.tag)   # 扛货但被外来能力征走（建造/移动…）→ 不接管
+                continue
+            self._harvest_mem.pop(w.tag, None)
+            cur[w.tag] = None
+            if w.orders and not mining_family:
+                foreign.add(w.tag)
+        alive = {w.tag for w in workers}
+        for tag in list(self._harvest_mem):    # 离场的工人（阵亡/被租借出领地）记忆作废
+            if tag not in alive:
+                self._harvest_mem.pop(tag, None)
+        return cur, foreign
 
     def _may_retask(self, tag: int, seq: int) -> bool:
         last = self._last_retask.get(tag)
@@ -248,14 +293,20 @@ class EconomyKeeper:
         return m_target, g_target
 
     def _plan(self, gs: GameState, workers: list, nodes: list[_Node],
-              current: dict[int, int | None]) -> dict[int, int | None]:
+              current: dict[int, int | None], foreign: set[int] | None = None) -> dict[int, int | None]:
         """目标分配：tag -> node_tag（None = 保持空闲）。
 
         原则：先留住已在目标上的（sticky，不发命令）；缺口用空闲工兵补；
         还不够才从超额任务里抽人；气优先于矿（气更稀缺，且 gas 目标通常是显式配额）。
+        **外来订单的工人（建造/移动/攻击等，非本维持器所派）整体跳过**：不占名额、
+        不改派 —— 2026-08-24 事故的另一半（维持器的 gather 把 production 排队的
+        build 单顶掉，提案"看起来没效果"就是这个链条）。征用表（reservations）是
+        结构性防护，这里是行为性防护：双保险。
         """
-        by_tag = {w.tag: w for w in workers}
-        m_target, g_target = self._targets(nodes, len(workers))
+        # 归本维持器管的工人 = 全体 - foreign（在岗/送矿途中/空闲/采矿族指向死矿）；
+        # 外来订单（build/move/attack…）的工人跳过 —— 不占名额、不改派、不进候选
+        by_tag = {w.tag: w for w in workers if w.tag not in foreign}
+        m_target, g_target = self._targets(nodes, len(by_tag))
         node_by_tag = {n.tag: n for n in nodes}
         room = {n.tag: n.cap for n in nodes}
         plan: dict[int, int | None] = {}

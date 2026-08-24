@@ -5,7 +5,7 @@
  * 修法：live 状态改为按**到达顺序**的条目列表，正文与思考/工具行各归其位。
  *
  * 纯 reducer：SSE 事件 → 新时间线；组件只渲染，转移逻辑用测试锁。
- * （落盘后的历史消息仍是 {steps, text} 两段 —— 渲染走 AgentMessage 的旧形态。）
+ * （轮末落盘后的历史消息带 segments 交错时间线 —— A 批起渲染与服务端同形。）
  */
 import type { ChatEvent, ChatStep } from "../api/agent-chat";
 
@@ -14,7 +14,14 @@ export type LiveStep = ChatStep & { running?: boolean };
 
 export type LiveEntry =
   | { kind: "text"; text: string }
-  | { kind: "step"; step: LiveStep };
+  | { kind: "step"; step: LiveStep }
+  | { kind: "user"; text: string };
+
+/** 轮内插话落时间线**末尾**（A 批，2026-08-24）：用户消息在流式期间就按到达顺序
+ *  显示 —— 旧实现 append 进 messages（渲染在 live 块上方），刚发的话跑到已流出
+ *  内容的上面去了。轮末 round 事件到来时由服务端 segments 真源接管。 */
+export const appendUserEntry = (entries: LiveEntry[], text: string): LiveEntry[] =>
+  [...entries, { kind: "user", text }];
 
 /** 时间线里的全部正文拼起来（暂时只用于测试/诊断；渲染直接按条目走） */
 export const liveText = (entries: LiveEntry[]): string =>

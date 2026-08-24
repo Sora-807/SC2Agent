@@ -449,3 +449,35 @@ def test_sc2_control_file_channel(tmp_path: Path):
     assert '"_": "ack"' in out or '"op":"queue"' in out or '"ack"' in out.replace(" ", ""), \
         "控制文件命令应被确认（ack 控制行）"
     assert not ctl.exists(), "控制文件消费后应删除"
+
+
+# ---------------- 开局生产力默认值（§0.52 C 批）----------------
+
+def test_start_production_sets_worker_quotas(client: TestClient):
+    """production 请求体 → 会话建立即下发采集配额（目标值语义，offline 也能配）。"""
+    r = client.post("/api/session/start?driver=offline&autotick=false",
+                    json={"production": {"mineral_workers": 8, "gas_workers": 3}})
+    assert r.status_code == 200, r.text
+    keeper = client.app.state.session.keeper
+    assert keeper.policy.mineral_workers == 8
+    assert keeper.policy.gas_workers == 3
+
+
+def test_start_production_accepts_short_keys_and_idle(client: TestClient):
+    r = client.post("/api/session/start?driver=offline&autotick=false",
+                    json={"production": {"mineral": 10, "idle": 1}})
+    assert r.status_code == 200, r.text
+    keeper = client.app.state.session.keeper
+    assert keeper.policy.mineral_workers == 10
+    assert keeper.policy.reserve_idle == 1
+
+
+def test_start_production_rejects_bad_keys_and_values(client: TestClient):
+    """坏参数在建会话**之前**就 400 —— 不留一个半配置的会话。"""
+    r1 = client.post("/api/session/start?driver=offline&autotick=false",
+                     json={"production": {"vespene_workers": 3}})
+    assert r1.status_code == 400 and "vespene_workers" in r1.text
+    r2 = client.post("/api/session/start?driver=offline&autotick=false",
+                     json={"production": {"mineral_workers": -1}})
+    assert r2.status_code == 400
+    assert client.app.state.session is None, "校验失败不建会话"

@@ -100,21 +100,10 @@
 body { margin: 0; background: var(--bg-base); color: var(--text-strong);
   font-family: ui-sans-serif, system-ui, "Microsoft YaHei", sans-serif; }
 
-/* 轮级加载扫光（设计参考 §4：shimmer 而非 spinner；prefers-reduced-motion 关闭） */
-@keyframes dsh-sweep-kf {
-  0% { background-position: -160px 0; }
-  100% { background-position: 320px 0; }
-}
-.dsh-sweep {
-  background-image: linear-gradient(90deg, transparent, rgb(148 163 184 / 0.25), transparent);
-  background-size: 160px 100%;
-  background-repeat: no-repeat;
-  animation: dsh-sweep-kf 2.6s linear infinite;
-}
 @media (prefers-reduced-motion: reduce) {
-  .dsh-sweep { animation: none; }
   .think-running svg { animation: none !important; }
 }
+/* 外层矩形流光（dsh-sweep）2026-08-24 用户拍板移除；思考行只留小图标轨道+文字呼吸 */
 
 /* 思考运行态：原子轨道慢转 + 呼吸（结束即停 —— 类只在运行中挂着） */
 @keyframes think-orbit {

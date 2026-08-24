@@ -430,7 +430,7 @@ describe("外壳重构（2026-08-22 十四/十五轮：顶栏极简 + 时间轴�
     expect(app).toContain("driveIdle ? (");
     expect(app).toContain("<StartCard />");
     const card = code("shell/StartCard.tsx");
-    expect(card).toContain("启动真机（SC2）");
+    expect(card).toContain("开启游戏");
   });
 
   it("无边缘缝外壳（十五轮）：顶栏全宽贴顶，侧栏接在其下，列间浅边分割（无 gap/无 padding 缝）", () => {
@@ -503,17 +503,19 @@ describe("动态帧合并（2026-08-22 二十三轮：live 卡顿治理）", () 
   });
 });
 
-describe("回放的生产队列 = 整局操作序列（2026-08-22 二十四轮用户定义）", () => {
-  it("回放模式渲染 WholeOpsList：累积 hook + 已执行/待执行两段，拖时间轴不重排", () => {
+describe("回放的生产队列 = 当前帧操作序列（2026-08-24 复盘改版：F17 累积退役）", () => {
+  it("回放模式渲染 WholeOpsList：当前帧投影操作 + 待执行两段，换帧重排不叠加", () => {
     const page = code("pages/ProductionPage.tsx");
     expect(page).toContain("WholeOpsList");
-    expect(page).toContain("useAccumulatedProjection");
+    expect(page).not.toContain("useAccumulatedProjection");
     expect(page).toContain("待执行");
     expect(page).toMatch(/mode === "replay" && projection/);
   });
 
-  it("累积逻辑是共享 hook：投影板与队列卡同源", () => {
+  it("投影板只吃本帧：无累积 hook，截断线钉 T、左缘钳 T-30", () => {
     const board = code("charts/ProjectionBoard.tsx");
-    expect(board).toContain("useAccumulatedProjection(frame)");
+    expect(board).not.toContain("useAccumulatedProjection");
+    expect(board).toContain("nowAnchoredRange");
+    expect(board).toContain("LEFT_MARGIN_SECS");
   });
 });

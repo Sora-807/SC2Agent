@@ -110,3 +110,78 @@ def test_empty_frames_do_not_crash():
 def test_frames_by_topic_keeps_last():
     envs = [{"topic": "frame/world", "seq": 1}, {"topic": "frame/world", "seq": 2}]
     assert frames_by_topic(envs)["frame/world"]["seq"] == 2
+
+
+# ---------------- §0.52 E 批：用户结构化读法的三新段 ----------------
+
+def _u(tag, sid, *, role_hint=None, pos=(30.0, 30.0), hp=100.0, hp_max=100.0,
+       prog=1.0, addon=None, producing=None, form=None):
+    return {"tag": tag, "stable_id": sid, "form": form, "owner": "self",
+            "pos": [pos[0], pos[1]], "facing": 0.0, "hp": hp, "hp_max": hp_max,
+            "shield": 0.0, "energy": 0.0, "build_progress": prog,
+            "group_id": None, "order": None, "footprint": None,
+            "producing": producing, "addon": addon, "carrying": None, "buffs": []}
+
+
+def _e2e_frames():
+    """带挂件兵营 / 散兵 / 在训 / 在建 / 双基地的合成帧（只覆盖 observe 消费的键）。"""
+    world = {"economy": {"minerals": 300, "vespene": 100, "supply_used": 15, "supply_cap": 27},
+             "units": [
+                 _u(1, "terran/commandcenter", pos=(30, 30), hp=1400, hp_max=1500),
+                 _u(2, "terran/scv", pos=(28, 32)),
+                 _u(3, "terran/barracks", pos=(36, 30), addon="reactor",
+                    producing=[{"stable_id": "terran/marine", "progress": None}]),
+                 _u(4, "terran/barracks", pos=(38, 32)),
+                 _u(5, "terran/supplydepot", pos=(34, 36), prog=0.4),
+                 _u(6, "terran/marine", pos=(31, 29)),
+                 _u(7, "terran/marine", pos=(31.5, 29.5)),
+                 _u(8, "terran/siegetank", pos=(90.0, 120.0)),   # 远离基地 → 机动
+                 _u(9, "terran/commandcenter", pos=(90, 60), hp=1500, hp_max=1500),
+             ]}
+    econ = {"nodes": [{"tag": 1002, "kind": "mineral", "workers": 2, "capacity": 2,
+                       "saturated": True, "base_tag": 1},
+                      {"tag": 1003, "kind": "gas", "workers": 3, "capacity": 3,
+                       "saturated": True, "base_tag": 9}],
+            "quotas": {}, "reserved": [], "tasks": [], "domain_workers": 12, "emitted_count": 0}
+    prod = {"queues": [{"name": "main", "head_status": "可执行", "blocked": None,
+                        "items": [{"index": 0, "op": "train", "stable_id": "terran/marine",
+                                   "count": 2, "placement": None, "task": None,
+                                   "status": "未处理", "block_reason": None}]}],
+            "in_flight": [], "dropped": [], "stalls": []}
+    return {"frame/world": {"seq": 7, "game_time": 90.0, "payload": world},
+            "frame/economy": {"seq": 7, "game_time": 90.0, "payload": econ},
+            "frame/production": {"seq": 7, "game_time": 90.0, "payload": prod}}
+
+
+def test_army_section_lists_everything_with_training_and_queued():
+    p = observation_packet(_e2e_frames(), catalog=CAT)
+    army = p.sections["部队清单"]
+    assert "已有：" in army and "机枪兵×2" in army
+    assert "攻城坦克" in army                       # 散兵也在（不依赖 flow 编组）
+    assert "在训：机枪兵×1" in army                  # 兵营 producing
+    assert "待训（排队）：机枪兵×2" in army           # 队列 train 项
+
+
+def test_buildings_section_counts_with_addons_and_under_construction():
+    p = observation_packet(_e2e_frames(), catalog=CAT)
+    buildings = p.sections["关键建筑"]
+    assert "指挥中心×2" in buildings
+    assert "兵营×2" in buildings
+    assert "挂件：反应堆×1" in buildings
+    assert "在建：补给站 40%" in buildings
+
+
+def test_regions_section_buckets_by_base_with_pos_and_hp():
+    p = observation_packet(_e2e_frames(), catalog=CAT)
+    regions = p.sections["区域"]
+    assert "指挥中心基地 @30,30" in regions          # 主基地桶
+    assert "兵营@36,30 100%" in regions              # 建筑带坐标血量
+    assert "机枪兵×2@31,29" in regions               # 部队按类计数
+    assert "机动（远离基地）：攻城坦克×1" in regions   # 远离所有基地不硬塞
+
+
+def test_facts_carry_buildings_and_army_dicts():
+    p = observation_packet(_e2e_frames(), catalog=CAT)
+    assert p.facts["buildings"]["terran/barracks"] == 1
+    assert p.facts["buildings"]["terran/barracks:reactor"] == 1   # 挂件算宿主键后缀
+    assert p.facts["army"] == {"terran/marine": 2, "terran/siegetank": 1}

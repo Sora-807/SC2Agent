@@ -80,11 +80,14 @@ def observation_packet(
         "会话": _session_text(session),
         "经济": _economy_text(world, econ, zh),
         "部队": _groups_text(flow, zh),
+        "部队清单": _army_text(world, prod, catalog, zh),
+        "关键建筑": _buildings_text(world, catalog, zh),
         "生产": _production_text(prod, zh),
         "op 流水": _ops_text(ops, zh),
         "策略": _strategy_text(flow, strategy),
         "风险": _alerts_text(alerts),
         "投影": _projection_text(proj, game_time, zh),
+        "区域": _regions_text(world, econ, catalog, zh),
         "提案历史": _proposals_text(proposals),
     }
     facts = {
@@ -103,6 +106,9 @@ def observation_packet(
                               if p["status"] == STATUS_PENDING],
         "rejected_titles": [p["title_zh"] for p in (proposals or {}).get("proposals", [])
                             if p["status"] == STATUS_REJECTED],
+        # §0.52 E 批：机器可读副本（agent 下命令/做算术不用从中文文本里解析）
+        "buildings": _count_buildings(world, catalog),
+        "army": _count_army(world, catalog),
     }
     return ObservationPacket(seq=seq, game_time=round(game_time, 3), supersedes=supersedes,
                              sections={k: v for k, v in sections.items() if v}, facts=facts)
@@ -153,6 +159,161 @@ def _groups_text(flow: dict | None, zh) -> str:
         center = (f"组心 {g['center'][0]:.0f},{g['center'][1]:.0f}" if g.get("center") else "组心 —")
         out.append(f"{g['group_id']}：{comp}（{g['refill_state']}）· {center}")
     return "\n".join(out)
+
+
+def _own_units(world: dict | None) -> list:
+    return [u for u in (world or {}).get("units", []) if u.get("owner") == "self"]
+
+
+def _role_of(catalog: Catalog, stable_id: str) -> str | None:
+    entry = catalog.by_stable_id(stable_id)
+    return entry.role.value if entry is not None else None
+
+
+def _count_buildings(world: dict | None, catalog: Catalog) -> dict[str, int]:
+    """facts 副本：建成建筑计数（挂件算在其宿主上，键带 :reactor/:techlab 后缀）。"""
+    out: dict[str, int] = {}
+    for u in _own_units(world):
+        if _role_of(catalog, u["stable_id"]) != "building":
+            continue
+        if u.get("build_progress", 1.0) < 1.0:
+            continue
+        key = u["stable_id"] + (f":{u['addon']}" if u.get("addon") else "")
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
+def _count_army(world: dict | None, catalog: Catalog) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for u in _own_units(world):
+        if _role_of(catalog, u["stable_id"]) == "combat":
+            out[u["stable_id"]] = out.get(u["stable_id"], 0) + 1
+    return out
+
+
+def _army_text(world: dict | None, prod: dict | None, catalog: Catalog, zh) -> str:
+    """已有全部部队（§0.52 E 批，用户结构化读法）：不只 flow 编成的组 ——
+    未编组/散兵也在；在训（world producing）与待训（队列 train 项）各一行。"""
+    own = _own_units(world)
+    army = [u for u in own if _role_of(catalog, u["stable_id"]) == "combat"]
+    if not army:
+        return ""
+    by_id: dict[str, int] = {}
+    for u in army:
+        label = zh(u["stable_id"]) + (f"·{u['form']}" if u.get("form") else "")
+        by_id[label] = by_id.get(label, 0) + 1
+    out = ["已有：" + "，".join(f"{k}×{n}" for k, n in sorted(by_id.items()))]
+    # 在训：建筑 producing 里的单位（SC2 不给进度，只给名单）
+    training: dict[str, int] = {}
+    for u in own:
+        for p in u.get("producing") or ():
+            sid = p.get("stable_id")
+            if sid:
+                training[sid] = training.get(sid, 0) + 1
+    if training:
+        out.append("在训：" + "，".join(f"{zh(k)}×{v}" for k, v in sorted(training.items())))
+    # 待训：还在队列里的 train 项
+    queued: dict[str, int] = {}
+    for q in (prod or {}).get("queues", []):
+        for it in q.get("items", []):
+            if it.get("op") == "train" and it.get("stable_id"):
+                queued[it["stable_id"]] = queued.get(it["stable_id"], 0) + max(1, it.get("count", 1))
+    if queued:
+        out.append("待训（排队）：" + "，".join(f"{zh(k)}×{v}" for k, v in sorted(queued.items())))
+    return "\n".join(out)
+
+
+def _buildings_text(world: dict | None, catalog: Catalog, zh) -> str:
+    """关键建筑数量（含挂件，§0.52 E 批）：建成按类计数、挂件点名、在建单列带进度。"""
+    own = _own_units(world)
+    buildings = [u for u in own if _role_of(catalog, u["stable_id"]) == "building"]
+    if not buildings:
+        return ""
+    done: dict[str, int] = {}
+    addons: dict[str, int] = {}
+    building_up: list[str] = []
+    for u in buildings:
+        if u.get("build_progress", 1.0) < 1.0:
+            building_up.append(f"{zh(u['stable_id'])} {u['build_progress'] * 100:.0f}%")
+            continue
+        sid = u["stable_id"]
+        done[sid] = done.get(sid, 0) + 1
+        if u.get("addon"):
+            addons[u["addon"]] = addons.get(u["addon"], 0) + 1
+    parts = ["，".join(f"{zh(k)}×{v}" for k, v in sorted(done.items()))]
+    if addons:
+        parts.append("挂件：" + "，".join(
+            ({"reactor": "反应堆", "techlab": "科技实验室"}.get(k, k)) + f"×{v}"
+            for k, v in sorted(addons.items())))
+    if building_up:
+        parts.append("在建：" + "，".join(building_up))
+    return "\n".join(parts)
+
+
+def _regions_text(world: dict | None, econ: dict | None, catalog: Catalog, zh) -> str:
+    """区域信息（§0.52 E 批，用户结构化读法）：按经济基地分桶 —— 桶内建筑逐个
+    （坐标+血量%），部队按类计数（首个坐标）；远离所有基地的归「机动」。
+    只读文字，不做地形/网格（那是 I8 inspect_region 的地盘）。"""
+    own = _own_units(world)
+    if not own:
+        return ""
+    by_tag = {u["tag"]: u for u in own if u.get("tag") is not None}
+    # 基地 = 经济节点的 base_tag（正在运营的主基地/分矿），去重取位置
+    centers: list[tuple[str, tuple[float, float]]] = []
+    seen_tags: set[int] = set()
+    for n in (econ or {}).get("nodes", []):
+        bt = n.get("base_tag")
+        base = by_tag.get(bt)
+        if base is None or bt in seen_tags or not base.get("pos"):
+            continue
+        seen_tags.add(bt)
+        centers.append((zh(base["stable_id"]), (float(base["pos"][0]), float(base["pos"][1]))))
+    if not centers:
+        return ""
+    FAR = 30.0   # 距所有基地都超过这个距离 = 机动部队，不硬塞给最近的基地
+
+    def _bucket(pos) -> int | None:
+        best_i, best_d = None, 1e18
+        for i, (_name, c) in enumerate(centers):
+            d = abs(pos[0] - c[0]) + abs(pos[1] - c[1])   # 曼哈顿够用（文本归桶）
+            if d < best_d:
+                best_i, best_d = i, d
+        return best_i if best_d <= FAR else None
+
+    lines: list[str] = []
+    mobile: dict[str, int] = {}
+    for i, (name, c) in enumerate(centers):
+        bl: list[str] = []
+        army: dict[str, tuple[int, tuple[float, float]]] = {}
+        for u in own:
+            pos = u.get("pos") or [0.0, 0.0]
+            if _bucket(pos) != i:
+                continue
+            role = _role_of(catalog, u["stable_id"])
+            hp_pct = f"{(u.get('hp', 0) / u.get('hp_max', 1)) * 100:.0f}%" if u.get("hp_max") else "?"
+            if role == "building":
+                prog = "" if u.get("build_progress", 1.0) >= 1.0 else \
+                    f"（建 {u['build_progress'] * 100:.0f}%）"
+                bl.append(f"{zh(u['stable_id'])}@{pos[0]:.0f},{pos[1]:.0f} {hp_pct}{prog}")
+            elif role == "combat":
+                key = zh(u["stable_id"])
+                n, first = army.get(key, (0, (pos[0], pos[1])))
+                army[key] = (n + 1, first)
+        seg = [f"{name}基地 @{c[0]:.0f},{c[1]:.0f}："]
+        seg.extend(bl[:6])
+        seg.extend(f"{k}×{n}@{p[0]:.0f},{p[1]:.0f}" for k, (n, p) in
+                   sorted(army.items(), key=lambda kv: -kv[1][0]))
+        lines.append(" ".join(seg))
+    for u in own:
+        pos = u.get("pos") or [0.0, 0.0]
+        if (_role_of(catalog, u["stable_id"]) == "combat"
+                and _bucket(pos) is None):
+            key = zh(u["stable_id"])
+            mobile[key] = mobile.get(key, 0) + 1
+    if mobile:
+        lines.append("机动（远离基地）：" +
+                     "，".join(f"{k}×{v}" for k, v in sorted(mobile.items())))
+    return "\n".join(lines)
 
 
 def _production_text(prod: dict | None, zh) -> str:

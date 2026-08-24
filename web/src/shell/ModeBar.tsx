@@ -22,9 +22,11 @@ const LIGHT_STYLE: Record<Light, { cls: string; title: string }> = {
 
 export function ModeBar() {
   const { mode, setMode, api, probe, disconnected, reconnect } = useFrames();
-  const { info, opErr, stop } = useSessionStore();
+  const { info, opErr, stop, changeGameSpeed } = useSessionStore();
   const live = info?.alive === true;
   const hasSession = Boolean(info?.driver);
+  // 仿真会话运行中：顶栏给一个即时变速（快进倍数）—— 不重启，改了就生效
+  const fastRunning = live && info?.mode === "fast";
 
   const light: Light = disconnected ? "down" : live ? "run" : "idle";
   const ls = LIGHT_STYLE[light];
@@ -75,6 +77,20 @@ export function ModeBar() {
             title="画面停留在断开前，继续操作会基于过期状态 —— 显式重连（不做自动重连）"
             onClick={() => void reconnect()}
           >帧流已断开 · 重连</button>
+        )}
+        {mode === "drive" && fastRunning && (
+          <div className="flex overflow-hidden rounded-lg border border-chrome bg-panel"
+               title="仿真模式快进倍数（即时生效，不重启）">
+            {[["2", 2], ["4", 4], ["8", 8], ["最快", 0]].map(([label, v]) => (
+              <button
+                key={label}
+                onClick={() => void changeGameSpeed(v as number)}
+                className={"px-1.5 py-0.5 " + T.note + " "
+                  + ((info?.speed ?? 0) === v
+                     ? "bg-select font-semibold text-strong" : "text-dim hover:bg-raised")}
+              >{label as string}{(label as string) !== "最快" ? "×" : ""}</button>
+            ))}
+          </div>
         )}
         {mode === "drive" && hasSession && (
           <button

@@ -77,9 +77,11 @@ def plans_simulate(body: dict) -> dict:
     translated = queue_to_ops(items, catalog)
     # 二十三轮用户拍板：跑到队列完成 —— 曲线不再在生产中途截断（死局有封顶）；
     # 二十七轮：尾部再多留 30 秒（最后事件完成后看得到经济余势，右缘钳制有自然末端）
+    # H 批（2026-08-24）：auto_supply 默认关 —— 投影不替人补供给，卡人口真实浮出
     curve = Planner(catalog).project(
         opening_game_state(catalog), list(translated.ops), horizon,
-        until_complete=True, tail=30.0)
+        until_complete=True, tail=30.0,
+        auto_supply=bool(body.get("auto_supply", False)))
     sim_end = curve.points[-1].t if curve.points else horizon
     frame = projection_frame(
         curve, based_on_seq=0, based_on_game_time=0.0, horizon=sim_end,

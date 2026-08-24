@@ -73,6 +73,402 @@
 tests/api/test_loadouts_swap.py 18）；前端 361 passed + tsc/build 绿；夹具按 REV 16 重生成。
 真机（sc2）swap 端到端待用户验一次（控制文件通道已被 sim 子进程测试覆盖）。
 
+## 0.51 四十四轮：真机七报立项（PLAN-LIVE-ROUND2，本轮只立项不执行）（2026-08-24，未提交）
+
+用户真机（仿真快进）再报七项，本轮全部**钉根因 + 立项**，修复留下一执行轮：
+`docs/PLAN-LIVE-ROUND2.md`（A~F 六批：投影真值 / 跟随强化 / start_session 配置面 /
+无builder 告警 / observe 结构化读法 / 图标+done 前端）。已核实的根因：
+
+- **投影矩阵「炸掉」**：`producer._project` 在 live 队列空的瞬间回退**参考计划**
+  （basic_opening 22 项）——单笔 train 进 in_flight 即弹队列 → 整份开局参考被当投影
+  画出（截图 20+ 农民、「在产 6」全是它）。修法= in_flight 进投影 + 中途永不回退。
+- **启动期 agent 停**：`FOLLOW_MAX_IDLE_STOPS=3` 被纯文字轮烧完 →「跟随停止」；
+  用户拍板上限 200、不许放弃跟随、提醒改**系统条 UI**（不再冒充用户消息）。
+- **「补给站无builder」反复告警**：blocked 原因上浮为告警本身没错，错在无诊断、
+  持续不解除（候选根因三个：stale 后端 / flight 征用泄漏 / economy foreign 误伤，
+  执行轮真机钉死）；诊断计数（§0.47 已埋）要进告警文案。
+- **done 工具**：立项时判「vendor 内建后端不动」**过保守**，用户拍板可动后复核：drop 是
+  vendor 自己的组装接缝（AdvisorSpec 已在用），`.drop("done")` 一行即可；runner 对纯
+  文字轮本就自然收轮。唯一暗桩 = vendor `build_system_prompt` 固定追加的「调用 done
+  提交结果」行（talk.py:495/runner.py:82 都走它）——只删工具会留「调不存在工具」的
+  摩擦，方案改为三件套（drop + 删我方 prompt 两处 + talk 本地组装系统提示词），见
+  PLAN F2。
+- **observe 缺三段**：关键建筑数量（含挂件）/全部队明细/区域信息（坐标血量）——
+  数据全在 world 帧 UnitView，零契约改动可加；旧文档检索无该格式逐字原文，
+  以用户本轮口述为准。
+
+## 0.52 四十五轮：PLAN-LIVE-ROUND2 六批执行（2026-08-24，未提交）
+
+上一轮立项（§0.51）本轮全部落地，A→B→C→E→F→D 序：
+
+- **A 投影真值**（`view/producer._project`）：`_live_seen` 门 —— 见过 live 队列后
+  **永不回退参考计划**，队列空投空队列（纯收入外推；在建/在训从 world 帧的
+  build_progress 派生、照常落成，在途可见性不靠参考计划）。核实发现 planner
+  `derive_from` 本就把真实在途带进曲线（成本不重扣），故 A1 的"重建 QueueItem"路径
+  刻意不做——会让成本双扣+累计泳道重复条。开局（从未见过 live 队列）参考计划照常、
+  标 draft。测试 +3（回退门/开局/在建落成）。
+- **B 跟随强化**（`agent/talk`）：`FOLLOW_MAX_ROUNDS` 40→200；**删 idle-stops 放弃**
+  （连续纯文字不再「跟随停止」——那正是启动期停摆根因），唯一止损=轮数上限；
+  `_game_alive_retry`：活过之后突然取不到短重试 2 次（SC2 启动/收尾窗口后端忙 ≠
+  对局结束），从未活过不重试。提醒轮历史带 `nudge: True`，前端 **NudgeBar 系统条**
+  （warn token 全宽条，不冒充用户气泡），提醒文案带次序号+「系统要求非用户说话」。
+  提示词同步（文字不会结束回合/启动期也 sleep）。测试改 2 增 1。
+- **C start_session 配置面**：`production` 请求体参数（mineral_workers/gas_workers/
+  reserve_idle，简写 mineral/gas/idle）→ 会话建立即 `set_worker_target` 下发（offline/
+  live 两路）；校验在建会话**之前**（坏参数不留半配会话）。工具层同名校验+采集配额
+  回显；提示词补「开局配置」小节。测试 +3（路由）+1（工具）。
+- **E observe 三新段**（`view/observe`）：**部队清单**（全部战斗单位按类计数+form、
+  在训 world producing、待训队列 train 项）、**关键建筑**（建成计数+挂件点名+在建带
+  进度）、**区域**（按经济节点 base 分桶：建筑逐个坐标+血量%、部队按类计数、远离
+  基地归「机动」；只文字不碰地形=I8 的地盘不越）。facts 补 `buildings`（挂件算宿主
+  `:reactor` 后缀）与 `army` 机器可读副本。红线保持：只从 ViewFrame 派生，零契约改动。
+  测试 +4。
+- **F 图标语义化 + done 下线**：toolGlyph 几何字符退役 → `ToolIcon` 12px SVG
+  （read=文稿、glob/grep=放大镜、write 族=铅笔、observe=眼睛、sleep=月牙、
+  start/stop_session=靶心/方块、delete=垃圾桶）。**done 三件套**：spec `.drop("done")`
+  （vendor 自设计接缝，源码不动）；prompt 两处删+「回复即回合结束」；talk `_system_prompt`
+  本地组装替换 vendor `build_system_prompt`（其固定追加的「调用 done 提交结果」会引导
+  每次收尾白试一轮不存在的工具）——**首轮也预种 system 头**，runner 自组路径永不触发。
+  冒烟链/测试脚本全部改纯文字收尾（`_done` 保留名字、行为=文字响应）。
+- **D 无 builder 告警**：flight 征用**全路径审计 = 无泄漏**（failed/started/drop 都
+  release，换人重发先 release 旧 owner）——截图事故根因收敛到「stale 后端跑旧代码」；
+  诊断三元组拆开（总数/建造征用/本帧已令）进 `_no_builder_reason` → 阻塞 → 告警文案。
+  回归 +2（丢弃必释放征用+重抽、诊断计数文案）。
+
+**回归**：后端 887 passed / 4 skipped；前端 379 passed + tsc/build 绿（NudgeBar 裸
+amber 被主题纪律测试拦下 → 改 warn token，纪律生效的实例）。真机复验点：只提 1 农民
+泳道不再炸；启动期 agent 被系统条驱动 sleep；observe 一眼答「兵营几个带没带挂件、
+部队都有啥在哪」；补给站 10s 内 builder 就位（若复现再查 stale 进程）。
+
+## 0.53 四十六轮：真机三报根因——乱分配/propose 无效是同一条链（2026-08-24，未提交）
+
+用户真机（正常模式）三报，前两报查 trace（rec-20260824-001605）钉成**一条事故链**：
+
+- **证据链**：op 流水显示维持器整场每 2-5s 重派 gather（乱分配本体）；t=18.6 生产层给
+  SCV 发建造补给站、t=18.75 建筑 0% 实体出现、**t=19.1 维持器给同一台 SCV 发 gather**
+  → 建造单被顶 → 0% 建筑被弃（t=80 第二次同样死法）；复盘里"生产队列一直空"其实是
+  正常的 emit 即出队（0.2s 内消费），泳道图上的「缺矿/无builder」卡点是**参考计划**
+  的投影（live 队列从未非空 → `_live_seen` 未置位 → 整场投 basic_opening 草稿）。
+- **根因①（驱动，最底层）**：`sc2_adapter.extract_raw_order` 读 `target_unit_tag`——
+  burnysc2 `UnitOrder` 没这个字段（真实字段是 `target`：int=单位tag | Point2=点）→
+  真机订单 **target_tag 恒 None**：维持器看不见"已在采"（走矿段的工人全判空闲→
+  全场重派），采矿族判定也要求 target_tag 而全数失效。sim 驱动字段填得对所以离线
+  测试一直绿——**测试夹具把错误协议也刻死了**（`_fake_order` 按不存在字段造），
+  夹具已重写为真实形态并加回归锁。
+- **根因②（flight 确认）**：`_confirm_build` 把"实体出现"当完工立即释放征用——
+  SC2 放置即出 0% 实体，SCV 还要盖 build_time 秒。修：锁定实体（`entity_tag`），
+  等 `build_progress>=1` 才 started/释放；实体半途消失（Decay 死/被拆）→ failed 转重试。
+- **根因③（维持器）**：扛货分支（carrying → 沿用记忆）**不做外来订单检查**——被派去
+  建造的 SCV 手上常有矿，记忆又因①是空的 →"扛货无记忆"= 可派 → gather 顶掉建造单。
+  修：扛货但订单为外来能力（非 Gather/Harvest/Return）→ 进 foreign 不接管；采矿族
+  判定改按**能力名**（不再要求 target_tag，对两种驱动都稳）。
+- 第三报（复盘切换加载慢）：纯前端性能问题，用户拍板可后排 → ISSUES 开放清单 #19。
+
+**回归**：后端 892 passed / 4 skipped（+驱动形态锁 2、+flight 完工/实体死 2、
++维持器扛货外来/能力名判族 2）。真机复验：采矿稳定态应零 gather 命令（观察 op 流水）；
+提交补给站应真盖完（进度 0→100%，完工后 SCV 才归队）；泳道图在第一次入队后变 live。
+
+## 0.54 四十七轮：五问题根因定位 + PLAN-ROUND3 立项 + G 批（复盘投影改版）执行（2026-08-24，未提交）
+
+用户真机复盘报五问题 + 复盘投影泳道爆炸，本轮**全部钉根因**（详见
+`docs/PLAN-ROUND3.md` 根因速查表），四个拍板：observe 并入 bbox（read 路径留
+index.md 当源清单）、TRAIN 卡死先只告警、队列体检只诊断给建议、F17 历史累积
+退役（用户自认的决策错误）。根因要点：
+
+- **聊天轮末吞正文**：`round` 事件 `setMessages(ev.messages)+setLive(null)`
+  （ChatDock.tsx:367-375）换成两段式落史——talk.py 只存最后一段正文、_round_steps
+  只收 tool/reasoning，工具间正文从未序列化（流式期间 chat-live.ts 是对的）。
+  插话跑到上面 = 双槽渲染（messages 在上 / live 钉最下，插话 append 进前者）。
+- **地图"幻觉"= 假 not-found**：7 次失败路径全符合 maps/index.md 约定，死于
+  MAX_COLS/ROWS=14（region_view.py:33-34）；render_region 的有用 ValueError 被
+  ReadOnlyArea.exists（try-read→False）+ vendor read 的 contains 预检双层吞成
+  "not found" → 模型只能瞎改坐标。
+- **sleep**：只有相对 game_seconds；早退仅 未连接/300s 墙钟/用户插话——游戏结束
+  不出"未连接"→ 照睡（trace 实证 166s）。
+- **警报**：9 种已有但无敌方接触类（只有当帧计数，无 last-seen 记忆）且纯拉模式
+  （sleep 不看）——用户 10s 滚动窗设计（不同敌兵数+峰值同屏数）立项为 D 批。
+- **枪兵卡队首**：queue_blocked 其实会响，agent 在 sleep 看不见；TRAIN 无 flight。
+- **自动补给**：supply_guard 只改投影副本（live 队列从未自动插）——真问题是投影
+  撒谎，立项开关化（H 批）。
+- **复盘投影泳道爆炸**：F17 累积（use-accumulated.ts）events 去重键含 t，每次
+  重投影 t 漂移 → 逐帧全量叠加。
+
+**G 批（本轮已执行，前端）**：
+- G1 拆累积：删 `use-accumulated.ts`；ProjectionBoard 与 WholeOpsList（复盘队列卡）
+  改吃原始帧 —— 板上只剩本帧投影 [T, T+horizon]。
+- G2 截断设计：`nowAnchoredRange`/`LEFT_MARGIN_SECS`（gantt-data.ts 纯函数）——
+  红截断线钉 T 贯穿泳道+曲线；视窗左缘钳 max(0, T-30)（平移/跟随/初始三处）；
+  右缘仍钳数据末端；**在建部分条**：world.units 0<build_progress<1 + 目录
+  build_time 反推已耗/剩余，与投影同 stable_id 跨 T 的条只延左端不重开（
+  packPairs 抽出为共用打包核心）。训练条左延伸等 G3（SC2 订单无进度，
+  需 runtime 记 emitted_at，后端批次）。
+
+**回归**：前端 382 passed（gantt accumulateInto 块退役、+packPairs/nowAnchoredRange
+7 测；layout/charts 结构断言改为"无累积+截断锚定"）+ tsc 绿。后端未动。
+后续批次 A（聊天 segments）→B（observe+bbox）→C（sleep）→D（enemy_contact+唤醒）
+→E/F/H，见 PLAN-ROUND3。
+
+## 0.55 四十八轮：PLAN-ROUND3 七批执行（A 聊天 segments / B observe+bbox / C sleep / D 警报唤醒 / E 卡死文案 / F 体检 / H 供给开关 / G3 在训记账）（2026-08-24，未提交）
+
+用户拍板「全部按顺序执行」，本轮落地 PLAN-ROUND3 余下全部批次：
+
+- **A 聊天 segments**（吞正文根因修复）：talk 落史新增 `segments` —— 轮内交错时间线
+  （正文/思考/工具/插话按真实顺序全序列化；llm_call ↔ 本轮新增 assistant 消息配对，
+  插话按 InterjectionQueue 排空账本的时刻插到「正在跑的工具」之前）。前端
+  ChatMessage +interjection/segments；AgentMessage 有 segments 优先渲染（无则回落
+  steps+text）；插话 live 期 appendUserEntry 落时间线**末尾**（「跑到最上面」的双槽
+  错位修复）；插话独立历史条目只喂 LLM，下一条 agent 带 segments 时前端跳过（不双显）。
+- **B observe+bbox**：observe 带 bbox=[x1,y1,x2,y2]（+step 默认 2、source 默认 live）
+  = 格点网格，复用 MapsArea 渲染；**如实报错**：超范围报地图尺寸+哪个坐标超
+  （先于渲染校验，不再被钳制/吞掉），网格超限报上限+建议 step。maps/index.md 改为
+  源清单职责（observe 是主入口，read 路径保留）。AdvisorSpec/make_tools 穿
+  map_plans_dir。
+- **C sleep 补齐**：+`until_game_time`（绝对时刻，定时节点不用相对秒硬凑）；
+  **「已结束/崩溃」也算结束**（对局打完 run_game 返回 → 会话翻已结束、game_time
+  冻结 —— 旧判定只认未连接，sleep 空转到墙钟上限，用户实测根因）；+时钟冻结兜底
+  （状态仍对局中但 game_time 冻满 60 墙秒 → 叫醒，防 SC2 挂死不退出）。
+- **D 敌方接触 + 唤醒链**（用户 10s 窗设计）：AlertService +滚动记忆 —— tag→最后
+  出现时刻/类型/位置，10s 窗统计「见过 N 个不同敌兵 + 峰值同屏 M + 最后位置」→
+  `enemy_contact` 警报（≥3 个或峰值 ≥5 → warn）；`active_alerts()` 活跃面（最近
+  15 游戏秒报过的 warn+），OfflineSession.describe 直读、LiveSession.describe 从
+  最近 frame/alerts 帧捞（子进程的 AlertService 够不着）；sleep 轮询 warn+ 即醒
+  （同 id 一次 sleep 只叫一次）。
+- **E TRAIN 卡死文案**（只告警不动作，用户拍板）：runtime 记 `_ever_ready`（曾建成
+  的建筑类型）；snapshot blocked +`producer_ever_ready`；警报文案区分「曾建成、
+  现在不在 —— 大概率被摧毁：重排/重建」vs「从没建成过 —— 建造被卡/掉单」。
+- **F audit_queue 工具**（17→18 个，只诊断+建议）：在线队列（name 选）/plan_id/草稿
+  三入口；检测卡补给（累计人口 vs 可用+队列内 depot 供给，离线基线=种族主基地）、
+  前置不在场也不在队列、产出建筑缺失；每条给「插什么、插在剩余队列 #i 前」，
+  改法归 agent（在线 propose hunk insert / 离线 edit 文件）。client +latest_frame。
+- **H supply_guard 开关**：Planner.project +`auto_supply`（**默认关**）—— 投影不再
+  替人补供给，卡人口真实浮出；/api/plans/simulate 请求体与 simulate_plan 工具透传。
+- **G3 在训记账**（REV 16→17）：runtime emit 训练单时记 {type, producer_tag,
+  started_at}，淘汰=产出建筑消失或无订单且超时长（容忍 emit→订单落地间隙）；
+  ProductionFrame +training（TrainingView），前端契约 .default([])；ProjectionBoard
+  部分条补齐训练左延伸（started_at + build_time，跨截断线）。
+
+**事故与修复（本轮流内）**：live.py `_recent_alerts` 初版在 describe() 持锁时再取
+`self._lock` —— 普通 Lock 不可重入 = 死锁（_control 的 terrain 分支注释警告过的同
+一个坑），全量测试挂死 8 分钟定位后改由调用方持锁直读。教训：给 live.py 加任何
+describe 侧的派生读取，先看锁。
+
+**回归**：后端 910 passed / 4 skipped；前端 385 passed + tsc 绿。提交仍等用户验收。
+
+## 0.56 四十九轮：真机三报 —— 断流根因=max_turns+假not-found / 清单不刷新 / chip 跳转被守卫弹回（2026-08-24，未提交）
+
+用户三报，逐一钉根因（trace 2026-08-24T143544 全程无网络错误）：
+
+- **「工具调用之后没有下文」**：trace 里每次断都是 `run_end outcome=paused
+  reason=max_turns` —— 轮预算 8 个 turn，agent 全花在工具上，最后一轮纯工具调用
+  （无正文）→ 用户侧凭空断线。更糟的一轮：`strategies/_lib.yaml` 被**假 not found**
+  折磨整轮（ls/grep/glob 都看得见、read 说没有 —— read 有 REST 特判、exists 没有，
+  vendor contains 预检吞错误，与 maps 同款 bug）。修四件：
+  1) max_turns 8→16；2) paused 轮落史附「轮数上限暂停，回复『继续』」说明（模型
+  侧 _seed_history 也看得到，知道自己被截）；3) `_file_exists` 对 _lib.yaml 同源
+  探测（strategy_lib_text 200 才算存在）；4) ReasoningTolerantClient 零分片重试
+  （连接瞬断且一个 delta 都没发 → 重试一次；已发分片不重试防前端正文重复，
+  异常照抛 → 引擎记 run_end error，trace 可见 —— 那就是错误日志面）。
+- **复盘清单要刷新浏览器**：fixtures+recordings 只在 init 拉一次，落盘是后端事件
+  无推送面。修：`refreshSources()`（只刷清单不动当前源）挂 window focus /
+  visibilitychange，聊天轮改动含 live 域时也刷。
+- **规划清单不刷新**：queue-store `loaded` 一次终身制；agent 走 REST 写的规划前端
+  看不见。修：ChatDock 轮末按改动域触发 `useQueueStore.refresh()`（顺带重拉地图
+  规划引用清单）—— 点 chip 前清单已是新的。
+- **复盘页点规划 chip 跳不过去**：App 的「页面不属于本模式」守卫把 plan-* 页从
+  replay 弹回复盘首页；ChangeChip 此前只处理了 drive 方向的切模式。修：按目标
+  前缀双向切（#/plan-* → offline 规划模式，否则 drive）。
+
+**回归**：后端 914 passed / 4 skipped（+chat 三测/workspace 一测）；前端 386
+passed + tsc 绿。提交仍等用户验收。
+
+## 0.57 五十轮：轮预算改版 —— max_turns 500 + 输出 token 刹车（1M/轮）+ 活性看门狗（2026-08-24，未提交）
+
+用户拍板：对局跟随一轮可以很久，max_turns 16 太小 → **500**；真正的上限改用
+**输出 token 预算**（先 1M/轮）——「不知道能不能统计」：能，LLM usage 的
+output_tokens 一直在 trace 的 llm_call 里记着。
+
+- **预算刹车**：ReasoningTolerantClient 加 `output_budget`/`round_output_tokens`
+  （AgentTalk 轮首 `reset_round_budget(1_000_000)` 复位，FakeLLM 无该协议自动不设限）；
+  累计到预算 → **不再调 API、返回空响应**（无工具调用 → runner 自然收轮，
+  不走异常路径、SSE 不炸）；talk 轮末检测计数，落史与 say 结果带
+  「预算用完（本轮累计 N）—— 回复『继续』会开新预算」说明 + `output_tokens` 字段。
+- **max_turns 16→500**（§0.56 的 16 只是过渡）。
+- **看门狗活性制**：绝对 600s 会误杀合法长轮（sleep 单次墙钟上限 300s、
+  500-turn 对局轮轻松超 600s）→ 改为**事件续期**：流式 delta/tool/turn 到达即刷
+  `_round_activity`，连续闲置 600s 才杀（sleep ≤300s 的静止期安全通过）；
+  非流式路径（emit=None，测试）无事件可刷，退化为原绝对上限语义。
+
+**回归**：后端 915 passed / 4 skipped（paused 测试改显式 max_turns=6 构造 +
+预算刹车新测：累计到 1.1M 后第三次调用不发生、落史带说明与用量）。
+前端零改动（output_tokens 为附加字段）。提交仍等用户验收。
+
+## 0.58 五十一轮：PLAN-V2 立项 —— 执行模型/地图规划/观测面大重构（2026-08-24，本轮只立项不执行）
+
+需求源 = agent 自己梳理的文档（runtime/agent-talk/workspace/improvement-notes.md
+I1-I9 + templates/ 三份；用户拍板「是输入不是规范」，字段命名过系统四源归一：
+with_reactor→reactor、slots→cap、双倍挂件→反应堆、prereq 家族合并、status 英 key
++映射表）。八项决策 + 两个新增点全部落定（D1 警报三情形含 live 被打掉/侦查归
+Group 语义/矿区进基础数据/勿需 not_reached 四值枚举/auto_supply 彻底删/前端红蓝
+适配/初始化模块），细节见 `docs/PLAN-V2.md`（六批：①队列执行模型 uid+skip 语义
+→②地图规划双分支+命名空间+热切 →③simulate v2 四段输出+initial-states →
+④observe v2 全局+矿区 →⑤catalog 生成+改名+初始化模块 →⑥audit 合并退役；
+ADR-0032/0033/0034 + ADR-0027 修订待写）。待用户输入：agent 切地图设计文档。
+**基线**：§0.54-0.57 的 915 后端 + 386 前端绿仍未提交 —— PLAN-V2 执行时一并对账提交。
+
+## 0.50 四十三轮：外层流光移除 + 轮内插话（2026-08-24，未提交）
+
+- **dsh-sweep 矩形流光移除**（用户拍板不好看）：工具行 running 只留「运行中…」文字；
+  CSS/注释/测试锁同步（锁反转：必须不在）。
+- **轮内插话**（对局跟随期间 agent 一轮很久，用户此前完全插不上话）：
+  BaseAgent **没有轮内消息通道**（state.inbox 只轮首排水；LLM 思考中无法硬打断，
+  vendor 不改）—— 在**自己的工具层**做检查点，两种时机都覆盖：
+  1. sleep 早醒：轮询（0.5s）先查插话队列，有就立刻返回「（用户插话：…）sleep 提前结束」；
+  2. 任意工具结果捎带：spec 把全部语义工具包一层，结果头部带「（用户插话：…）优先回应」。
+  - `AgentTalk.interjections`（InterjectionQueue）经 AdvisorSpec 注入；轮内到达的插话
+    按真实时序写历史（原话 → 插话 → 回复，interjection 标记）；**没赶上检查点的插话由
+    跟随循环补送一轮**（优先于游戏提醒，哪怕对局已结束也不丢）。
+  - `POST /api/agent/chat/interject`（无进行中的轮 → queued=False，前端正常发送）。
+  - 前端：busy 时输入框**不再禁用**，回车 = 插话（本地即显），占位文案说明检查点语义。
+  - 提示词新增「插话」节：看到（用户插话：…）优先回应。
+- 回归：后端 872/4s（+sleep 早醒/工具捎带/补送闭环三测），前端 378 + tsc/build 0。
+
+## 0.49 四十二轮：/clean 斜杠指令（清空对话上下文，2026-08-24，未提交）
+
+用户诊断：agent 一直说"没有关闭对话的工具"—— stop_session §0.44 就有，但 (a) 后端
+进程没重启时是旧工具集，(b) **上下文脏了**：旧轮次里"我没有工具"的认知随历史整段回灌，
+一直误导模型。用户拍板：加斜杠指令手动清（首批只有 clean；不做自动化）。
+
+- 后端：`AgentTalk.clear_context()`（_lock 内：历史清零落盘 + 引擎 agent 消息态重置，
+  runner 下轮自补系统提示；**记忆文件不动**）+ `POST /api/agent/chat/clean`。
+- 前端：输入 `/` 弹指令建议（名称+说明），回车（`/clean` 精确匹配）或点选执行——
+  不发给 LLM；清完本地即显说明行（上下文已清空、memory 在磁盘不受影响）。
+  `SLASH_COMMANDS` 表驱动，后续加指令只动这张表。
+- 坑：create_or_get(类型, target, 版本) 参数顺序传反，异常被兜底吞 → 引擎态没重置
+  （测试抓到）。**兜底 except 别吞参数错误——测试要断言副作用真的发生**。
+- 回归：后端 869/4s（+clean 一测），前端 378 + tsc/build 0。
+
+## 0.48 四十一轮：token 流「卡到思考完才出」三层修（2026-08-24，未提交）
+
+用户报告：发话后界面死等很久才见"思考中"，通常思考完才收到内容。链路排查：LLM 客户端
+（stream=True + on_delta）、引擎（STREAM_DELTA 事件通道）、SSE（逐事件 to_thread 拉取）
+**都是真流式**（§0.15 真机验过）——症状是三层叠加：
+
+1. **UI 死屏（已修）**：发话到首个分片之间什么都不显示（「思考中」占位十五轮退役、
+   turn_start 前端不渲染）。补回最小占位：`live.length === 0` → ThinkRow running。
+2. **思考字段容错（已修）**：父类只认 delta.reasoning_content（百炼/Qwen 系）；端点若用
+   **reasoning**（o 系/部分代理），思考期零分片。`agent/talk.ReasoningTolerantClient`
+   （vendor 不改，子类）两种字段都认，测试锁两种命名都流出。
+3. **首分片延迟诊断（已加）**：`_say_on_engine_loop` 记录首个 delta 距发话的毫秒数，
+   GET /api/agent/chat 的 `first_delta_ms` 暴露 —— 下一轮真机一看便知是端点不流式/
+   思考服务端整段做/提示词过大（prefill 慢，历史无界增长的另一笔账，压缩留后续）。
+
+回归：后端 868/4s、前端 377 + tsc/build 0。
+
+## 0.47 四十轮：对局跟随（游戏没结束不许停）+ 建造就近抽采矿 SCV（2026-08-24，未提交）
+
+- **对局跟随**（用户拍板：对局期间 agent 经常断）：`AgentTalk._round_with_follow` ——
+  每轮结束查会话（driver=sim/sc2 且 alive），游戏还在进行就注入「（跟随提醒）」再跑一轮
+  （引导 sleep→observe→必要时 propose；对局结束先终局总结）。每个引擎轮**独立看门狗**
+  （一轮超时只终止跟随，不再整场腰斩——runner 不再整体套表）。两道止损：总轮数 40 上限 +
+  连续 3 次「想停又不 sleep」→「跟随停止」说明落历史。提醒以 user 消息进历史（前端可见）。
+  提示词同步：「收到（跟随提醒）= 你在对局中想结束但游戏没完」。
+- **建造选人**（用户拍板：默认拿最近的采矿 SCV，建完归队）：`_pick_builder(gs, near=建造点)`
+  就近选（常规/气矿/重试三路径都传点）；「缺少建造者」的阻塞文案带诊断计数（场上几个/
+  本帧已令/征用几个）。归队是自动的：建造期间征用 + 维持器外来订单规则双保护，完工订单
+  清空 → 维持器派回采矿（§0.46 的修复正好是这一环的前提）。
+- 回归：后端 867/4s（+跟随三测、+就近选人），前端 376 不变。真机复验点：对局中 agent
+  应被提醒轮驱动持续跟随到终局；propose 补给站后应看到**最近的**采矿 SCV 走去建造、
+  完工后自动回矿。
+
+## 0.46 三十九轮：真机四连报根因修复（采矿改派/提案无效/复盘rev/chip跳转）（2026-08-24，未提交）
+
+用户真机实况四报，逐个钉根因：
+
+- **采矿被反复改派（P0，`production/economy`）**：往返送矿那一段订单目标是**基地**
+  （Return 单），`_current_assignment` 只认"订单指向矿脉"→ 送矿途中被判空闲 → 冷却
+  （22 帧）一过就 gather 去别的矿 → 往返被打断、收入归零。修：`_harvest_mem` 记住每个
+  工人的在岗矿脉，送矿途中（携带矿/气）沿用记忆；采矿族订单指向已采空矿（过渡帧）
+  仍归维持器重派。
+- **propose"自动应用了但对局没反应"（同根因的另一半）**：propose 工具与通道**没有错**
+  （insert→submit→控制文件→子进程队列，链路有测试）；坏在维持器把带 build 单的工人
+  也当空闲候选，gather 改派**顶掉排队的建造单**。修：外来订单（build/move/attack 等
+  非采矿族）的工人整体跳过 —— 不占名额、不改派、不进候选（reservations 之外的行为性
+  双保险）。测试三锁：送矿途中零改派 / 送达后续派同矿 / 建造工人不被碰、空闲者补位。
+- **复盘报"帧 rev=12 前端 REV=16"（回放不可用）**：parseEnvelope 硬等 rev===REV，旧
+  录像第一行就拒 —— 违背"只增不改、旧帧可解析"的契约承诺。修：rev ≤ REV 照常解析
+  （缺字段走 .default()），只有帧比前端新（rev > REV）才报"前端过旧"；envelope 的
+  zod rev 从 z.literal(REV) 收宽为 int。live 的版本同步检测仍在 WS _hello 严格判。
+- **改动 chip 跳转去空白规划页**：对局类改动的落点是 #/production，但规划模式下
+  App 的"页面不属于本模式"守卫立即重定向回规划首页且丢参数。修：ChangeChip 点击时
+  目标非 #/plan- 先 setMode("drive") 再设 hash。
+- **sleep 必须用（提示词硬化）**：明确"回合结束=沉睡直到用户说话"，等待**必须**轮内
+  sleep（游戏时间），observe → sleep → observe 连做。
+- 顺带：看门狗测试的 0.5s 预算满载偶发误杀（时序敏感），放宽到 2.0s。
+- 回归：后端 863/4s、前端 376 + tsc/build 0。**真机复验**：采矿应连续不中断（送矿
+  往返不再改派）；propose 后 observe 应看到队列入列且建筑真开工。
+
+## 0.45 三十八轮：serve_api 端口守卫 + agent sleep 工具（2026-08-24，未提交）
+
+- **端口守卫**（stale serve_api 反复锁死 8770 的老毛病，用户拍板自动清）：起服务前
+  `ensure_port_free` —— psutil 连接表找 (host,port) 的监听者；命令行像本项目后端
+  （serve_api/uvicorn）→ **树杀**（含 run_session/SC2 子进程）后等端口空（≤10s）；
+  陌生进程**不误杀**，打印 PID/命令行与 taskkill 指引退出；`--no-kill` 可关自动清理。
+  匹配/识别是纯函数（listening_on / looks_like_our_backend），测试锁（含通配监听算冲突）。
+- **sleep 工具**（用户要求：agent 说完话就没法再等了——等待推给了用户）：按**游戏时间**
+  等（快进模式游戏钟跑得快，同样的游戏秒等得更省——用户点名的偏好）；轮询会话
+  game_time，无会话/会话结束/墙钟上限（300s，留足轮看门狗 600s 余量）提前返回并说明。
+  提示词：observe → sleep → observe 一轮内连做，等待留给自己。常量模块级（可测试注入）。
+- 回归：后端 860/4s（+端口守卫 2、+sleep 三分支）。
+
+## 0.44 三十七轮：真机出生点检测（左下锚点写死事故）+ stop_session 工具（2026-08-24，未提交）
+
+**事故**（用户真机实况 + agent 发现）：出生右上角的一局，矿 50 不涨、"采矿实际 8/可达 8"、
+agent 无手段定位差异、也没有关游戏的工具（用户手动关窗收场）。agent 记 [I1] 改进笔记。
+
+**根因（A，已修）**：真机会话构造期锚点写死左下（run_session `cc=Point2(30.5,30.5)`），
+`instantiate_spawn` 把地图层平移到它 → 经济锚点/矿脉选择（NODE_RADIUS=20 内）/槽位/UI 地图
+全部指向左下；出生 tr 时工人被派去左下（敌方侧）采矿，横穿全图零收入。顺带：bl 局的槽位
+此前也被平移偏离校准位（模板 origin 48.5,28.5 vs 写死 30.5,30.5），本次一并归正。
+- `tactical_map/base.pick_spawn_layout`（就近分支，纯函数）；
+- run_session：sc2 首帧 `_detect_spawn`（实测我方 CC → 重建 layer → 同步
+  engine/keeper/runtime/producer 四方 + producer.spawn），在第一张 static/map **之前**完成
+  （无需补帧）；meta 带 `spawn` 键；CC 找不到 = 保持临时假定层（如实）。sim 不检测。
+- 事故里"CC 产线空闲、队列空"**不是装配失败**：没带 loadout/plan 的会话默认不自动入队。
+
+**stop_session（C，已加）**：agent 能关自己开的局（POST /api/session/stop，树杀防孤儿 SC2）；
+工具面/提示词/写面清单同步；「用户在场的正常模式局先问再关」写进工具描述。
+顺带修正 §0.43 引入的自伤：describe 的 alive 被我写反（is None→is not None），四个 sim
+会话测试齐挂——教训：**改 describe 字段先跑 test_live 再继续**。
+
+**B（随后，ISSUES #18）**：观察包零收入检测（产出速率 + 工人距目标矿脉距离 + 警报）。
+回归：后端 855/4s（+出生点检测 4、+stop_session 工具 1）。真机验证待用户：出生 tr 的局
+（重开几次随机到 tr）采矿应正常、地图层正确。
+
+## 0.43 三十六轮：「开启游戏」收敛为两模式（正常/仿真 + 快进倍数，2026-08-23，未提交）
+
+用户拍板：AD 面上的 sim/实时多种驱动收敛为**开启游戏一项、两种模式** ——
+1. **正常模式**（mode=normal）：玩家可见、实时流速（原 realtime 路径）；
+2. **仿真模式**（mode=fast）：给 agent 用的快速模式，**同样是真 SC2 游戏**，支持快进
+   倍数（speed：2/4/8…，0=不限速），跑完看实际结果。
+offline/sim 是测试驱动（假世界），从用户面退场（后端保留给测试）。
+
+- **配速**：`driver/sc2_adapter.pace_sleep_seconds`（纯函数）—— N 倍速 = 每真实秒推进
+  N 游戏秒，bot 在 on_step 里睡差值（非实时游戏由客户端主动 step，慢点请求=慢点跑）；
+  `SC2GamePort(speed=)` 起始注入、`set_speed` 热改。
+- **通道**：run_session `--speed` + `speed` 控制命令（sc2 落 bot 配速；sim 同命令缩放
+  节拍睡眠 —— 测试可端到端）；`POST /api/session/speed`（即时生效不重启；正常模式/
+  进程内沙盒 409 带原因）；`session/start?mode=&speed=`（错配 400：mode 只属 sc2、
+  normal 带 speed、倍数越界）；幂等守卫把模式/起始倍数纳入会话身份。
+- **Agent 面**：start_session 工具收敛 mode/speed（driver 恒 sc2；默认 fast+最快），
+  提示词改为「验证用仿真模式，不用问用户；正常模式留给用户在场时」。
+- **UI**：StartCard 模式段选（正常/仿真）+ 仿真倍数下拉，按钮改「开启游戏」；
+  ModeBar 在仿真会话运行中给 2×/4×/8×/最快小按钮组（顶栏无下拉的十四轮锁保持——
+  用按钮组不是 select）。
+- 坑（自伤后自查）：describe 改动时把 alive 写反（is None→is not None），四个 sim
+  会话测试齐挂 —— **改 describe 字段先跑 test_live 再继续**。
+- 回归：后端 850/4s（+pace 3、+game modes 4、工具模式测试重写），前端 374 + tsc/build 0。
+- 真机（sc2）两种模式 + 运行中变速留用户验一次（通道已被 sim 端到端覆盖）。
+
 ## 0.42 三十五轮：提示词六条整改 + 记忆工作区种子 + 流式分段错位（2026-08-23，未提交）
 
 - **提示词重写**（用户六条评审）：规则去重（「不能热改」×4 →「你做不到的事」一处 + surface.md 引用）；

@@ -61,7 +61,7 @@ import { z } from "zod";
  *   strategy 增 display_name_zh/description_zh（策略级与 step 级）、reasons、group_names。
  *   新字段全部 `.default()` 容错：旧夹具/旧缓存帧缺字段时退回 identifier，不炸整页。
  */
-export const REV = 16 as const;
+export const REV = 17 as const;
 
 /* ---------------- 基础类型 ---------------- */
 
@@ -559,6 +559,18 @@ export const zProductionFrame = z.object({
       reason: z.string(),
     }),
   ),
+  /**
+   * 在训条目（rev 17，G3）：runtime emit 训练单时记的开始时刻 —— SC2 订单不带
+   * 进度（rev 13 收窄），复盘截断线左侧的"训练中部分条"靠它 + catalog build_time 算。
+   * 旧帧没有该字段 → 空数组兜底。
+   */
+  training: z.array(
+    z.object({
+      stable_id: z.string(),
+      producer_tag: z.number().int(),
+      started_at: z.number(),
+    }),
+  ).default([]),
 });
 
 /**
@@ -765,7 +777,8 @@ const envelope = <K extends Topic, T extends z.ZodTypeAny>(topic: K, payload: T)
   z.object({
     topic: z.literal(topic),
     /** 不匹配时前端拒绝渲染并提示（红线 C8） */
-    rev: z.literal(REV),
+    /** 1..REV：历史帧（旧录像）允许更小的 rev（parseEnvelope 已判；zod 侧不写死字面量） */
+    rev: z.number().int().min(1),
     seq: z.number().int(),
     /** 唯一时间基准（游戏秒）；所有节拍对齐它，不用墙钟 —— ADR-0025 §6 */
     game_time: z.number(),
@@ -862,15 +875,21 @@ export class ContractError extends Error {
   }
 }
 
-/** 解析一条信封；rev 不匹配或字段不合法一律抛错（不许静默降级） */
+/** 解析一条信封；字段不合法一律抛错（不许静默降级）。
+ *  rev 规则（2026-08-24）：**帧比前端新**（rev > REV）= 前端过旧，报错；
+ *  帧 rev ≤ REV = 历史数据（旧录像/旧夹具），照常解析 —— 契约只增不改，
+ *  缺的字段由 zod .default() 容错，这是"回放优先"承诺的兑现（此前硬等 rev===REV，
+ *  升级前端后所有旧录像第一行就拒，复盘直接不可用）。live 的版本同步检测
+ *  不在这里：WS _hello 对后端 rev 有独立的严格判断。 */
 export function parseEnvelope(raw: unknown): AnyEnvelope {
   if (typeof raw !== "object" || raw === null) {
     throw new ContractError("信封不是对象");
   }
   const rev = (raw as { rev?: unknown }).rev;
-  if (rev !== REV) {
+  if (typeof rev !== "number" || rev < 1 || rev > REV) {
     throw new ContractError(
-      `契约版本不匹配：帧 rev=${String(rev)}，前端 REV=${REV}。请同步 docs/contract/plan-frontend.md §2`,
+      `契约版本不匹配：帧 rev=${String(rev)}，前端 REV=${REV}（帧比前端新 = 前端过旧，刷新/升级；`
+        + "旧录像（rev 更小）本可解析，若看到此错说明帧损坏）",
     );
   }
   const r = zAnyEnvelope.safeParse(raw);

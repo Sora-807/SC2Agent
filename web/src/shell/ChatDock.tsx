@@ -10,14 +10,21 @@
  *   运行中 —— 轮询假流式与「思考中」扫光占位已退役；
  * - 时间戳 hover 才出现（降低常驻噪音）。
  */
-import { useEffect, useRef, useState, type UIEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode, type UIEvent } from "react";
 import {
-  getChat, sayChatStream, type ChatChange, type ChatEvent, type ChatMessage, type ChatStep,
+  cleanChat, getChat, interjectChat, sayChatStream,
+  type ChatChange, type ChatEvent, type ChatMessage, type ChatSegment, type ChatStep,
 } from "../api/agent-chat";
 import { useFrames } from "../store/frames";
+import { useQueueStore } from "../planning/queue-store";
 import { Markdown } from "./markdown";
 import { chatScroll, isNearBottom } from "./chat-scroll";
-import { applyLiveEvent, type LiveEntry } from "./chat-live";
+import { applyLiveEvent, appendUserEntry, type LiveEntry } from "./chat-live";
+
+/** 斜杠指令（2026-08-24 首批只有 clean）：输入 / 弹建议，回车/点选执行 —— 不发给 LLM */
+const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
+  { cmd: "clean", desc: "清除对话上下文（记忆文件保留）" },
+];
 
 /** 对话时间戳 = 挂钟时间 HH:MM（fmtTime 是游戏时间格式化器，别拿来用） */
 function clock(t: number): string {
@@ -41,17 +48,59 @@ function AtomIcon() {
   );
 }
 
-/** 工具字形（几何符号，常见字体都有；类别一眼可辨） */
-function toolGlyph(name: string): string {
-  if (name.startsWith("list")) return "☰";
-  if (name.startsWith("read")) return "▤";
-  if (name.startsWith("create")) return "＋";
-  if (name.startsWith("write")) return "✎";
-  if (name.startsWith("simulate")) return "▷";
-  if (name === "start_session") return "◎";
-  if (name === "observe") return "◉";
-  if (name === "propose") return "✑";
-  return "◆";
+/** 工具图标（§0.52 F 批用户拍板语义化，12px SVG / currentColor）：
+ *  read=文稿（▤ 像数据库，退役）、glob/grep=放大镜（grep 带横线区分）、
+ *  write 族=铅笔、observe=眼睛、sleep=月牙、start/stop_session=进出环/方块。 */
+function ToolIcon({ name }: { name: string }) {
+  const svg = (children: ReactNode, extra?: Record<string, string>) => (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden {...extra}>
+      {children}
+    </svg>
+  );
+  const s = { stroke: "currentColor", strokeWidth: 1.1, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (name.startsWith("read"))                        // 文稿：矩形 + 三行字
+    return svg(<>
+      <rect x="2.5" y="1.5" width="7" height="9" {...s} />
+      <path d="M4.5 4h3.5M4.5 6h3.5M4.5 8h2.5" {...s} strokeWidth={0.9} />
+    </>);
+  if (name.startsWith("glob") || name.startsWith("grep"))   // 放大镜（grep 镜片里多一横）
+    return svg(<>
+      <circle cx="5" cy="5" r="3.2" {...s} />
+      <path d="M7.6 7.6 10.4 10.4" {...s} strokeWidth={1.4} />
+      {name.startsWith("grep") && <path d="M3.4 5h3.2" {...s} strokeWidth={0.9} />}
+    </>);
+  if (name.startsWith("ls") || name.startsWith("list") || name.startsWith("stat"))
+    return svg(<path d="M2 3h8M2 6h8M2 9h5" {...s} />);   // 清单三行
+  if (name.startsWith("write") || name.startsWith("append")
+    || name.startsWith("edit") || name.startsWith("insert"))
+    return svg(<path d="M2.5 9.5 3 7 8.5 1.5 10.5 3.5 5 9l-2.5.5Z" {...s} />);  // 铅笔
+  if (name.startsWith("delete"))
+    return svg(<>
+      <path d="M2.5 4h7" {...s} />
+      <path d="M3.5 4v6h5V4M5 6v3M7 6v3M4.5 4l.5-2h2l.5 2" {...s} strokeWidth={0.9} />
+    </>);                                                  // 垃圾桶
+  if (name === "observe")
+    return svg(<>
+      <path d="M1.5 6s2-3.5 4.5-3.5S10.5 6 10.5 6 8.5 9.5 6 9.5 1.5 6 1.5 6Z" {...s} />
+      <circle cx="6" cy="6" r="1.4" {...s} />
+    </>);                                                  // 眼睛
+  if (name === "propose")
+    return svg(<>
+      <rect x="2.5" y="1.5" width="7" height="9" {...s} />
+      <path d="M6 4.2v3.6M4.2 6h3.6" {...s} strokeWidth={0.9} />
+    </>);                                                  // 文稿 + 加号（提案）
+  if (name.startsWith("simulate"))
+    return svg(<path d="M3 2 10 6 3 10Z" {...s} />);       // 播放（试算）
+  if (name === "sleep")
+    return svg(<path d="M9.5 7.5A4 4 0 1 1 4.5 2.5a3.2 3.2 0 1 0 5 5Z" {...s} />);  // 月牙
+  if (name === "start_session")
+    return svg(<>
+      <circle cx="6" cy="6" r="4.4" {...s} />
+      <circle cx="6" cy="6" r="1.4" fill="currentColor" />
+    </>);                                                  // 进入靶心
+  if (name === "stop_session")
+    return svg(<rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor" />);
+  return svg(<path d="M6 1.8 10.2 6 6 10.2 1.8 6Z" {...s} />);   // 兜底菱形
 }
 
 /** 思考链：内联折叠行 —— 原子图标 + 着色加粗「思考」+ 首行摘要；展开缩进全文。
@@ -75,7 +124,7 @@ function ThinkRow({ text, running = false }: { text: string; running?: boolean }
 }
 
 /** 工具调用：全宽单行折叠 —— 字形图标 + 工具名 + 耗时（参数收进展开态，不抢眼睛）。
- * running：行扫光（dsh-sweep 挂在 summary 上，prefers-reduced-motion 自动关）——
+ * running：只留「运行中…」文字（外层矩形流光 2026-08-24 用户拍板去掉）——
  * 参数分片（delta kind=tool_call）到达即进入此态，工具事件（完成）落名收尾。 */
 function ToolRow({ step, running = false }: {
   step: Extract<ChatStep, { kind: "tool" }>;
@@ -83,9 +132,9 @@ function ToolRow({ step, running = false }: {
 }) {
   const failed = step.preview.startsWith("error:");
   return (
-    <details open={running} className={"pl-3 " + (running ? "dsh-sweep rounded" : "")}>
+    <details open={running} className="pl-3">
       <summary className="flex h-6 cursor-pointer select-none items-center gap-1.5 text-note">
-        <span className="shrink-0 font-mono text-faint">{toolGlyph(step.tool)}</span>
+        <span className="shrink-0 text-faint"><ToolIcon name={step.tool} /></span>
         <span className="shrink-0 text-faint">{step.tool}</span>
         {!running && step.duration_ms > 0 && (
           <span className="shrink-0 tabular-nums text-ghost">{Math.round(step.duration_ms)}ms</span>
@@ -110,19 +159,49 @@ function ToolRow({ step, running = false }: {
 /** 流式期间的本地步骤行（running 标记动效；落盘后的 steps 没有这个字段） */
 type LiveStep = ChatStep & { running?: boolean };
 
-/** 一条 agent 消息（历史形态：steps 全列 + 正文收尾）。流式中的交错形态见 LiveMessage。 */
-function AgentMessage({ m }: { m: Omit<ChatMessage, "steps"> & { steps?: LiveStep[] } }) {
+/** 时间线里的用户气泡（live 期间与 segments 里的 user 段共用同一形态：
+ *  右对齐圆角气泡，几何上仍与 agent 全宽文本区分） */
+function UserBubble({ text }: { text: string }) {
+  return (
+    <div className="flex flex-col items-end">
+      <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl border border-l1 bg-inset px-3 py-1.5 text-body text-strong">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+/** 一条 agent 消息。segments（A 批）= 轮内交错时间线：正文/思考/工具/插话按真实
+ *  顺序渲染，工具间正文不再被吞；旧历史（无 segments）回落 steps+text 两段式。 */
+function AgentMessage({ m }: {
+  m: Omit<ChatMessage, "steps"> & { steps?: LiveStep[]; segments?: ChatSegment[] };
+}) {
   return (
     <div className="group/msg">
-      {(m.steps ?? []).map((step, i) =>
-        step.kind === "reasoning"
-          ? <ThinkRow key={i} text={step.text} running={step.running ?? false} />
-          : <ToolRow key={i} step={step} running={step.running ?? false} />)}
-      {m.text && (
-        <div className="py-0.5 text-body leading-6 text-dim">
-          <Markdown text={m.text} />
-        </div>
-      )}
+      {m.segments
+        ? m.segments.map((s, i) =>
+            s.kind === "text"
+              ? (
+                <div key={i} className="py-0.5 text-body leading-6 text-dim">
+                  <Markdown text={s.text} />
+                </div>
+              )
+              : s.kind === "reasoning"
+                ? <ThinkRow key={i} text={s.text} />
+                : s.kind === "user"
+                  ? <UserBubble key={i} text={s.text} />
+                  : <ToolRow key={i} step={s} />)
+        : <>
+          {(m.steps ?? []).map((step, i) =>
+            step.kind === "reasoning"
+              ? <ThinkRow key={i} text={step.text} running={step.running ?? false} />
+              : <ToolRow key={i} step={step} running={step.running ?? false} />)}
+          {m.text && (
+            <div className="py-0.5 text-body leading-6 text-dim">
+              <Markdown text={m.text} />
+            </div>
+          )}
+        </>}
       {(m.changes ?? []).length > 0 && (
         <div className="flex flex-col gap-1 pb-0.5">
           {(m.changes ?? []).map((c, i) => <ChangeChip key={i} c={c} />)}
@@ -136,7 +215,8 @@ function AgentMessage({ m }: { m: Omit<ChatMessage, "steps"> & { steps?: LiveSte
 }
 
 /** 流式中的当前轮：**按事件到达顺序**交错渲染（正文分段各归其位，思考/工具行不再
- *  跳到已输出正文的上方 —— 2026-08-23 用户反馈的分段错位 bug）。 */
+ *  跳到已输出正文的上方 —— 2026-08-23 用户反馈的分段错位 bug）。轮内插话（A 批）
+ *  也走这里：appendUserEntry 落在时间线末尾，不再插到上面历史区。 */
 function LiveMessage({ entries }: { entries: LiveEntry[] }) {
   return (
     <div className="group/msg">
@@ -146,9 +226,11 @@ function LiveMessage({ entries }: { entries: LiveEntry[] }) {
             <Markdown text={e.text} />
           </div>
         )
-        : e.step.kind === "reasoning"
-          ? <ThinkRow key={i} text={e.step.text} running={e.step.running ?? false} />
-          : <ToolRow key={i} step={e.step} running={e.step.running ?? false} />)}
+        : e.kind === "user"
+          ? <UserBubble key={i} text={e.text} />
+          : e.step.kind === "reasoning"
+            ? <ThinkRow key={i} text={e.step.text} running={e.step.running ?? false} />
+            : <ToolRow key={i} step={e.step} running={e.step.running ?? false} />)}
     </div>
   );
 }
@@ -166,12 +248,39 @@ function UserMessage({ m }: { m: ChatMessage }) {
   );
 }
 
+/** 跟随提醒条（§0.52 用户拍板）：对局没结束系统不让 agent 停 —— 这是系统注入的
+ *  轮输入，不是用户在说话，所以渲染成全宽琥珀条而不是用户气泡；正文即系统对
+ *  顾问说的原话（对局进行中 · 必须 sleep 跟随），透明可审计。 */
+function NudgeBar({ m }: { m: ChatMessage }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-l2 px-3 py-1.5 text-note text-[color:var(--warn-fg)] bg-[color:var(--warn-bg)]">
+      <svg className="mt-0.5 shrink-0" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+        <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M6 3.5V6l1.8 1.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.text}</span>
+    </div>
+  );
+}
+
 /** 改动按钮（用户 2026-08-22 拍板样式）：蓝框圆角、透明底、黑字，**与回复同宽**
  *  对齐不缺一块；点击跳到后端算好的 hash（不信 LLM 拼链接）。 */
 function ChangeChip({ c }: { c: ChatChange }) {
   return (
     <button
-      onClick={() => { window.location.hash = c.target.replace(/^#/, ""); }}
+      onClick={() => {
+        // 目标页可能不属于当前模式 —— 按目标前缀切模式，否则 App 的
+        // 「页面不属于本模式」守卫会把它弹回模式首页（2026-08-24 用户报
+        // 复盘页点规划 chip 跳不过去；此前只处理了对局方向这半边）
+        if (c.target.startsWith("#/plan-")) {
+          if (useFrames.getState().mode !== "offline") {
+            void useFrames.getState().setMode("offline");
+          }
+        } else {
+          void useFrames.getState().setMode("drive");
+        }
+        window.location.hash = c.target.replace(/^#/, "");
+      }}
       title={"跳到" + c.target + "（agent 本轮改的东西）"}
       className="w-full rounded-lg border-[1.5px] border-accent-blue bg-transparent px-2 py-1 text-left text-note font-medium text-strong hover:bg-blue-soft"
     >
@@ -244,9 +353,50 @@ export function ChatDock() {
     setLive((p) => applyLiveEvent(p ?? [], ev));
   };
 
+  /** 斜杠指令匹配（输入以 / 开头时接管回车）；返回 true = 已处理，不进 LLM */
+  const runSlash = (raw: string): boolean => {
+    const text = raw.trim();
+    if (!text.startsWith("/")) return false;
+    const name = text.slice(1).split(/\s+/)[0];
+    const hit = SLASH_COMMANDS.find((c) => c.cmd === name);
+    if (!hit) return false;
+    if (hit.cmd === "clean") {
+      void (async () => {
+        setInput("");
+        const ok = await cleanChat();
+        if (ok) {
+          setMessages([{
+            role: "agent", at: Date.now() / 1000,
+            text: "（上下文已清空 —— 下一轮从空白开始；memory/ 里的记忆与改进笔记都在磁盘上，不受影响）",
+          }]);
+          setLive(null);
+        } else {
+          setChatErr("clean 失败：后端不可达或对话服务未启用");
+        }
+      })();
+    }
+    return true;
+  };
+
   const send = (): void => {
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text) return;
+    if (runSlash(text)) return;
+    if (busy) {
+      // 顾问运行中 = 插话（2026-08-24）：立刻排进队列（sleep 早醒 / 工具结果捎带），
+      // 本地即显（A 批：落 live 时间线末尾 —— 刚发的话显示在已流出内容**下方**，
+      // 不再 append 进 messages 造成「用户消息跑到最上面」的双槽错位）
+      void (async () => {
+        const r = await interjectChat(text);
+        if (r.queued) {
+          setLive((l) => (l ? appendUserEntry(l, text) : l));
+          setInput("");
+        } else {
+          setChatErr("插话没排上（" + (r.reason ?? "刚好在轮间隙") + "）—— 再按一次发送");
+        }
+      })();
+      return;
+    }
     setBusy(true);
     setChatErr(null);
     setLive([]);
@@ -261,6 +411,15 @@ export function ChatDock() {
         } else if (ev.messages) {
           setMessages(ev.messages);
           setLive(null);
+          // 改动落盘 → 清单可能过期（agent 走 REST 写，前端清单不会自己更新 ——
+          // 2026-08-24 用户报「不刷新看不到最新规划」）：轮末按改动域重拉
+          const areas = new Set((ev.changes ?? []).map((c) => c.area));
+          if (areas.size > 0) {
+            if (areas.has("plan") || areas.has("map_plan")) {
+              void useQueueStore.getState().refresh();
+            }
+            if (areas.has("live")) void useFrames.getState().refreshSources();
+          }
         }
       } else {
         applyEvent(ev);
@@ -277,7 +436,7 @@ export function ChatDock() {
     : chatReason
       ? `对话不可用：${chatReason}`
       : busy
-        ? "顾问正在想…"
+        ? "顾问运行中 —— 可直接插话（Enter 发送，它会在下一个检查点看到）"
         : "和 agent 商量打法：读规划、试算、比战术（Enter 发送，Shift+Enter 换行）";
 
   return (
@@ -295,10 +454,20 @@ export function ChatDock() {
               它能直接读改生产/地图规划、干跑试算、记忆你的偏好。
             </div>
           )}
-          {messages.map((m, i) => m.role === "user"
-            ? <UserMessage key={i} m={m} />
-            : <AgentMessage key={i} m={m} />)}
-          {live && <LiveMessage entries={live} />}
+          {messages.map((m, i) => m.nudge
+            ? <NudgeBar key={i} m={m} />
+            // 轮内插话的独立条目只喂 LLM（_seed_history）；显示走下一条 agent
+            // 消息的 segments（按真实时序内嵌）—— 有 segments 就跳过，别重复出两条
+            : m.interjection && messages[i + 1]?.segments
+              ? null
+              : m.role === "user"
+                ? <UserMessage key={i} m={m} />
+                : <AgentMessage key={i} m={m} />)}
+          {/* 发话即显「思考中」：首个分片到达前 UI 不能是死屏（模型思考越久越像卡死；
+              turn_start 前端不渲染、占位又在十五轮退役了 —— 2026-08-24 补回一个最小版） */}
+          {live && (live.length === 0
+            ? <ThinkRow text="…" running />
+            : <LiveMessage entries={live} />)}
         </div>
         {/* 往上拨时出现（右下角）：点击平滑回底并恢复跟随；钉住阅读期间流式不再拽走位置 */}
         {!follow && (
@@ -315,9 +484,29 @@ export function ChatDock() {
       </div>
 
       <div className="border-t border-l1 p-2">
+        {input.startsWith("/") && (
+          <div className="mb-1 rounded-lg border border-l1 bg-inset px-2 py-1 text-note">
+            {SLASH_COMMANDS
+              .filter((c) => c.cmd.startsWith(input.trim().slice(1)))
+              .map((c) => (
+                <button
+                  key={c.cmd}
+                  className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-raised"
+                  onClick={() => runSlash("/" + c.cmd)}
+                  title="点击执行"
+                >
+                  <code className="text-mono text-blue-fg">/{c.cmd}</code>
+                  <span className="text-ghost">{c.desc}</span>
+                </button>
+              ))}
+            {SLASH_COMMANDS.every((c) => !c.cmd.startsWith(input.trim().slice(1))) && (
+              <span className="text-ghost">没有这个指令（现有：{SLASH_COMMANDS.map((c) => "/" + c.cmd).join(" ")}）</span>
+            )}
+          </div>
+        )}
         <textarea
           rows={5}
-          disabled={!api.ok || busy || chatReason !== null}
+          disabled={!api.ok || chatReason !== null}
           placeholder={inputPlaceholder}
           value={input}
           onChange={(e) => setInput(e.target.value)}

@@ -12,11 +12,13 @@ agent 可写（用户拍板免审）—— 安装边界是装配时机：策略�
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from agentic import AgentSpec, ToolSet
 from agentic.tools.toolset import FILE_CONTRACT_TOOLS
 
 from agent.client import ApiClient
-from agent.tools import make_planning_tools, make_tools
+from agent.tools import InterjectionQueue, make_planning_tools, make_tools
 from agent.workspace import ChangeLog, lint_aware_file_tool_factories
 
 SYSTEM_PROMPT = """
@@ -27,7 +29,7 @@ SYSTEM_PROMPT = """
 ## 你做不到的事（原则；具体操作边界查 system/surface.md）
 - **不能直改对局状态**：没有下命令的工具。对局内改动只走提案（propose；校验通过即自动应用）。
 - **不能热切正在跑的会话**：换策略（POST /api/session/swap）是用户的动作，你没这个工具
-  —— 把策略写好、sim 验证，然后建议用户切。地图规划只在会话启动时装配。
+  —— 把策略写好、仿真模式验证，然后建议用户切。地图规划只在会话启动时装配。
 - **不能绕过校验**：规划/策略保存、槽位摆放、提案都会被后端校验；不支持的操作带原因
   返回，别原样重试（校验类拒绝——重叠/压预留区/锁定位/编译错——改掉再试是合法的）。
 - **不能删除文件**：delete 工具删的是行，不是文件；规划/策略文件的生命周期由人管。
@@ -91,29 +93,54 @@ placement 点名引用：预设固定建造名全局可用（精炼厂 → 蓝�
 2. 改：edit（字面量替换）/ insert（按行插入）/ write（新建或整体重写）。改地图规划时
    槽位不可压「预设固定建造点」（蓝方主矿、蓝方二矿…）。
 3. **必须** `simulate_plan` 干跑：曲线末点 + 事件 + 前瞻警报 —— 没有试算的改动不算完成。
-4. 报告：改了什么、卡点、改前改后曲线差异。验证装配用 `start_session`（sim 沙盒即可；
-   sc2 会开真游戏进程，用户要真机才用）。
+4. 报告：改了什么、卡点、改前改后曲线差异。验证装配/策略用 `start_session` 开一局
+   **仿真模式**（mode=fast，默认）—— 真 SC2 快进跑完，observe / recordings 看实际结果，
+   不用问用户。**开局配置**一并在这发：`strategy=`（策略文件 id）、
+   `production=`（开局采集配额，如 `{"mineral_workers": 8, "gas_workers": 3}`，
+   目标值语义）；成套配置（地图+策略+生产序列）用 `loadout=` 一发入魂。
+   正常模式（mode=normal，玩家可见、实时流速）留给用户在场时用。
+   局跑完或卡住用 `stop_session` 收尾（树杀含 SC2，别留孤儿进程）；
+   用户在场的正常模式局要关先问用户。
+   **等待只能靠 sleep**：你的回合结束后就沉睡了，直到用户再说话才被唤醒 —— 所以
+   凡是要等游戏推进（建造完成/矿攒够/下一个观察点），**必须**在一轮内用
+   `sleep(game_seconds=N)`（按游戏时间等，快进模式下等得更省），然后 observe 对比；
+   observe → sleep → observe 连着做，把等待留给自己、别推给用户。
+   **对局跟随**：对局进行中系统不会让你停 —— **只回文字不会结束回合**。收到
+   「（跟随提醒·第 N 次）」= 你想结束但游戏没完（系统注入的指令，不是用户说话）：
+   立刻 sleep 等推进 → observe 检查（队列/收入/警报）→ 必要时 propose。
+   开局启动期（会话还在「启动中」）也一样：起完 start_session 就 sleep 到对局中
+   再 observe，不要干等也不要只回文字。对局结束后先做终局总结（结果 + 关键
+   时间线 + 值得记的教训）再停。
+
+## 插话
+你在对局中长时间运行时，用户随时可能插话 —— 它会出现在 **sleep 的提前返回**或**工具结果
+的头部**（「（用户插话：…）」）。看到就**优先回应用户**，处理完再继续原任务/继续等待。
 
 ## 输出纪律
-- 回答问题直接用文字说（不用调 done）；完成了具体的事（改了规划 / 试算完 / 起了会话）
-  才调 done，result 一句话汇报。
+- 回答问题、汇报结果**直接用文字说** —— 回复即回合自然结束（没有 done 工具，
+  也不用喊"完成"）。
 - 提案的 hunks 必须是**可应用的操作**，不是想法描述；下标 = 观察包里看到的队列位置。
 """
 
 
 class AdvisorSpec(AgentSpec):
     """生产顾问。工具集 = 文件契约（规划域读写，存储后端 ApiWorkspace；写入工具带
-    memory lint 软提示）+ 对局域（观察 + 提案）+ 语义动作（试算/会话/战术素材）+ done
-    （写面清单不是工具：只读文件 system/surface.md）。
+    memory lint 软提示）+ 对局域（观察 + 提案）+ 语义动作（试算/会话/战术素材）。
+    done 不绑定（§0.52 F 批：runner 对纯文字轮本就自然收轮；vendor 的 drop 接缝
+    摘除，源码不动）。
     **没有**直接改对局状态的工具 —— 那条边界没有放宽。"""
 
     type_key = "advisor"
 
     def __init__(self, client: ApiClient, *, source: str = "live",
-                 changes: ChangeLog | None = None) -> None:
+                 changes: ChangeLog | None = None,
+                 pending: InterjectionQueue | None = None,
+                 map_plans_dir: Path | None = None) -> None:
         self._client = client
         self._source = source
         self._changes = changes
+        self._pending = pending
+        self._map_plans_dir = map_plans_dir
 
     def system_prompt(self) -> str:
         return SYSTEM_PROMPT
@@ -123,10 +150,35 @@ class AdvisorSpec(AgentSpec):
         # 语义工具从 factory 构造 —— 规划文件的读写全部收进文件契约。
         # write/append/edit/insert 换成 lint 版（A4）：行为不变，写 memory/*.md 时
         # 在结果尾部附软提示 —— vendor 不改，drop 名字条目换直接 factory。
-        toolset = ToolSet(*FILE_CONTRACT_TOOLS).drop("write", "append", "edit", "insert")
+        # done 一并 drop（§0.52 F 批）：收尾 = 纯文字回复，系统提示由 talk 本地组装。
+        toolset = (ToolSet(*FILE_CONTRACT_TOOLS)
+                   .drop("write", "append", "edit", "insert", "done"))
         for name, factory in lint_aware_file_tool_factories().items():
             toolset = toolset.add(factory, name=name)
-        for tool in (make_tools(self._client, source=self._source, changes=self._changes)
-                     + make_planning_tools(self._client)):
-            toolset = toolset.add(lambda _agent, t=tool: t, name=tool.name)
+        raw = (make_tools(self._client, source=self._source, changes=self._changes,
+                          map_plans_dir=self._map_plans_dir)
+               + make_planning_tools(self._client, pending=self._pending))
+        for tool in raw:
+            toolset = toolset.add(lambda _agent, t=tool: self._carry_interjections(t),
+                                  name=tool.name)
         return toolset
+
+    def _carry_interjections(self, tool) -> Tool:
+        """包一层：工具结果尾部捎带到达的插话（「每次工具调用完成后插入」的实现点——
+        工具结果会作为下一轮 LLM 输入，插话跟着直达模型；sleep 自己另有早醒路径）。"""
+        if self._pending is None:
+            return tool
+        from agentic.types import Tool as _Tool
+
+        inner = tool.function
+
+        async def wrapped(arguments: dict) -> str:
+            out = await inner(arguments)
+            msgs = self._pending.drain()
+            if msgs:
+                return ("（用户插话：" + "／".join(msgs) + "）——优先回应用户，再继续原任务）"
+                        + "\n\n" + str(out))
+            return out
+
+        return _Tool(name=tool.name, description=tool.description,
+                     parameters=tool.parameters, function=wrapped)

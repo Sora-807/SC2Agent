@@ -63,9 +63,11 @@ PROPOSAL_ARGS = {
 }
 
 
-def _script(*calls: ToolCall) -> FakeLLMClient:
+def _script(*calls: ToolCall, final_text: str = "好了") -> FakeLLMClient:
+    """calls 是工具轮；final_text 是收尾文字轮（done 已下线，§0.52 F 批）。"""
     return FakeLLMClient([
-        LLMResponse(Message("assistant", None, [c]), 0, 0, "fake") for c in calls
+        *(LLMResponse(Message("assistant", None, [c]), 0, 0, "fake") for c in calls),
+        LLMResponse(Message("assistant", final_text), 0, 0, "fake"),
     ])
 
 
@@ -81,15 +83,17 @@ async def _run(api_client: TestClient, llm: FakeLLMClient, tmp_path: Path) -> ob
 #: 完整工具面（2026-08-22 文件工作区改造）：文件契约 + 对局域 + 语义动作。
 #: 改这个集合 = 改授权边界，必须连着 WORKLOG 的决策记录一起改。
 EXPECTED_TOOLS = {
-    "done",
+    # done 已下线（§0.52 F 批）：收尾 = 纯文字回复；runner 对无 tool_calls 的响应自然收轮
     # 文件契约（规划文件读写；存储后端 = agent.workspace.ApiWorkspace；
     # write/append/edit/insert 是 lint 版 —— 行为不变，memory 写入附软提示）
     "ls", "read", "glob", "grep", "write", "append", "edit", "insert", "delete", "stat",
     # 对局域（提案制，提交即自动应用）。写面清单不是工具：只读文件 system/surface.md
     "observe", "propose",
     # 语义动作（文件表达不了的：干跑/会话/战术素材）。
-    # 2026-08-23 工具审视 19→17：write_surface/read_current_strategy 退役
-    "simulate_plan", "start_session",
+    # 2026-08-23 工具审视 19→17：write_surface/read_current_strategy 退役；
+    # 2026-08-24 +stop_session（对称：能开游戏也要能关，防孤儿 SC2）
+    # +audit_queue（F 批 2026-08-24：队列体检只诊断+建议，17→18）
+    "simulate_plan", "audit_queue", "start_session", "stop_session", "sleep",
     "list_modules", "read_module",
 }
 
@@ -128,7 +132,6 @@ def test_round_auto_applies_a_valid_proposal(api: TestClient, tmp_path: Path):
     llm = _script(
         ToolCall("c1", "observe", {}),
         ToolCall("c2", "propose", PROPOSAL_ARGS),
-        ToolCall("c3", "done", {"result": "提了一条：队首插精炼厂"}),
     )
     asyncio.run(_run(api, llm, tmp_path))
 
@@ -216,7 +219,6 @@ def test_rejection_reason_flows_back_into_the_observation(api: TestClient, tmp_p
     llm = _script(
         ToolCall("c1", "observe", {}),
         ToolCall("c2", "propose", PROPOSAL_ARGS),
-        ToolCall("c3", "done", {"result": "ok"}),
     )
     asyncio.run(_run(api, llm, tmp_path))
     pid = api.get("/api/proposals").json()[0]["id"]
@@ -236,7 +238,6 @@ def test_applied_proposals_show_in_history_so_it_does_not_double_propose(api: Te
     llm = _script(
         ToolCall("c1", "observe", {}),
         ToolCall("c2", "propose", PROPOSAL_ARGS),
-        ToolCall("c3", "done", {"result": "ok"}),
     )
     asyncio.run(_run(api, llm, tmp_path))
     api.app.state.session.tick()
@@ -260,7 +261,6 @@ def test_agent_round_is_visible_in_the_ui_frames(api: TestClient, tmp_path: Path
     llm = _script(
         ToolCall("c1", "observe", {}),
         ToolCall("c2", "propose", PROPOSAL_ARGS),
-        ToolCall("c3", "done", {"result": "ok"}),
     )
     asyncio.run(_run(api, llm, tmp_path))
     api.app.state.session.tick()          # 推一帧，让 proposals 帧发出来
@@ -268,3 +268,95 @@ def test_agent_round_is_visible_in_the_ui_frames(api: TestClient, tmp_path: Path
     by = {f["topic"]: f for f in frames}
     assert "proposals" in by, "提案必须出现在帧里，UI 才看得见"
     assert by["proposals"]["payload"]["proposals"][0]["author"] == "agent"
+
+
+def test_system_prompt_is_local_and_done_free():
+    """§0.52 F 批：系统提示词由 talk 本地组装 —— vendor 追加的「调用 done 提交结果」
+    不再出现（done 已不绑定，留着会引导每次收尾白试一轮不存在的工具）。"""
+    from agent.client import ApiClient
+    from agent.spec import AdvisorSpec
+    from agent.talk import _system_prompt
+    from agent.tools import make_planning_tools, make_tools
+
+    class _StubAgent:   # _system_prompt 只读 spec 与 tools，用最小替身
+        spec = AdvisorSpec(ApiClient())
+        tools = make_tools(ApiClient()) + make_planning_tools(ApiClient())
+
+    out = _system_prompt(_StubAgent())
+    assert "调用 done 提交结果" not in out
+    assert "没有 done 工具" in out                 # 换成的自然结束语义
+    assert "# 可用工具" in out and "- observe" in out
+    assert "- start_session" in out   # 语义工具清单在（文件契约由引擎组装，替身不含）
+
+
+# ---------------- A 批（2026-08-24）：轮内交错时间线 segments ----------------
+
+def test_round_segments_interleave_text_between_tools(tmp_path: Path):
+    """工具之间的正文必须序列化进 segments —— 旧 {steps,text} 两段式渲染时会吞掉
+    （用户实测「轮完成瞬间清空正文」）。配对：llm_call ↔ 本轮新增 assistant 消息。"""
+    from types import SimpleNamespace
+
+    from agent.talk import AgentTalk
+
+    class _StubTracer:
+        def __init__(self, events):
+            self._events = events
+            self.trace_dir = tmp_path
+
+        def read_events(self, target):
+            return self._events
+
+    agent = SimpleNamespace(state=SimpleNamespace(messages=[
+        Message("user", "看看队列"),
+        Message("assistant", "先看一眼"),
+        Message("assistant", "看完了，结论是补给够了"),
+    ]))
+    events = [
+        {"type": "llm_call", "reasoning_ref": None},
+        {"type": "tool_call", "tool": "observe", "args": {}, "result_preview": "ok",
+         "duration_ms": 5, "ts": "2026-08-24T12:00:02.000+08:00"},
+        {"type": "llm_call", "reasoning_ref": None},
+    ]
+    talk = object.__new__(AgentTalk)   # 纯方法单测：不走重装配
+    talk._target = "advisor#1"
+    segs = talk._round_segments(_StubTracer(events), 0, 1, agent, [])
+    assert [s["kind"] for s in segs] == ["text", "tool", "text"]
+    assert segs[0]["text"] == "先看一眼"
+    assert segs[1]["tool"] == "observe"
+    assert segs[2]["text"] == "看完了，结论是补给够了"
+
+
+def test_round_segments_place_interjection_before_the_running_tool(tmp_path: Path):
+    """插话按排空时刻插到正在跑的工具之前（用户说话时该工具还在运行）。"""
+    from types import SimpleNamespace
+
+    from agent.talk import AgentTalk
+
+    class _StubTracer:
+        def __init__(self, events):
+            self._events = events
+            self.trace_dir = tmp_path
+
+        def read_events(self, target):
+            return self._events
+
+    agent = SimpleNamespace(state=SimpleNamespace(messages=[
+        Message("user", "q"),
+        Message("assistant", "我来等"),
+        Message("assistant", "好，收到"),
+    ]))
+    tool_ts = "2026-08-24T12:00:10.000+08:00"
+    events = [
+        {"type": "llm_call", "reasoning_ref": None},
+        {"type": "tool_call", "tool": "sleep", "args": {}, "result_preview": "",
+         "duration_ms": 1000, "ts": tool_ts},
+        {"type": "llm_call", "reasoning_ref": None},
+    ]
+    from datetime import datetime
+    drained_at = datetime.fromisoformat(tool_ts).timestamp() - 1.0   # 工具跑着的时候说的
+    talk = object.__new__(AgentTalk)
+    talk._target = "advisor#1"
+    segs = talk._round_segments(_StubTracer(events), 0, 1, agent,
+                                [("等等，先别动气矿", drained_at)])
+    assert [s["kind"] for s in segs] == ["text", "user", "tool", "text"]
+    assert segs[1]["text"] == "等等，先别动气矿"

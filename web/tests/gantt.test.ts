@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseEnvelopeLine, type ProjectionFrame } from "../src/contract";
 import {
-  accumulateInto, activeAt, packBars, sharedDomain, toStalls,
+  LEFT_MARGIN_SECS, activeAt, nowAnchoredRange, packBars, packPairs,
+  sharedDomain, toStalls,
 } from "../src/charts/gantt-data";
 
 const FIX_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", "fixtures");
@@ -118,50 +119,40 @@ describe("packBars：全局行打包（跨类型贪心，并行最大化）", ()
   });
 });
 
-describe("accumulateInto（F17 历史累积：拖时间轴后左侧内容保留）", () => {
-  const mkPoint = (t: number, minerals: number): ProjectionFrame["points"][number] => ({
-    t, minerals, gas: 0, supply_used: 0, supply_cap: 0,
-    mineral_workers: 0, gas_workers: 0, buildings: {}, units: {}, in_flight_count: 0,
+describe("packPairs（复盘改版：部分条与投影条共用同一打包核心）", () => {
+  it("额外塞进的部分条参与全局行打包（时间不重叠可同行）", () => {
+    const projectionBar = { stableId: "terran/supplydepot", from: 105, to: 130, done: false };
+    // 截断线 T=100：在建 depot 已耗 10s（from 被延到 90）、剩 20s
+    const partial = { stableId: "terran/barracks", from: 90, to: 112, done: false };
+    const { bars, rows } = packPairs([projectionBar, partial]);
+    expect(bars).toHaveLength(2);
+    expect(rows).toBe(2);          // [90,112] 与 [105,130] 重叠 → 错行
   });
 
-  it("后帧的点覆盖同 t 旧值（新帧实算 > 旧帧远期预测），旧 t 保留", () => {
-    const hist = { points: new Map(), events: new Map() };
-    const f1 = frame([started("terran/marine", 100)], { t0: 100, horizon: 120 });
-    f1.points = [mkPoint(100, 10), mkPoint(101, 11), mkPoint(102, 12)];
-    accumulateInto(hist, f1);
-    const f2 = frame([], { t0: 102, horizon: 120 });
-    f2.points = [mkPoint(102, 99), mkPoint(103, 100)];
-    const merged = accumulateInto(hist, f2);
-    expect(merged.points.map((p) => [p.t, p.minerals])).toEqual([
-      [100, 10], [101, 11], [102, 99], [103, 100],
-    ]);
+  it("packPairs 不改入参（内部先拷贝排序）", () => {
+    const pairs = [{ stableId: "a", from: 20, to: 30, done: true },
+                   { stableId: "b", from: 5, to: 8, done: true }];
+    packPairs(pairs);
+    expect(pairs[0]!.from).toBe(20);
+  });
+});
+
+describe("nowAnchoredRange（复盘改版：截断线钉 T、左缘 T-30、右缘不出空白）", () => {
+  it("T=65s → 左缘 35s（30s 留白），右缘 = from+span（数据够长时）", () => {
+    expect(nowAnchoredRange(65, 300, 600)).toEqual({ from: 35, to: 335 });
   });
 
-  it("同一事件在多帧重复出现 → 去重（started/completed 配对仍成立）", () => {
-    const hist = { points: new Map(), events: new Map() };
-    const ev = [started("terran/marine", 100), completed("terran/marine", 110)];
-    const f1 = frame([...ev], { t0: 100, horizon: 120 });
-    f1.points = [mkPoint(100, 0), mkPoint(110, 5)];
-    accumulateInto(hist, f1);
-    const f2 = frame([...ev], { t0: 105, horizon: 120 });
-    f2.points = [mkPoint(105, 2), mkPoint(110, 3)];
-    const merged = accumulateInto(hist, f2);
-    // 事件各一份，卡点之外 started/completed 成对出现
-    expect(merged.events.filter((e) => e.kind === "started")).toHaveLength(1);
-    expect(merged.events.filter((e) => e.kind === "completed")).toHaveLength(1);
+  it("T 靠近开局 → 左缘钉 0（不足 30s 就只留出有的）", () => {
+    expect(nowAnchoredRange(10, 300, 600)).toEqual({ from: 0, to: 300 });
   });
 
-  it("超出当前帧末端的旧预测被丢弃（向后拖时间轴后的残留清理）", () => {
-    const hist = { points: new Map(), events: new Map() };
-    const f1 = frame([started("terran/marine", 150)], { t0: 100, horizon: 120 });
-    f1.points = [mkPoint(100, 0), mkPoint(150, 5)];
-    accumulateInto(hist, f1);
-    // 新帧回退到 t0=110/horizon=10：末端 120，旧帧里 t=150 的点与事件都超出 → 丢弃
-    const f2 = frame([], { t0: 110, horizon: 10 });
-    f2.points = [mkPoint(110, 1), mkPoint(120, 2)];
-    const merged = accumulateInto(hist, f2);
-    expect(merged.points.map((p) => p.t)).toEqual([100, 110, 120]);
-    expect(merged.events).toHaveLength(0);
+  it("数据末端近 → 右缘钳 dataEnd（不出空白），但至少露到 T+1", () => {
+    expect(nowAnchoredRange(65, 300, 100)).toEqual({ from: 35, to: 100 });
+    expect(nowAnchoredRange(65, 300, 60)).toEqual({ from: 35, to: 66 });
+  });
+
+  it("留白量是拍板的 30s", () => {
+    expect(LEFT_MARGIN_SECS).toBe(30);
   });
 });
 

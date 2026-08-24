@@ -21,8 +21,9 @@ describe("ChatDock：商量回路已接上", () => {
     expect(code(src)).not.toContain("disabled\n");
   });
 
-  it("输入框禁用是有条件的（后端不在 / 思考中 / 有理由），不是永久 disabled", () => {
-    expect(code(src)).toMatch(/disabled=\{!api\.ok \|\| busy \|\| chatReason !== null\}/);
+  it("输入框禁用是有条件的（后端不在 / 有理由）—— **运行中不禁用**（2026-08-24 插话）", () => {
+    expect(code(src)).toMatch(/disabled=\{!api\.ok \|\| chatReason !== null\}/);
+    expect(code(src)).toContain("interjectChat(text)");   // busy 时回车 = 插话
   });
 
   it("发送走流式（sayChatStream），历史走 getChat，失败理由原样显形（G7）", () => {
@@ -47,7 +48,7 @@ describe("ChatDock：商量回路已接上", () => {
     expect(c).toContain("rounded-2xl");       // 用户气泡 vs agent 全宽的不对称
     expect(c).toContain("<Markdown text={m.text} />");  // agent 回复走 Markdown
     expect(c).toContain("w-160");             // 宽度加倍（用户拍板）
-    expect(c).toContain("toolGlyph");         // 工具行字形图标
+    expect(c).toContain("ToolIcon");          // 工具行 SVG 语义图标
   });
 
   it("提案审批收件箱已退役（2026-08-22 用户拍板：离线域 agent 直改，收件箱纯冗余）", () => {
@@ -100,22 +101,74 @@ describe("ChatDock：真流式（2026-08-22 十五轮，接 BaseAgent start_stre
     expect(c).toContain("result_preview");
   });
 
+  it("斜杠指令：/clean 清上下文（输入 / 弹建议，回车/点选执行，不发给 LLM）（2026-08-24）", () => {
+    const c = code(src);
+    expect(c).toContain("SLASH_COMMANDS");
+    expect(c).toContain('"clean"');
+    expect(c).toContain("runSlash");
+    expect(c).toContain("cleanChat()");
+    // 指令被 send 拦截：不走到 sayChatStream
+    expect(c).toMatch(/if \(runSlash\(text\)\) return;/);
+  });
+
+  it("发话即显「思考中」占位：首个分片到达前不是死屏（2026-08-24 token 流慢的 UI 半边）", () => {
+    expect(code(src)).toContain('live.length === 0');
+    expect(code(src)).toContain('<ThinkRow text="…" running');
+  });
+
+  it("改动 chip 跳对局页前先切 drive 模式（2026-08-24：规划模式守卫曾把它重定向回规划首页）；跳规划页同样先切 offline（复盘页点规划 chip 跳不过去的另一半）", () => {
+    const c = code(src);
+    expect(c).toContain('c.target.startsWith("#/plan-")');
+    expect(c).toContain('setMode("offline")');
+    expect(c).toContain('setMode("drive")');
+  });
+
+  it("轮末改动刷新规划清单（agent 走 REST 写，前端清单不会自己更新 —— 2026-08-24）", () => {
+    const c = code(src);
+    expect(c).toContain("useQueueStore.getState().refresh()");
+    expect(c).toContain('areas.has("plan") || areas.has("map_plan")');
+    expect(c).toContain("refreshSources");
+  });
+
   it("流式轮按到达顺序交错渲染（2026-08-23 分段错位修复）：时间线 + LiveMessage", () => {
     const c = code(src);
     expect(c).toContain("applyLiveEvent(p ?? [], ev)");   // 事件 → 时间线 reducer
     expect(c).toContain("<LiveMessage entries={live}");   // 交错渲染入口
   });
 
-  it("「顾问思考中」扫光占位退役（十五轮用户拍板：冗余）；工具行运行态保留扫光", () => {
+  it("「顾问思考中」扫光占位退役（十五轮）；外层矩形流光 dsh-sweep 也移除（2026-08-24 用户拍板）", () => {
     const c = code(src);
     expect(c).not.toContain("顾问思考中");
     expect(c).not.toContain("runningSteps");         // 1.2s 轮询假流式退役
-    expect(c).toContain("dsh-sweep");                // 工具行运行中的扫光还在
+    expect(c).not.toContain("dsh-sweep");            // 矩形流光去掉了，运行态只留文字
+    expect(c).toContain("运行中");                    // 工具行运行态的文字标识还在
   });
 
-  it("round 终态用服务端真源替换本地过程（messages 带 steps/changes 落历史）", () => {
+  it("round 终态用服务端真源替换本地过程（messages 带 segments/steps/changes 落历史）", () => {
     const c = code(src);
     expect(c).toMatch(/ev\.type === "round"/);
     expect(c).toMatch(/setMessages\(ev\.messages\)/);
+  });
+
+  it("A 批（2026-08-24）：segments 交错时间线 + 插话落 live 末尾", () => {
+    const c = code(src);
+    // AgentMessage 有 segments 优先渲染（工具间正文不再被吞），无 segments 回落旧两段式
+    expect(c).toContain("m.segments");
+    expect(c).toMatch(/m\.segments\s*\?\s*m\.segments\.map/);
+    expect(c).toContain("<UserBubble");
+    // 插话 append 进 live 时间线末尾 —— 不再 setMessages（那是「跑到最上面」的根因）
+    expect(c).toContain("appendUserEntry(l, text)");
+    // 插话独立历史条目只喂 LLM：下一条 agent 消息带 segments 时跳过，不重复显示
+    expect(c).toMatch(/m\.interjection && messages\[i \+ 1\]\?\.segments/);
+    expect(code(client)).toContain("segments?: ChatSegment[]");
+    expect(code(client)).toContain("interjection?: boolean");
+  });
+
+  it("跟随提醒是系统条不是用户气泡（§0.52：对局没结束系统注入，不冒充用户消息）", () => {
+    const c = code(src);
+    expect(c).toContain("NudgeBar");
+    expect(c).toMatch(/m\.nudge\s*\?\s*<NudgeBar/);   // nudge 标记的消息先进系统条
+    expect(c).toContain("var(--warn-fg)");               // warn token 全宽条（主题纪律：不吃裸色）
+    expect(code(client)).toContain("nudge?: boolean");     // 契约面：ChatMessage 可带 nudge
   });
 });

@@ -34,7 +34,7 @@ PLANNING_TASK = "读默认生产规划，复制一份把精炼厂提前，试算
 
 
 def fake_llm() -> FakeLLMClient:
-    """不打网络的最短路径：observe → propose → done。
+    """不打网络的最短路径：observe → propose → 文字收尾（done 已下线，§0.52 F 批）。
 
     它验的是**装配**（工具能不能被调用、提案能不能落地），不是 LLM 的判断力。
     """
@@ -52,14 +52,13 @@ def fake_llm() -> FakeLLMClient:
                                        "item": {"op": "build", "type": "terran/refinery",
                                                 "count": 1}}}],
             })]), 0, 0, "fake"),
-        LLMResponse(Message(role="assistant", content=None, tool_calls=[
-            ToolCall("c3", "done", {
-                "result": "提了一条：队首插精炼厂，解开缺气阻塞。"})]), 0, 0, "fake"),
+        LLMResponse(Message(role="assistant",
+                            content="提了一条：队首插精炼厂，解开缺气阻塞。"), 0, 0, "fake"),
     ])
 
 
 def planning_llm() -> FakeLLMClient:
-    """文件工作流验收链（不打网络）：ls → read → write(新建规划文件) → simulate → done。
+    """文件工作流验收链（不打网络）：ls → read → write(新建规划文件) → simulate → 文字收尾。
 
     规划域是 codeagent 语义：文件契约直改 plans/ 虚拟目录 + 干跑读警报。
     """
@@ -84,10 +83,9 @@ def planning_llm() -> FakeLLMClient:
         LLMResponse(Message(role="assistant", content=None, tool_calls=[
             ToolCall("p4", "simulate_plan", {"plan_id": "agent-demo",
                                              "horizon": 240})]), 0, 0, "fake"),
-        LLMResponse(Message(role="assistant", content=None, tool_calls=[
-            ToolCall("p5", "done", {
-                "result": "新建 plans/agent-demo.yaml（精炼厂提前到队首）；干跑 240s "
-                          "曲线与前瞻警报已读，缺气卡点消除情况见试算输出。"})]), 0, 0, "fake"),
+        LLMResponse(Message(role="assistant",
+                            content="新建 plans/agent-demo.yaml（精炼厂提前到队首）；干跑 240s "
+                                    "曲线与前瞻警报已读，缺气卡点消除情况见试算输出。"), 0, 0, "fake"),
     ])
 
 

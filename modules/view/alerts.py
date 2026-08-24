@@ -29,13 +29,30 @@ GAS_FLOAT = 400
 #: 投影里多久内会卡人口才值得报（更远的以后还会重算）
 SUPPLY_LOOKAHEAD = 45.0
 
+#: 敌方踪迹有效窗（游戏秒，D 批 2026-08-24 用户设计）：observe 只看得到**当前帧**，
+#: 离开视野就蒸发 —— 所以在警报层留滚动记忆：窗内统计「见过多少个不同敌兵 +
+#: 峰值同屏多少 + 最后出现在哪」
+CONTACT_WINDOW = 10.0
+#: 窗内不同敌兵到这个数（或峰值同屏到 5）→ warn（够格叫醒 sleep）
+CONTACT_WARN_DISTINCT = 3
+CONTACT_WARN_PEAK = 5
+#: 「活跃警报」窗口（游戏秒）：最近这么久内报过的 warn+ 仍算活跃 —— sleep 轮询用
+ALERT_ACTIVE_SECS = 15.0
+
 
 @dataclass
 class AlertService:
-    """有状态：只保存"每个 id 上次报的时间"用于冷却。"""
+    """有状态：冷却账本 + 敌方踪迹滚动记忆（D 批）+ 最近报过的警报（活跃面）。"""
 
     catalog: Catalog
     _last: dict[str, float] = field(default_factory=dict)
+    #: tag → (最后看到的游戏时刻, type_name, 位置)。observe 是当前帧的 —— 敌方踪迹
+    #: 必须在显示/警报层留一段记忆，否则 agent sleep 一轮就全忘了
+    _contact: dict[int, tuple[float, str, tuple[float, float]]] = field(default_factory=dict)
+    #: 每帧敌方同屏数 [(t, count)] —— 滚动窗内取峰值
+    _contact_frames: list[tuple[float, int]] = field(default_factory=list)
+    #: id → 最近一次**报出**的警报（活跃面用：sleep 轮询问「现在有没有正在响的」）
+    _fired: dict[str, AlertView] = field(default_factory=dict)
 
     def evaluate(
         self,
@@ -49,7 +66,66 @@ class AlertService:
         out.extend(self._queue_alerts(gs, production))
         out.extend(self._projection_alerts(gs, curve))
         out.extend(self._economy_alerts(gs))
-        return [a for a in out if self._pass_cooldown(a, gs.game_time)]
+        out.extend(self._contact_alerts(gs))
+        passed = [a for a in out if self._pass_cooldown(a, gs.game_time)]
+        for a in passed:
+            self._fired[a.id] = a
+        return passed
+
+    def active_alerts(self, now: float, *, min_severity: str = "info",
+                      within: float = ALERT_ACTIVE_SECS) -> list[dict]:
+        """最近 `within` 游戏秒内报过、且仍「在响」的警报（按严重度过滤）。
+        sleep 的唤醒链用（D 批）：纯拉模式的补丁 —— agent 在 sleep 也能被 warn+ 叫醒。"""
+        rank = {"info": 0, "warn": 1, "error": 2}
+        floor = rank.get(min_severity, 0)
+        return [
+            {"id": a.id, "kind": a.kind, "severity": a.severity, "text_zh": a.text_zh,
+             "at": round(a.at, 1)}
+            for a in self._fired.values()
+            if now - a.at <= within and rank.get(a.severity, 0) >= floor
+        ]
+
+    # ---- 敌方踪迹（D 批：10s 滚动窗） ----
+
+    def _contact_alerts(self, gs: GameState) -> list[AlertView]:
+        now = gs.game_time
+        seen_now = 0
+        for u in gs.units:
+            if u.owner is not Owner.ENEMY:
+                continue
+            seen_now += 1
+            self._contact[u.tag] = (now, u.type_name, (float(u.position.x), float(u.position.y)))
+        # 窗外记忆淘汰（滚动窗）
+        self._contact = {tag: v for tag, v in self._contact.items()
+                         if now - v[0] <= CONTACT_WINDOW}
+        self._contact_frames.append((now, seen_now))
+        self._contact_frames = [(t, c) for t, c in self._contact_frames
+                                if now - t <= CONTACT_WINDOW]
+        distinct = len(self._contact)
+        if distinct == 0:
+            return []
+        peak = max((c for _, c in self._contact_frames), default=0)
+        last_tag = max(self._contact, key=lambda k: self._contact[k][0])
+        _, tname, pos = self._contact[last_tag]
+        zh = _zh(self.catalog, self._enemy_stable_id(tname)).strip() or tname
+        severity = ("warn" if (distinct >= CONTACT_WARN_DISTINCT or peak >= CONTACT_WARN_PEAK)
+                    else "info")
+        return [AlertView(
+            id="enemy_contact",
+            kind="enemy_contact",
+            severity=severity,
+            at=now, eta=None,
+            text_zh=(f"敌方踪迹（{CONTACT_WINDOW:g}s 窗）：见过 {distinct} 个不同敌兵，"
+                     f"峰值同屏 {peak}；最后出现 {zh} @ ({pos[0]:.0f},{pos[1]:.0f})"),
+            source="session",
+            payload={"distinct": distinct, "peak": peak,
+                     "last_pos": list(pos), "last_type": tname},
+        )]
+
+    def _enemy_stable_id(self, type_name: str) -> str | None:
+        entry = self.catalog.by_burnysc2_name(
+            self.catalog.normalize_burnysc2_name(str(type_name).upper()))
+        return entry.stable_id if entry else None
 
     # ---- 队列 ----
 
@@ -73,15 +149,25 @@ class AlertService:
             else:
                 # warned = 后端判定已超 STALL_WARN_SECS → 升级为 error（阈值判断在后端，不在前端）
                 severity = "error" if blocked["warned"] else "warn"
+            # E 批（2026-08-24，只告警不动作）：区分「产出建筑被摧毁」与「还没建」——
+            # 曾建成过才消失 = 大概率被毁（重排/重建）；从没建过 = 建造被卡/掉单
+            ever = blocked.get("producer_ever_ready")
+            hint = ""
+            if ever is True:
+                hint = "；产出建筑曾建成、现在不在 —— 大概率被摧毁：重排队首或重建"
+            elif ever is False:
+                hint = "；产出建筑从没建成过 —— 检查建造项是否被卡/掉单"
             out.append(AlertView(
                 id=f"queue_blocked/{q['name']}",
                 kind="queue_blocked",
                 severity=severity,
                 at=gs.game_time,
                 eta=None,
-                text_zh=f"生产队列「{q['name']}」队首阻塞 {waited:g}s：{what}{blocked['reason']}",
+                text_zh=(f"生产队列「{q['name']}」队首阻塞 {waited:g}s："
+                         f"{what}{blocked['reason']}{hint}"),
                 source="production",
-                payload={"queue": q["name"], "waited": waited, "reason": blocked["reason"]},
+                payload={"queue": q["name"], "waited": waited, "reason": blocked["reason"],
+                         "producer_ever_ready": ever},
             ))
         return out
 

@@ -6,7 +6,7 @@
  * 真机两段式启动、停止（树杀兜底）。帧流状态（WS 断线）不在这 —— 那是 frames store 的地盘。
  */
 import { create } from "zustand";
-import { fetchSessionInfo, sessionAction, type SessionInfo } from "../api/commands";
+import { fetchSessionInfo, sessionAction, sessionSpeed, type SessionInfo } from "../api/commands";
 import { listLoadouts, type LoadoutMeta } from "../api/loadouts";
 import { listMapPlans } from "../api/map-plans";
 import { listStrategies, type StrategyMeta } from "../api/strategies";
@@ -36,6 +36,10 @@ interface SessionStore {
   /** 装配清单（B1）：三件套一发入魂；null = 还没到/后端没有；选中时优先于单独的规划/策略下拉 */
   loadouts: LoadoutMeta[] | null;
   loadoutId: string | null;
+  /** 开启游戏的模式（2026-08-23 收敛）：normal=正常（实时可见）；fast=仿真（快进看结果） */
+  gameMode: "normal" | "fast";
+  /** 仿真模式起始倍数（0=不限速/最快）；运行中可经 setGameSpeed 热改 */
+  gameSpeed: number;
   /** 启动/停止失败的原因（后端 detail 原文；会话活过来时自动清） */
   opErr: string | null;
   /** 真机两段式确认：第一点变「确认启动」，再点才真启动 */
@@ -44,6 +48,10 @@ interface SessionStore {
   setMapPlanId(id: string): void;
   setStrategyId(id: string): void;
   setLoadoutId(id: string): void;
+  setGameMode(mode: "normal" | "fast"): void;
+  setGameSpeed(speed: number): void;
+  /** 运行中的仿真会话变速（即时生效，不重启；同时记住为起始倍数） */
+  changeGameSpeed(speed: number): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -72,6 +80,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   strategyId: null,
   loadouts: null,
   loadoutId: null,
+  gameMode: "fast",
+  gameSpeed: 0,
   opErr: null,
   confirming: false,
 
@@ -133,6 +143,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set({ loadoutId: id || null });
   },
 
+  setGameMode(mode) {
+    set({ gameMode: mode });
+  },
+
+  setGameSpeed(speed) {
+    set({ gameSpeed: speed });
+  },
+
+  async changeGameSpeed(speed) {
+    set({ gameSpeed: speed, opErr: null });
+    const r = await sessionSpeed(speed);
+    if (!r.ok) {
+      set({ opErr: r.detail });
+      return;
+    }
+    set({ info: await fetchSessionInfo() });
+  },
+
   async start() {
     set({ opErr: null });
     if (!get().confirming) {
@@ -155,7 +183,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const st = get().strategies;
     const strategyId = !loadoutId && st && get().strategyId && st.some((r) => r.id === get().strategyId)
       ? get().strategyId! : undefined;
-    const r = await sessionAction("start", { driver: "sc2", mapPlan: planId, strategy: strategyId, loadout: loadoutId });
+    // 「开启游戏」两模式（2026-08-23 收敛）：normal=实时；fast=仿真快进（带倍数）
+    const { gameMode, gameSpeed } = get();
+    const r = await sessionAction("start", {
+      driver: "sc2", mode: gameMode,
+      speed: gameMode === "fast" ? gameSpeed : 0,
+      mapPlan: planId, strategy: strategyId, loadout: loadoutId,
+    });
     if (!r.ok) {
       set({ opErr: r.detail, info: await fetchSessionInfo() });
       return;

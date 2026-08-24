@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from api.live import LiveSession
 from api.state import ensure_pump
 from game.catalog import load_all
 
 router = APIRouter()
+
+
+class _StartBody(BaseModel):
+    """start 的可选请求体：query 放不下结构化参数（§0.52 C 批）。"""
+
+    production: dict[str, int] | None = None
 
 
 @router.get("/api/session")
@@ -25,7 +32,10 @@ async def session_start(request: Request,
                         map_plan: str | None = Query(None),
                         strategy: str | None = Query(None),
                         spawn: str | None = Query(None),
-                        loadout: str | None = Query(None)) -> dict:
+                        loadout: str | None = Query(None),
+                        mode: str | None = Query(None),
+                        speed: float = Query(0.0),
+                        body: _StartBody | None = None) -> dict:
     """建会话。`driver`：`offline`（进程内假世界）/ `sim`（子进程假世界，验进程分离）/
     `sc2`（子进程真机）。`autotick=false` 时不自动推进（测试与单步调试用）。
     `map_plan`：地图规划 id —— 会话装配用它（进入游戏加载哪一份地图规划），
@@ -35,6 +45,12 @@ async def session_start(request: Request,
     `loadout`（B1）：装配清单 id（`runtime/loadouts/<id>.yaml`，三件套引用）——
     给了它就以它为底，显式 query 参数（map_plan/strategy/spawn）覆盖同名字段；
     它的 `plan` 引用的生产规划**自动 submit 入队**（main 队列，帧边界生效）。
+    `mode`（「开启游戏」两模式，2026-08-23，仅 driver=sc2）：`normal` = 正常模式
+    （玩家可见、实时流速）；`fast` = 仿真模式（快进跑完看实际游戏结果，配 `speed`）。
+    `driver` 的 offline/sim 是**测试驱动**（假世界），不走 mode 这套。
+    `production`（请求体，§0.52 C 批）：开局生产力默认值 —— 采集配额目标值
+    `{"mineral_workers": 8, "gas_workers": 3}`（简写 mineral/gas、reserve_idle 也认），
+    会话建立后立即下发（`set_worker_target`，幂等目标值语义）。
 
     必须是 `async def`：`asyncio.create_task` 需要运行中的事件循环，
     而 FastAPI 把同步 endpoint 丢到线程池里跑（那里没有 loop）。
@@ -45,6 +61,24 @@ async def session_start(request: Request,
     换 driver 才允许换会话：旧会话先 stop（含树杀），再起新的。
     """
     state = request.app.state
+    production_pairs = _production_pairs((body.production if body else None) or {})
+    # 「开启游戏」两模式参数校验（不静默：错配直接 400 说清楚）
+    if mode is not None and mode not in ("normal", "fast"):
+        raise HTTPException(status_code=400,
+                            detail=f"mode 只能是 normal（正常，实时流速）或 fast（仿真，快进），当前 {mode!r}")
+    if speed != 0 and not (1 <= speed <= 64):
+        raise HTTPException(status_code=400,
+                            detail=f"speed 只能是 0（不限速/最快）或 1..64 的倍数，当前 {speed!r}")
+    if mode == "normal" and speed:
+        raise HTTPException(status_code=400,
+                            detail="正常模式按实时流速跑；倍数（speed）属于仿真模式（mode=fast）")
+    if mode is not None and driver != "sc2":
+        raise HTTPException(status_code=400,
+                            detail="mode（正常/仿真）只适用于开启游戏（driver=sc2）；"
+                                   "offline/sim 是测试驱动（假世界），没有模式概念")
+    # sc2 缺省 = 正常模式（此前的默认行为：真机实时配速）
+    mode_resolved = mode or ("normal" if driver == "sc2" else None)
+    speed_resolved = float(speed) if mode_resolved == "fast" else 0.0
     if loadout:
         lo = state.loadouts.get(loadout)
         if lo is None:
@@ -81,19 +115,26 @@ async def session_start(request: Request,
         same_driver = getattr(old, "driver", None) == driver
         same_plan = getattr(old, "map_plan_path", None) == plan_path
         same_strategy = getattr(old, "strategy_path", None) == strategy_path
-        if alive and same_driver and same_plan and same_strategy:
+        # 模式/起始倍速也是会话身份的一部分（换模式 = 换一种会话，重启；
+        # 运行中调倍数走 POST /api/session/speed，不重启）
+        same_mode = getattr(old, "session_mode", None) == mode_resolved
+        same_speed = getattr(old, "session_speed", None) == speed_resolved
+        if alive and same_driver and same_plan and same_strategy and same_mode and same_speed:
             return old.describe()   # 已在同一种会话上：幂等返回，不多开
         old.stop()                 # 换驱动/换规划（或旧会话已死）：先收尾（树杀，防孤儿 SC2）
         state.session = None
     if driver in ("sim", "sc2"):
         sess = LiveSession(driver=driver, map_plan=plan_path,
                            strategy_path=strategy_path, spawn=spawn,
-                           # 真机实时配速 + 对局记录（二十六轮两个用户 issue 的修点）
-                           realtime=(driver == "sc2"),
+                           # 「开启游戏」两模式：normal=实时（此前默认）；fast=仿真快进 + 倍速
+                           realtime=(driver == "sc2" and mode_resolved != "fast"),
+                           speed=speed_resolved,
                            record_dir=state.recordings_dir)
         sess.map_plan_path = plan_path   # noqa: B010 —— 幂等守卫要读
         sess.map_plan_id = map_plan      # noqa: B010 —— I8：限定引用「规划名/点位」要对着它核
         sess.strategy_path = strategy_path  # noqa: B010
+        sess.session_mode = mode_resolved   # noqa: B010 —— 幂等守卫要读（normal/fast）
+        sess.session_speed = speed_resolved  # noqa: B010
         state.session = sess
         state.proposals.session = state.session
         if queue_items is not None:
@@ -104,6 +145,8 @@ async def session_start(request: Request,
             except (RuntimeError, OSError, ValueError) as exc:
                 raise HTTPException(status_code=400,
                                     detail=f"loadout 生产序列入队失败：{exc}") from None
+        for task, count in production_pairs:
+            sess.set_worker_target(task, count)
         return state.session.describe()
     from api.session import OfflineSession
 
@@ -115,6 +158,8 @@ async def session_start(request: Request,
     sess.strategy_path = strategy_path  # noqa: B010
     if queue_items is not None:
         sess.queue_op("submit", "main", items=queue_items)
+    for task, count in production_pairs:
+        sess.set_worker_target(task, count)
     # 提案要能算双投影、要能 apply → 必须认识会话；
     # 反过来会话的帧生产器要认识提案 → 提案变化时会发 `proposals` 帧
     state.proposals.session = sess
@@ -122,6 +167,29 @@ async def session_start(request: Request,
     if autotick:
         ensure_pump(state)
     return sess.describe()
+
+
+def _production_pairs(production: dict) -> list[tuple[str, int]]:
+    """开局生产力默认值 → `[(task, count)]`（先于建会话校验，坏参数不留半配会话）。
+
+    键认全称 `mineral_workers`/`gas_workers`/`reserve_idle` 与简写 `mineral`/`gas`/`idle`
+    （同一目标值语义，economy.set_target 的三种 task）。
+    """
+    alias = {"mineral_workers": "mineral", "gas_workers": "gas", "reserve_idle": "idle",
+             "mineral": "mineral", "gas": "gas", "idle": "idle"}
+    out: list[tuple[str, int]] = []
+    for key, value in production.items():
+        task = alias.get(str(key))
+        if task is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"production 键只能是 {'/'.join(sorted(set(alias)))}，当前 {key!r}")
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"production.{key} 必须是 ≥0 的整数（目标值语义），当前 {value!r}")
+        out.append((task, int(value)))
+    return out
 
 
 def _loadout_queue_items(state, plan_id: str, map_plan_id: str | None) -> list:
@@ -192,6 +260,28 @@ def session_swap(request: Request, strategy: str = Query(...)) -> dict:
         return {**sess.describe(), "swap": out}
     out = sess.swap_strategy(manifest)           # offline：pending，下一帧边界应用
     return {**sess.describe(), "swap": out}
+
+
+@router.post("/api/session/speed")
+def session_speed(request: Request, multiplier: float = Query(...)) -> dict:
+    """仿真模式变速（即时生效，不重启）：multiplier=0 → 不限速（最快）。
+
+    正常模式没有变速通道（游戏按真实流速走）→ 409 带原因；进程内沙盒同理。
+    """
+    state = request.app.state
+    sess = state.session
+    if multiplier != 0 and not (1 <= multiplier <= 64):
+        raise HTTPException(status_code=400,
+                            detail=f"multiplier 只能是 0（不限速/最快）或 1..64 的倍数，当前 {multiplier!r}")
+    if sess is None:
+        raise HTTPException(status_code=409, detail="没有运行中的会话（先 POST /api/session/start）")
+    if not hasattr(sess, "proc"):
+        raise HTTPException(status_code=409,
+                            detail="进程内沙盒会话没有变速通道；仿真变速只在游戏会话（mode=fast）")
+    try:
+        return sess.set_speed(multiplier)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
 
 
 @router.post("/api/session/tick")

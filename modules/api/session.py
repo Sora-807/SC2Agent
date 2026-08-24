@@ -391,4 +391,7 @@ class OfflineSession:
             "max_stale_seq": MAX_STALE_SEQ,
             "queues": [q["name"] for q in self.runtime.snapshot()["queues"]],
             "error": self.error,
+            # 活跃警报（D 批）：sleep 轮询的唤醒面 —— 最近报过、还在响的 warn+
+            "alerts": (self.producer.alerts.active_alerts(self.world.t, min_severity="info")
+                       if self.producer.alerts is not None else []),
         }

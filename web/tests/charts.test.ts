@@ -146,17 +146,18 @@ describe("投影交互重定义（2026-08-22 二十轮）", () => {
     expect(board).not.toContain("startPos");
   });
 
-  it("零点钉最左：from 恒 >= 0（初始化与平移双侧 clamp）；初始窗口钳 ZOOM_SPAN_MAX（二十六轮）", () => {
+  it("左缘钳 T-30（复盘改版：截断线左侧只留 30s）；初始窗口经 nowAnchoredRange 锚定", () => {
     const board = code("charts/ProjectionBoard.tsx");
-    // 双侧钳制（二十七轮）：左钉 0，右钳数据末端；手势死于元素外松手要能收尾
-    expect(board).toMatch(/const from = clamp\(r\.from \+ dt, 0, Math\.max\(0, end - span\)\)/);
+    // 双侧钳制：左钉 max(0, T-30)，右钳数据末端；手势死于元素外松手要能收尾
+    expect(board).toMatch(/const left = Math\.max\(0, t0Ref\.current - LEFT_MARGIN_SECS\)/);
+    expect(board).toMatch(/const from = clamp\(r\.from \+ dt, left, Math\.max\(left, end - span\)\)/);
     expect(board).toContain("e.buttons & 1");
     expect(board).toContain("setPointerCapture");
     // 初始窗口经 zoomSpan 钳制：until_complete 的整局 horizon 不再全塞一屏
     //（「拖一下十几分钟 + 事件密到不可读」的根因就是全量 initialDomain）
     expect(board).toContain("zoomSpan(Math.max(1, frame.horizon), 1)");
-    // 右端钳数据末端（不出空白）
-    expect(board).toContain("Math.min(zoomSpan(Math.max(1, frame.horizon), 1), Math.max(1, dataEnd))");
+    // 截断锚定（复盘改版）：红截断线钉 T、左缘 T-30、右缘不出空白
+    expect(board).toContain("nowAnchoredRange(T0, zoomSpan(Math.max(1, frame.horizon), 1), Math.max(1, dataEnd))");
     expect(board).not.toContain("initialDomain");
     const chart = code("charts/ProjectionChart.tsx");
     expect(chart).toMatch(/Math\.max\(0, d\.from\)/);

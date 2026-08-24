@@ -47,8 +47,9 @@ export interface PackedRows {
   rows: number;
 }
 
-function pairEvents(frame: ProjectionFrame): PairedBar[] {
-  const t0 = frame.based_on_game_time;
+/** 帧事件 → 配对 bar（started→completed；未闭合的延到视野末端）。
+ *  导出供 ProjectionBoard 做「在建部分条」合并（复盘改版，同一套配对语义）。 */
+export function pairEvents(frame: ProjectionFrame): PairedBar[] {  const t0 = frame.based_on_game_time;
   const end = t0 + Math.max(1, frame.horizon);
   const open = new Map<string, number>();
   const pairs: PairedBar[] = [];
@@ -90,10 +91,10 @@ export function activeAt(frame: ProjectionFrame, t: number): PairedBar[] {
  * F17 全局行打包：所有 bar（不分类型）按 from 排序后贪心装行 ——
  * 与某行行尾不重叠就放该行，都重叠就开新行。行数最少、并行最大化。
  */
-export function packBars(frame: ProjectionFrame): PackedRows {
-  const pairs = pairEvents(frame).sort((a, b) => a.from - b.from);
+export function packPairs(pairs: PairedBar[]): PackedRows {
+  const sorted = pairs.slice().sort((a, b) => a.from - b.from);
   const lastTo: number[] = [];
-  const bars: PackedBar[] = pairs.map((p, seq) => {
+  const bars: PackedBar[] = sorted.map((p, seq) => {
     let row = lastTo.findIndex((t) => t <= p.from);
     if (row < 0) {
       row = lastTo.length;
@@ -108,6 +109,10 @@ export function packBars(frame: ProjectionFrame): PackedRows {
     };
   });
   return { bars, rows: lastTo.length };
+}
+
+export function packBars(frame: ProjectionFrame): PackedRows {
+  return packPairs(pairEvents(frame));
 }
 
 export function toStalls(frame: ProjectionFrame): StallMark[] {
@@ -154,34 +159,18 @@ export function anchorRange(anchorT: number, frac: number, span: number): TimeDo
   return { from, to: from + span };
 }
 
-/* ---------------- 历史累积（F17：拖时间轴时左侧内容保留） ---------------- */
+/* ---------------- 截断锚定（复盘改版，2026-08-24 拍板：F17 历史累积退役） ---------------- */
+
+/** 截断线左侧留白（秒）：只够跨线的在产/在建部分条把名字显出来（用户拍板 30s） */
+export const LEFT_MARGIN_SECS = 30;
 
 /**
- * 把一帧投影并进历史（F17）：points 按 t 去重（后到覆盖 —— 后一帧在 t 处的值比旧帧的
- * 远期预测更可信），events 按 (kind,t,stable_id,reason) 去重（同一事件在多个帧里重复出现）。
- *
- * 背景：投影帧只含 [based_on, +horizon]，中心跟随时轴后左半视窗没有数据 ——
- * 操作习惯是「数据向左流走、历史保留」，所以显示层把走过的每秒累积下来
- * （与 ReviewableSource 的环形缓冲同类：显示层累积，不入决策路径）。
- *
- * 返回合并后的帧（points/events 已按上述规则去重、按 t 排序）。
- * `reset` 由调用方在帧源回退（based_on 大幅倒退）时先清空再喂。
+ * 截断锚定视窗：红截断线钉 T（当前帧 based_on 游戏时间），左侧只留
+ * LEFT_MARGIN_SECS、不许再往左拖；右侧钳数据末端（不出空白）。
+ * span 由缩放决定（ZOOM_SPAN_MIN..MAX）。
  */
-export function accumulateInto(
-  hist: { points: Map<number, ProjectionFrame["points"][number]>; events: Map<string, ProjectionFrame["events"][number]> },
-  frame: ProjectionFrame,
-): ProjectionFrame {
-  for (const p of frame.points) hist.points.set(Math.round(p.t), p);
-  for (const e of frame.events) {
-    hist.events.set(`${e.kind}|${e.t}|${e.stable_id}|${e.reason}`, e);
-  }
-  const lastT = frame.points.at(-1)?.t ?? frame.based_on_game_time + frame.horizon;
-  // 只保留当前帧覆盖范围内的事件/点：旧帧的远期预测若超出当前帧末端（向后拖时间轴）则丢弃
-  const points = [...hist.points.values()]
-    .filter((p) => p.t <= lastT)
-    .sort((a, b) => a.t - b.t);
-  const events = [...hist.events.values()]
-    .filter((e) => e.t <= lastT)
-    .sort((a, b) => a.t - b.t);
-  return { ...frame, points, events };
+export function nowAnchoredRange(t: number, span: number, dataEnd: number): TimeDomain {
+  const from = Math.max(0, t - LEFT_MARGIN_SECS);
+  const to = Math.max(t + 1, Math.min(from + Math.max(1, span), Math.max(1, dataEnd)));
+  return { from, to: Math.max(from + 1, to) };
 }

@@ -291,3 +291,94 @@ def test_keeper_and_allocator_share_one_reservation_table():
     assert alloc.reserve("production/build#7", 2)
     k.on_game_state(gs)
     assert [t for t, _n in port.gathers()] == [1], "被征用的 2 号维持器不该碰"
+
+
+# ---- 2026-08-24 真机事故修：往返送矿不被改派 + 外来订单不碰 ----
+
+
+def _carrying_scv(tag, from_patch):
+    """送矿途中的工人：Return 单（目标是基地）+ 携带矿。"""
+    u = _scv(tag)
+    return Unit(tag=u.tag, type_name="SCV", position=u.position, owner=Owner.SELF,
+                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0,
+                orders=[Order(ability="Return", target_tag=800)],
+                is_carrying_minerals=True)
+
+
+def test_returning_worker_is_not_reassigned():
+    """事故根因锁：送矿途中（Return 单 + 携带）沿用记忆的在岗矿脉，不发任何改派。
+
+    旧逻辑把它当"空闲"，冷却一过就 gather 去别的矿 → 采矿被打断、收入归零。
+    """
+    port = _Port()
+    k = _keeper(port)
+    patches = _patches(2)
+    k.on_game_state(_gs([_scv(1, gathering=900)], patches, seq=0))
+    before = len(port.ops)
+    later = RETASK_COOLDOWN_FRAMES + 1
+    k.on_game_state(_gs([_carrying_scv(1, 900)], patches, seq=later))
+    k.on_game_state(_gs([_carrying_scv(1, 900)], patches, seq=later + RETASK_COOLDOWN_FRAMES))
+    assert port.gathers()[before:] == [], "送矿途中不得改派（记忆沿用，稳定态零命令）"
+
+
+def test_returning_worker_resumes_after_delivery():
+    """送完（不再携带、订单清空）→ 记忆已让它"在岗"，同样零命令；矿没了才重派。"""
+    port = _Port()
+    k = _keeper(port)
+    patches = _patches(2)
+    k.on_game_state(_gs([_scv(1, gathering=900)], patches, seq=0))
+    before = len(port.ops)
+    k.on_game_state(_gs([_carrying_scv(1, 900)], patches, seq=30))
+    # 已送达、订单空（真机里 SC2 会自动续采；观测帧没看到时维持器补一条**同矿** gather，
+    # 幂等无害——关键是不会把它派去别的矿）
+    new = port.gathers()[before:]
+    assert new in ([], [(1, 900)])
+    # 矿 900 采空消失、工人空闲 → 重派到 901
+    k.on_game_state(_gs([_scv(1)], patches[1:], seq=90))
+    new = port.gathers()[before:]
+    assert new and new[0][1] == 901
+
+
+def test_foreign_orders_are_not_touched():
+    """带 build/move 等外来订单的工人：不改派（旧逻辑的 gather 会顶掉排队的 build 单
+    —— 真机"提案自动应用了但对局没反应"的链条），也不占采矿名额。"""
+    port = _Port()
+    k = _keeper(port)
+    patches = _patches(2)
+    builder = _u(1, "SCV", orders=[Order(ability="Build", target_tag=None)])
+    idle = _scv(2)
+    k.on_game_state(_gs([builder, idle], patches, seq=0))
+    ops = port.gathers()   # [(工人tag, 矿tag)]
+    assert all(w != 1 for w, _ in ops), "建造中的工人不许被派去采矿"
+    assert any(w == 2 for w, _ in ops), "真空闲的工人照常补位"
+
+
+def test_carrying_worker_with_foreign_order_is_not_touched():
+    """§0.53 根因③：扛着矿但订单是外来能力（SCV 被派去建造时矿还在手上）→ 同样
+    不接管。真机链条：flight 实体一出现就放人 → 维持器看到"扛货无记忆"的它 →
+    gather 顶掉刚发的建造单 → 0% 补给站被弃。"""
+    port = _Port()
+    k = _keeper(port)
+    patches = _patches(2)
+    builder = Unit(tag=1, type_name="SCV", position=Point2(0.0, 0.0), owner=Owner.SELF,
+                   hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0,
+                   orders=[Order(ability="SupplyDepot", target_tag=None)],
+                   is_carrying_minerals=True)   # 扛着矿被派去建造
+    idle = _scv(2)
+    k.on_game_state(_gs([builder, idle], patches, seq=0))
+    ops = port.gathers()
+    assert all(w != 1 for w, _ in ops), "扛货但被外来能力征走的工人不许被派去采矿"
+    assert any(w == 2 for w, _ in ops), "真空闲的工人照常补位"
+
+
+def test_mining_family_by_ability_survives_missing_target_tag():
+    """§0.53 根因①的行为面：Gather 单丢了 target_tag（驱动翻译事故的现场形态）时，
+    按**能力名**仍判为采矿族 —— 归维持器管（可重派活矿），而不是误判成外来订单。"""
+    port = _Port()
+    k = _keeper(port)
+    patches = _patches(2)
+    # 订单是 Gather 但 target 丢了：矿 900 已采空（patches 只给 901）
+    orphan = _u(1, "SCV", orders=[Order(ability="Gather", target_tag=None)])
+    k.on_game_state(_gs([orphan], patches[1:], seq=0))
+    ops = port.gathers()
+    assert (1, 901) in ops, "采矿族（按能力名判）仍归维持器重派到活矿"

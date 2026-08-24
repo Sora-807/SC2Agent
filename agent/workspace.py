@@ -254,6 +254,16 @@ class ApiWorkspace(Workspace):
     # ---- 存储原语（基类组合出全部文件工具语义） ----
 
     def _file_exists(self, path: str) -> bool:
+        # strategies/_lib.yaml 是锁定模板库：读走 REST 特判（_read_file），但
+        # _split 会把它当普通策略 id "_lib" 查表 → 恒 False → vendor read 的
+        # contains 预检吞成假 not found（2026-08-24 trace 实证：模型被折磨 8 轮）。
+        # exists 侧同源探测，读得到才算存在。
+        if path == "strategies/_lib.yaml":
+            try:
+                self._client.strategy_lib_text()
+                return True
+            except ApiError:
+                return False
         area = self._readonly_of(path)
         if area is not None:
             return area.exists(path)

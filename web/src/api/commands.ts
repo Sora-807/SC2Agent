@@ -74,7 +74,8 @@ export type SessionActionResult =
 export async function sessionAction(
   action: "start" | "stop" | "tick" | "swap",
   opts: { autotick?: boolean; count?: number; driver?: "sim" | "sc2";
-          mapPlan?: string; strategy?: string; loadout?: string } = {},
+          mapPlan?: string; strategy?: string; loadout?: string;
+          mode?: "normal" | "fast"; speed?: number } = {},
 ): Promise<SessionActionResult> {
   const url = new URL("/api/session/" + action, API_BASE);
   if (action === "start" && opts.autotick === false) url.searchParams.set("autotick", "false");
@@ -82,6 +83,8 @@ export async function sessionAction(
   if (action === "start" && opts.mapPlan) url.searchParams.set("map_plan", opts.mapPlan);
   if (action === "start" && opts.strategy) url.searchParams.set("strategy", opts.strategy);
   if (action === "start" && opts.loadout) url.searchParams.set("loadout", opts.loadout);
+  if (action === "start" && opts.mode) url.searchParams.set("mode", opts.mode);
+  if (action === "start" && opts.speed !== undefined) url.searchParams.set("speed", String(opts.speed));
   if (action === "swap" && opts.strategy) url.searchParams.set("strategy", opts.strategy);
   if (action === "tick" && opts.count) url.searchParams.set("count", String(opts.count));
   try {
@@ -101,7 +104,7 @@ export async function sessionAction(
   }
 }
 
-/** 当前会话描述（GET /api/session）：driver/alive/state —— 前端据此拦截多开。 */
+/** 当前会话描述（GET /api/session）：driver/alive/mode —— 前端据此拦截多开、画变速控件。 */
 export interface SessionInfo {
   state: string;
   driver?: string;
@@ -109,6 +112,26 @@ export interface SessionInfo {
   label?: string;
   error?: string | null;
   detail?: string;
+  /** 开启游戏的模式（2026-08-23 收敛）：normal=实时；fast=仿真（可变速） */
+  mode?: "normal" | "fast";
+  /** 仿真模式当前倍数（0=不限速） */
+  speed?: number;
+}
+
+/** 仿真模式变速（即时生效，不重启）：multiplier=0 → 不限速（最快）。 */
+export async function sessionSpeed(multiplier: number): Promise<SessionActionResult> {
+  const url = new URL("/api/session/speed", API_BASE);
+  url.searchParams.set("multiplier", String(multiplier));
+  try {
+    const res = await fetch(url.toString(), { method: "POST" });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { ok: false, detail: typeof payload.detail === "string" ? payload.detail : `后端返回 ${res.status}` };
+    }
+    return { ok: true, data: (await res.json()) as Record<string, unknown> };
+  } catch (err) {
+    return { ok: false, detail: "连不上后端：" + (err as Error).message };
+  }
 }
 
 export async function fetchSessionInfo(): Promise<SessionInfo | null> {

@@ -4,7 +4,7 @@
  * 后到的思考行不得出现在已输出正文的上方。
  */
 import { describe, expect, it } from "vitest";
-import { applyLiveEvent, liveText, type LiveEntry } from "../src/shell/chat-live";
+import { applyLiveEvent, appendUserEntry, liveText, type LiveEntry } from "../src/shell/chat-live";
 
 const d = (kind: "reasoning" | "content" | "tool_call", text: string) =>
   ({ type: "delta" as const, kind, text });
@@ -62,5 +62,24 @@ describe("applyLiveEvent 时间线", () => {
     expect((tl[0] as { step: { running?: boolean } }).step.running).toBe(true);
     tl = applyLiveEvent(tl, { type: "turn_end" });
     expect((tl[0] as { step: { running?: boolean } }).step.running).toBe(false);
+  });
+});
+
+describe("appendUserEntry 轮内插话（A 批：用户消息落时间线末尾，不进上面历史区）", () => {
+  it("插话 append 在已流出内容之后（旧实现 append 进 messages 会跑到最上面）", () => {
+    let tl: LiveEntry[] = [];
+    tl = applyLiveEvent(tl, d("content", "我看了下队列"));
+    tl = applyLiveEvent(tl, { type: "tool_call", tool: "observe", args: {}, result_preview: "ok" });
+    tl = appendUserEntry(tl, "等等，先别动气矿");
+    expect(tl.map((e) => e.kind)).toEqual(["text", "step", "user"]);
+    expect(tl[2]).toEqual({ kind: "user", text: "等等，先别动气矿" });
+  });
+
+  it("不修改原数组（纯函数）；随后正文继续落在 user 之后", () => {
+    const tl: LiveEntry[] = [{ kind: "text", text: "a" }];
+    const out = appendUserEntry(tl, "插");
+    expect(out).not.toBe(tl);
+    expect(tl).toHaveLength(1);
+    expect(applyLiveEvent(out, d("content", "收到")).map((e) => e.kind)).toEqual(["text", "user", "text"]);
   });
 });

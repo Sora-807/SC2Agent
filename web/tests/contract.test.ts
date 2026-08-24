@@ -120,9 +120,18 @@ describe("夹具", () => {
 });
 
 describe("契约", () => {
-  it("rev 不匹配直接拒绝", () => {
+  it("帧比前端新（rev > REV）直接拒绝（前端过旧）", () => {
     expect(() => parseEnvelope({ topic: "frame/session", rev: REV + 1, seq: 1, game_time: 0, wall_ms: 0, payload: {} }))
-      .toThrow(ContractError);
+      .toThrow(/前端过旧/);
+  });
+
+  it("历史帧（rev < REV，旧录像）可解析 —— 回放优先：契约只增不改，缺字段走 .default()（2026-08-24 复盘报错修）", () => {
+    const old = parseEnvelope({
+      topic: "frame/session", rev: REV - 4, seq: 1, game_time: 0, wall_ms: 0,
+      payload: { state: "已结束", frame_source: "live", map_name: null,
+                 my_race: null, enemy_race: null, game_time: 0, error: null },
+    });
+    expect(old.rev).toBe(REV - 4);
   });
 
   it("字段缺失直接拒绝（不静默补默认值）", () => {

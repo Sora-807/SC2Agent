@@ -82,6 +82,8 @@ class FrameProducer:
     _ops_at: float = field(default=-1e18)
     _grids_fp: tuple[str | None, str | None] | None = None
     _proposals_fingerprint: str = ""
+    #: 本会话是否见过非空 live 队列（true 后永不回退参考计划，见 `_project`）
+    _live_seen: bool = False
 
     def __post_init__(self) -> None:
         if self.alerts is None:
@@ -169,16 +171,19 @@ class FrameProducer:
         return out
 
     def _project(self, gs: GameState):
-        """投影当前生产队列；队列为空才退回"参考计划"。
+        """投影当前生产队列；参考计划只在**本会话还没见过 live 队列**时用（开局展示）。
 
-        以前只能投"参考计划"（planner 与运行时的 authoring 面没有互转）。
-        `view.projection` 把 `QueueItem` 翻成 planner 的 op 后，
-        `source.kind="live_queue"` 才有真值 —— 概览页的"实际 vs 预测"从此不是骗人的。
+        中途回退参考计划 = 把一整份没提过的开局顺序画成投影（§0.51 事故：只提了
+        1 个农民，队列为空的瞬间泳道图炸出 20+ 农民条目）。见过 live 队列后队列
+        空了就投**空队列**：纯收入外推 + 世界里在建/在训的项（`derive_from` 从
+        build_progress 派生）照常落成 —— 在途可见性由世界帧给，不靠参考计划。
         """
         queue = None
         if self.runtime is not None:
             queue = self.runtime.queue(self.projection_queue)
         if queue is not None and queue.items:
+            self._live_seen = True
+        if queue is not None and (queue.items or self._live_seen):
             curve, translated = project_queue(
                 self.planner, gs, list(queue.items),
                 until=gs.game_time + self.horizon, catalog=self.catalog)

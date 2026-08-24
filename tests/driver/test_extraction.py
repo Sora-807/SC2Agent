@@ -25,10 +25,19 @@ def _fake_unit(tag=1, alliance=1, type_name="SCV", hp=45.0, orders=(), pos=(48.5
 
 
 def _fake_order(name="Gather", tpos=None, ttag=None):
+    """**按 burnysc2 UnitOrder 真实形态**造订单（§0.53 事故教训）：`target` 字段是
+    int=单位 tag | Point2=目标点 | None —— 协议的 target_unit_tag/target_world_space_pos
+    已被 from_proto 归一。旧夹具按不存在的字段造（target_unit_tag），把驱动的字段
+    名 bug 也一起"测绿"了（离线全绿、真机 target_tag 恒 None）。"""
+    if tpos is not None:
+        target = tpos
+    elif ttag is not None:
+        target = ttag
+    else:
+        target = None
     return SimpleNamespace(
         ability=SimpleNamespace(name=name),
-        target_world_space_pos=tpos,
-        target_unit_tag=ttag,
+        target=target,
     )
 
 
@@ -63,10 +72,12 @@ def test_extract_raw_unit_basic():
 
 
 def test_extract_raw_order_with_target():
-    o = _fake_order(name="Move", tpos=SimpleNamespace(x=10.0, y=20.0), ttag=99)
+    # 真实形态：一个 target 字段（Move 带点、Gather 带 tag）—— 两者分别见
+    # test_extract_raw_order_target_field_shapes
+    o = _fake_order(name="Move", tpos=SimpleNamespace(x=10.0, y=20.0))
     r = extract_raw_order(o)
     assert r.ability_name == "Move"
-    assert r.target_tag == 99
+    assert r.target_tag is None
     assert r.target_pos == Point2(10.0, 20.0)
 
 
@@ -79,12 +90,23 @@ def test_extract_raw_order_no_target():
 
 def test_extract_raw_order_button_name():
     # burnysc2 AbilityData 的干净名是 .button_name（非 .name）；取干净名，不存 repr
-    o = SimpleNamespace(
-        ability=SimpleNamespace(button_name="SupplyDepot"),
-        target_world_space_pos=None, target_unit_tag=None,
-    )
+    o = SimpleNamespace(ability=SimpleNamespace(button_name="SupplyDepot"), target=None)
     r = extract_raw_order(o)
     assert r.ability_name == "SupplyDepot"
+
+
+def test_extract_raw_order_target_field_shapes():
+    """§0.53 根因①回归锁：burnysc2 UnitOrder 只有 `target`（int|Point2|None）——
+    采矿单必须能翻出 target_tag，否则维持器看不见"已在采"（真机全场重派）。"""
+    r = extract_raw_order(SimpleNamespace(
+        ability=SimpleNamespace(name="Gather"), target=4295229441))
+    assert r.target_tag == 4295229441 and r.target_pos is None
+    r2 = extract_raw_order(SimpleNamespace(
+        ability=SimpleNamespace(name="Move"), target=SimpleNamespace(x=30.0, y=44.0)))
+    assert r2.target_tag is None and r2.target_pos == Point2(30.0, 44.0)
+    r3 = extract_raw_order(SimpleNamespace(
+        ability=SimpleNamespace(name="SupplyDepot"), target=None))
+    assert r3.target_tag is None and r3.target_pos is None
 
 
 def test_extract_raw_state_aggregates():

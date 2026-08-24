@@ -8,6 +8,9 @@ extraction 是纯函数（duck-typed burnysc2 对象），可单测（见 tests/
 """
 from __future__ import annotations
 
+import asyncio
+import time
+
 from sc2 import maps
 from sc2.bot_ai import BotAI
 from sc2.data import Difficulty, Race
@@ -42,13 +45,18 @@ def extract_raw_order(o) -> RawOrder:
     ability = getattr(o, "ability", None)
     # burnysc2 AbilityData 的干净名是 .button_name（如 "Move"/"SupplyDepot"），不是 .name
     name = getattr(ability, "button_name", None) or getattr(ability, "name", None) or str(ability)
-    tpos = getattr(o, "target_world_space_pos", None)
-    ttag = getattr(o, "target_unit_tag", None) or None
-    otag = getattr(o, "other_unit", None) or getattr(o, "other_unit_tag", None) or None
+    # burnysc2 UnitOrder.target：int=单位 tag | Point2=目标点 | None（from_proto 已把协议的
+    # target_unit_tag / target_world_space_pos 归一进这一个字段）。旧代码读 `target_unit_tag`
+    # —— 该字段不存在，真机订单 target_tag 恒 None：采矿维持器看不见"已在采"（全场
+    # 重派乱分配）、订单也认不出采矿族/外来归属（§0.53 真机事故根因；sim 驱动字段
+    # 填得对，所以离线测试一直全绿）。
+    t = getattr(o, "target", None)
+    ttag = t if isinstance(t, int) and not isinstance(t, bool) else None
+    tpos = t if t is not None and hasattr(t, "x") and hasattr(t, "y") else None
     return RawOrder(
         ability_name=name,
-        target_tag=int(ttag) if ttag else None,
-        target_pos=Point2(float(tpos.x), float(tpos.y)) if tpos is not None and hasattr(tpos, "x") else None,
+        target_tag=ttag,
+        target_pos=Point2(float(tpos.x), float(tpos.y)) if tpos is not None else None,
     )
 
 
@@ -169,6 +177,21 @@ def extract_raw_state(bot, seq: int) -> RawGameState:
         creep=creep,
         visibility=visibility,
     )
+
+
+# ---------- 仿真模式倍速配速（2026-08-23 用户拍板「开启游戏」两模式）----------
+
+
+def pace_sleep_seconds(game_dt: float, multiplier: float | None, wall_dt: float) -> float:
+    """仿真模式按倍数配速：本 step 还该睡多久（0 = 不睡；纯函数，测试锁）。
+
+    语义：N 倍速 = 每真实秒推进 N 游戏秒 → 允许墙钟 = game_dt / N。
+    multiplier None/0/≤1 = 不限速（最快 —— 非实时游戏由客户端主动 step，本来就全速）。
+    只在**非实时**游戏里有意义：实时模式的节奏由游戏自己走，客户端睡不了觉。
+    """
+    if not multiplier or multiplier <= 1 or game_dt <= 0:
+        return 0.0
+    return max(0.0, game_dt / multiplier - wall_dt)
 
 
 # ---------- Operation → burnysc2 命令 ----------
@@ -384,6 +407,10 @@ class SC2DriverBot(BotAI):
 
     _map_info_sent = False
     _map_info_cb = None   # SC2GamePort 注入的静态地形回调（B4）
+    #: 仿真模式倍速（SC2GamePort 注入/热改）：None/0 = 不限速；N>1 = 目标 N 倍。
+    #: 配速靠在 on_step 里睡掉差值 —— 非实时游戏由我们主动 step，慢点请求就是慢点跑。
+    _pace_multiplier: float | None = None
+    _pace_last: tuple[float, float] | None = None   # (game_time, wall_monotonic)
 
     async def on_step(self, iteration: int) -> None:
         raw = extract_raw_state(self, iteration)
@@ -399,6 +426,22 @@ class SC2DriverBot(BotAI):
                 self._map_info_sent = True
                 self._map_info_cb(info)
         self._drain_ops()
+        await self._pace()
+
+    async def _pace(self) -> None:
+        """仿真模式配速：睡掉「游戏时间增量/倍数 − 实际墙钟增量」的差值。"""
+        if not self._pace_multiplier:
+            self._pace_last = None
+            return
+        now_wall = time.monotonic()
+        now_game = float(self.time)
+        if self._pace_last is not None:
+            nap = pace_sleep_seconds(now_game - self._pace_last[0],
+                                     self._pace_multiplier,
+                                     now_wall - self._pace_last[1])
+            if nap > 0:
+                await asyncio.sleep(nap)
+        self._pace_last = (now_game, now_wall)
 
     # ---- op 应用 ----
     def _drain_ops(self) -> None:
@@ -448,6 +491,7 @@ class SC2GamePort:
         sink: RuntimeSink | None = None,
         game_time_limit: int = 120,
         realtime: bool = False,
+        speed: float = 0.0,  # 仿真模式倍速：0=不限速；N>1=目标 N 倍（实时模式忽略）
         catalog=None,  # game.Catalog：stable ID → burnysc2 名；None 时默认加载 terran catalog
         bot_cls: type = SC2DriverBot,  # 注入 bot 类（扫描/校准类 runner 用；默认 SC2DriverBot）
     ) -> None:
@@ -457,6 +501,7 @@ class SC2GamePort:
         self._sink = sink
         self._game_time_limit = game_time_limit
         self._realtime = realtime
+        self._speed = float(speed)
         self._catalog = catalog if catalog is not None else load_all()
         self._bot_cls = bot_cls
         self._op_queue: list[Operation] = []
@@ -485,6 +530,9 @@ class SC2GamePort:
         bot._map_info_cb = self._map_info_sink
         bot._pending_results = self._pending_results
         bot._events = self._events
+        # 仿真模式配速只在非实时下注入（实时模式的节奏归游戏自己）
+        if not self._realtime:
+            bot._pace_multiplier = self._speed or None
         self._bot = bot
         run_game(
             maps.get(self._map_name),
@@ -492,6 +540,12 @@ class SC2GamePort:
             realtime=self._realtime,
             game_time_limit=self._game_time_limit,
         )
+
+    def set_speed(self, multiplier: float) -> None:
+        """仿真模式热改倍速（run_session 的 speed 控制命令 → 控制文件通道）。"""
+        self._speed = float(multiplier)
+        if self._bot is not None and not self._realtime:
+            self._bot._pace_multiplier = self._speed or None
 
     def stop(self) -> None:
         # V1：run_game 到 game_time_limit 自止；显式 kill SC2 待补

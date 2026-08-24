@@ -78,6 +78,8 @@ interface FramesStore extends Frames {
   disconnected: boolean;
 
   init(): Promise<void>;
+  /** 重拉夹具+录像清单（只更新下拉，不动当前源）—— 聚焦/回前台时调 */
+  refreshSources(): Promise<void>;
   attach(kind: SourceKind, fixtureKey: string): Promise<void>;
   /** 断线后用当前 (kind, fixtureKey) 重新 attach */
   reconnect(): Promise<void>;
@@ -146,6 +148,16 @@ export const useFrames = create<FramesStore>((set, get) => {
     async init() {
       // 探测后端与读本地夹具是独立的两件事：任一可用就能工作
       void probeApi(API_BASE).then((api) => set({ api }));
+      // 清单新鲜度（2026-08-24 用户报「复盘要刷新浏览器才看到新对局」）：窗口聚焦/
+      // 回到前台时重拉夹具+录像清单 —— 对局落盘是后端事件，前端没有推送面，聚焦刷新
+      // 是最小侵入的补法（不动当前源，只更新下拉）
+      if (typeof window !== "undefined") {
+        const onFocus = (): void => { void get().refreshSources(); };
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) onFocus();
+        });
+      }
       try {
         // 二十六轮：复盘下拉 = 夹具（手搓场景）+ 对局录像（后端落盘的真局）。
         // 录像取不到不影响夹具（listRecordings 内部吞错返回空表）。
@@ -157,6 +169,17 @@ export const useFrames = create<FramesStore>((set, get) => {
         if (first) await get().attach("fixture", first.key);
       } catch (err) {
         set({ error: (err as Error).message });
+      }
+    },
+
+    async refreshSources() {
+      // 只刷清单（TimeStrip 的复盘下拉吃 fixtures），不重附当前源
+      try {
+        const fixtures = await listFixtures();
+        const recordings = await listRecordings(API_BASE);
+        set({ fixtures: [...fixtures, ...recordings] });
+      } catch {
+        /* 保持现状：清单刷新失败不该打断任何东西 */
       }
     },
 

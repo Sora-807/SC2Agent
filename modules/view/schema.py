@@ -69,7 +69,7 @@ from typing import Any
 #:   可选 `display_name_zh` 键（分支中文别名 —— 值树是 unknown record，契约形状不变）。
 #: rev 13：`world.units[].producing[].progress` 收窄为可空 —— SC2 订单不带进度（协议没有该
 #:   字段），原先恒发 `0.0` 是把"未知"伪装成"刚开始"；改为 None（前端 zod 同步 nullable）。
-REV = 16
+REV = 17
 
 Pt = tuple[float, float]      # 世界坐标（左下原点浮点）
 Cell = tuple[int, int]        # 建筑格点
@@ -581,10 +581,22 @@ class DroppedView:
 
 
 @dataclass(slots=True)
+class TrainingView:
+    """在训条目（rev 17，G3）：runtime 在 emit 训练单时记下**开始时刻** ——
+    SC2 订单协议不带进度（rev 13 收窄 None），左延伸只能靠我们自己记账。
+    复盘截断线左侧的"训练中部分条"由它 + catalog build_time 算出。"""
+
+    stable_id: str
+    producer_tag: int
+    started_at: float
+
+
+@dataclass(slots=True)
 class ProductionFrame:
     queues: list[QueueView]
     in_flight: list[InFlightView]
     dropped: list[DroppedView]
+    training: list[TrainingView] = field(default_factory=list)
 
 
 # ---------------- frame/economy ----------------

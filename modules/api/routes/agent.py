@@ -74,6 +74,27 @@ async def agent_chat_say(body: dict, request: Request) -> dict:
     return out
 
 
+@router.post("/api/agent/chat/interject")
+async def agent_chat_interject(body: dict, request: Request) -> dict:
+    """轮内插话（2026-08-24）：顾问运行中用户随时插话 —— sleep 立刻醒 /
+    下一个工具结果捎带给模型。没有进行中的轮返回 queued=False（正常发送即可）。"""
+    talk = request.app.state.agent_talk
+    if talk is None:
+        raise HTTPException(status_code=503,
+                            detail="对话服务未启用（serve_api --agent-base）")
+    return talk.interject(str(body.get("text") or ""))
+
+
+@router.post("/api/agent/chat/clean")
+async def agent_chat_clean(request: Request) -> dict:
+    """清空对话上下文（/clean）：历史清零、引擎消息态重置；记忆文件不动。"""
+    talk = request.app.state.agent_talk
+    if talk is None:
+        raise HTTPException(status_code=503,
+                            detail="对话服务未启用（serve_api --agent-base）")
+    return await talk.clear_context()
+
+
 @router.post("/api/agent/chat/stream")
 async def agent_chat_say_stream(body: dict, request: Request):
     """SSE 流式对话（2026-08-22 十五轮：接 BaseAgent start_stream）。
@@ -159,6 +180,10 @@ def agent_tools() -> dict:
                       "order": "reorder 用（0..n-1 的排列）"},
              "note": "队列 op 轻量、不走 validate/compile；执行时按 constraint 门控（S11）。"
                      "插入天然只具后效性 —— 已执行项不在队列里（BUILD 进在途、TRAIN 直接走）"},
+            {"method": "POST", "path": "/api/session/stop",
+             "body": {},
+             "note": "结束当前会话（树杀子进程含 SC2）。agent 侧对应 stop_session 工具；"
+                     "用户在场的正常模式局先问用户再关"},
             {"method": "POST", "path": "/api/commands/workers",
              "body": {"based_on_seq": "必填", "task": "mineral|gas|idle",
                       "count": "**维持** N 个（目标值、幂等），不是再派 N 个"}},

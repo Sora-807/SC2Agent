@@ -152,3 +152,71 @@ def test_lowering_the_quota_returns_workers_to_minerals():
     last = curve.points[-1]
     assert last.gas_workers == 2
     assert last.mineral_workers + last.gas_workers == 12, "总人数守恒"
+
+
+# ---------------- 回退门（§0.51 投影爆炸事故）----------------
+
+from planner.build_order import ProductionModuleInstance  # noqa: E402
+from view.producer import FrameProducer  # noqa: E402
+
+
+class _FakeRuntime:
+    """只答 queue() 的最小 runtime —— `_project` 不碰其它面。"""
+
+    def __init__(self, items):
+        from game.production import Queue
+        self._q = Queue(name="main", items=items)
+
+    def queue(self, name):
+        return self._q if name == "main" else None
+
+
+def _producer(runtime) -> FrameProducer:
+    return FrameProducer(
+        catalog=CAT, runtime=runtime, planner=Planner(CAT),
+        projection_plan=[ProductionModuleInstance(
+            instance_id="m0", module_ref="basic_opening", version=1, params={})],
+        horizon=60.0)
+
+
+def test_never_falls_back_after_live_queue_seen():
+    """见过 live 队列后，队列清空必须投空队列 —— 参考计划的条目一条都不许出现。"""
+    p = _producer(_FakeRuntime([QueueItem(op=QueueOp.TRAIN, type="terran/scv")]))
+    gs = _gs()
+    _, frame = p._project(gs)
+    assert frame.source["kind"] == "live_queue"
+
+    # 单项被发出（emit 即出队）→ 队列空：仍是 live_queue，且没有参考计划的事件
+    p = _producer(_FakeRuntime([]))
+    p._live_seen = True
+    _, frame = p._project(_gs())
+    assert frame.source["kind"] == "live_queue"
+    assert frame.source["queue_name"] == "main"
+    started = [e.stable_id for e in frame.events if e.kind == "started"]
+    assert started == [], "空队列不许画出参考计划的条目"
+    assert len(frame.points) > 30, "空队列仍有收入外推曲线"
+
+
+def test_reference_plan_only_before_any_live_queue():
+    """从未见过 live 队列（开局）：参考计划照常可用，标 draft。"""
+    p = _producer(_FakeRuntime([]))
+    _, frame = p._project(_gs())
+    assert frame.source["kind"] == "draft"
+    started = [e.stable_id for e in frame.events if e.kind == "started"]
+    assert "terran/scv" in started, "开局参考计划包含农民条目"
+
+
+def test_world_inflight_completes_in_empty_queue_projection():
+    """队列空时，世界里在建的建筑（build_progress<1）在投影里照常落成 ——
+    在途可见性来自世界帧派生，不需要参考计划。"""
+    g = _gs()
+    depot = Unit(tag=77, type_name="SUPPLYDEPOT", position=Point2(40.0, 40.0),
+                 owner=Owner.SELF, hp=100.0, hp_max=100.0, shield=0.0, energy=0.0,
+                 build_progress=0.5, orders=[])
+    g.units.append(depot)
+    p = _producer(_FakeRuntime([]))
+    p._live_seen = True
+    _, frame = p._project(g)
+    done = [e for e in frame.events if e.kind == "completed"]
+    assert any(e.stable_id == "terran/supplydepot" for e in done), \
+        "在建的补给站应在空队列投影里落成"

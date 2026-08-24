@@ -710,3 +710,150 @@ def test_gas_retry_switches_geyser_instead_of_dropping():
     assert len(gas_ops) >= 2, f"应换井重试，实际只有 {len(gas_ops)} 条"
     assert gas_ops[-1].params["target_unit"] != tried_first, "重试必须换一口没试过的气井"
     assert not any("缺 placement" in reason for _i, reason in rt.dropped)
+
+
+# ---- 2026-08-24 用户拍板：建造默认抽**最近的采矿 SCV**，完工自动归队 ----
+
+
+def test_pick_builder_prefers_nearest_to_site():
+    """采矿中的 SCV 是被抽对象；离建造点最近的优先（少走路 = 少误工）。"""
+    from game import Order, Point2, Unit
+
+    def scv(tag, x, y):
+        return Unit(tag=tag, type_name="SCV", position=Point2(x, y), owner=Owner.SELF,
+                    hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0,
+                    orders=[Order(ability="Gather", target_tag=900)])   # 都在采矿
+
+    port = _Port() if "Port" in dir() else None
+    rt = _runtime(_SilentPort())
+    gs = _gs(units=[scv(1, 0.0, 0.0), scv(2, 50.0, 50.0)])
+    assert rt._pick_builder(gs, near=Point2(48.0, 48.0)).tag == 2
+    assert rt._pick_builder(gs, near=Point2(1.0, 1.0)).tag == 1
+
+
+class _SilentPort:
+    def submit_operations(self, ops):
+        return None
+
+
+# ---- §0.52 D 批：无 builder 诊断 + 丢弃必释放征用 ----
+
+def test_flight_drop_releases_builder_reservation():
+    """flight 候选耗尽被丢弃 → 征用必须释放：否则候选被旧 flight 占死，
+    「无可用 SCV」阻塞永不解除（截图事故的候选根因之二，回归锁）。"""
+    from production.economy import WorkerReservations
+
+    res = WorkerReservations()
+    port = _Port()
+    rt = ProductionRuntime(CAT, port, region_layer=_layer(), reservations=res)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                   placement=PlacementExact("spot"))])
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV")], minerals=200)
+    rt.on_game_state(gs)
+    assert res.tags() == frozenset({2}), "发出 build 即征用"
+    for _ in range(92):
+        rt.on_game_state(gs)   # 放置失败 → 重试 → 候选耗尽丢弃
+    assert any("耗尽" in r for _, r in rt.dropped)
+    assert res.tags() == frozenset(), "丢弃后征用必须释放（工兵回候选池）"
+    # 释放后下一项 build 能立刻抽到同一个 SCV（候选没被占死）
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                   placement=PlacementExact("spot"))])
+    rt.on_game_state(gs)
+    assert any(o.action == "build" and 2 in o.unit_tags for o in port.submitted[1:]), \
+        "丢弃释放后同一 SCV 可再次被抽中"
+
+
+def test_no_builder_reason_carries_split_counts():
+    """诊断三元组进阻塞文案（总数/建造征用/本帧已令）——告警里看得出谁占着。"""
+    from production.economy import WorkerReservations
+
+    res = WorkerReservations()
+    res.reserve("other/build#9", 2)   # 一个别的 flight 占着 2 号
+    rt = ProductionRuntime(CAT, _Port(), region_layer=_layer(), reservations=res)
+    gs = _gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0),
+              _u(2, "SCV"), _u(3, "SCV"), _u(4, "SCV")], minerals=200)
+    rt._frame_busy = {3, 4}           # 本帧已令另外两个
+    rt._pick_builder(gs)              # 候选耗尽（3 工兵全被排除）→ 记诊断
+    reason = rt._no_builder_reason()
+    assert "场上工兵 3" in reason and "建造征用 1" in reason and "本帧已令 2" in reason
+
+
+# ---- §0.53 根因②：实体出现 ≠ 完工，征用握到 build_progress>=1 ----
+
+def _emit_one_build(rt, port):
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                   placement=PlacementInRegion("home"))])
+    gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs)
+    assert port.submitted and port.submitted[0].action == "build"
+    return gs
+
+
+def test_flight_holds_builder_until_building_completes():
+    """0% 实体出现时征用**不释放**（SC2 放置即出实体，SCV 还要盖 ~21s）——提前放人
+    会被维持器立刻派回采矿、gather 顶掉建造单（真机两次 0% 补给站被弃的根因②）。"""
+    from production.economy import WorkerReservations
+
+    res = WorkerReservations()
+    port = _Port()
+    rt = ProductionRuntime(CAT, port, region_layer=_layer(), reservations=res)
+    gs = _emit_one_build(rt, port)
+    assert res.tags() == frozenset({2})
+    # 放置位出现 0% 实体（emit 位置 [2.5,2.5] → 偶数尺寸报告位 (3.0,3.0)）
+    building = _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.0)
+    for _ in range(3):
+        rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                              building], minerals=400))
+        assert res.tags() == frozenset({2}), "建筑没盖完，征用不许释放"
+        assert len(rt._build_flights["q"]) == 1, "flight 等完工，不出列表"
+    # 盖到 100% → started → 释放 + 出列表
+    done = _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=1.0)
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          done], minerals=400))
+    assert res.tags() == frozenset()
+    assert not rt._build_flights.get("q")
+
+
+def test_flight_retries_when_partial_building_dies():
+    """实体半途消失（被拆/弃建 Decay 死）→ failed → 转重试（builder=None，下帧重发）。"""
+    from production.economy import WorkerReservations
+
+    res = WorkerReservations()
+    port = _Port()
+    rt = ProductionRuntime(CAT, port, region_layer=_layer(), reservations=res)
+    _emit_one_build(rt, port)
+    building = _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.3)
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER", x=6.0, y=6.0), _u(2, "SCV"),
+                          building], minerals=400))
+    assert res.tags() == frozenset({2})
+    # 实体消失 + 无 build order → 重试路径（重发换位）
+    for _ in range(2):
+        rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                              _u(3, "SCV")], minerals=400))
+    assert len([o for o in port.submitted if o.action == "build"]) >= 2, "实体死了要重发"
+
+
+# ---------------- G3（2026-08-24，rev 17）：在训记账 ----------------
+
+def test_training_ledger_records_start_and_expires():
+    """emit 训练单 → snapshot.training 带开始时刻（SC2 订单无进度，进度自己记账）；
+    产出建筑消失、或无订单且超训练时长 → 淘汰（复盘截断线的左延伸数据源）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="train", type="terran/marine", count=1)])
+    # 场上要有就绪兵营（marine 的产出建筑）
+    from tests.production.test_runtime import _u as _uu  # noqa: PLC0415 —— 同文件helper
+    gs = _gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")], minerals=200, game_time=50.0)
+    rt.on_game_state(gs)
+    assert len(port.submitted) == 1
+    snap = rt.snapshot()
+    assert snap["training"] == [{"stable_id": "terran/marine",
+                                 "producer_tag": 7, "started_at": 50.0}]
+    # 订单还没落地（orders 空）但没超时长 → 保留（emit→订单落地的间隙）
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")],
+                         minerals=200, game_time=51.0))
+    assert len(rt.snapshot()["training"]) == 1
+    # 无订单且远超 marine 训练时长 → 完成淘汰
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(7, "BARRACKS")],
+                         minerals=200, game_time=200.0))
+    assert rt.snapshot()["training"] == []

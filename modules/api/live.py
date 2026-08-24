@@ -54,6 +54,7 @@ class LiveSession:
                  map_plan: str | None = None,
                  strategy_path: str | None = None,
                  spawn: str | None = None,
+                 speed: float = 0.0,
                  record_dir: Path | None = None) -> None:
         self.driver = driver
         self.label = label or (f"真机会话（{map_name}）" if driver == "sc2"
@@ -82,6 +83,9 @@ class LiveSession:
         self._rec_fh = None
         self._rec_meta_path: Path | None = None
         self._rec_count = 0
+        #: 仿真模式倍速（「开启游戏」两模式，2026-08-23）：0=不限速；N>1=目标 N 倍。
+        #: 只在非实时（仿真）会话有意义；set_speed 热改（快进倍数选择）。
+        self.speed = float(speed)
         if record_dir is not None:
             try:
                 record_dir.mkdir(parents=True, exist_ok=True)
@@ -128,6 +132,8 @@ class LiveSession:
             cmd += ["--strategy-file", str(strategy_path)]   # 二十七轮：开放写策略
         if spawn:
             cmd += ["--spawn", str(spawn)]                   # B1：loadout 的出生点布局
+        if driver == "sc2" and self.speed:
+            cmd += ["--speed", str(self.speed)]              # 仿真模式起始倍速（sim 节拍不随之变）
         if self._ctl_path is not None:
             cmd += ["--control-file", str(self._ctl_path)]
         # 真机发现：`stdin=PIPE` 且保持打开会让 SC2 挂起（burnysc2 启动的 SC2 进程
@@ -391,6 +397,23 @@ class LiveSession:
         self._send({"op": "workers", "task": task, "count": int(count)})
         return {"task": task, "quota": int(count), "accepted_seq": self.seq}
 
+    def set_speed(self, multiplier: float) -> dict:
+        """仿真模式变速（即时生效，不重启）：multiplier=0 → 不限速（最快）。
+
+        正常模式（实时）没有变速通道 —— 游戏自己按真实流速走，客户端睡不着觉。
+        """
+        m = float(multiplier)
+        if m != 0 and not (1 <= m <= 64):
+            raise ValueError("multiplier 只能是 0（不限速）或 1..64 的倍数")
+        if self._realtime:
+            raise RuntimeError("正常模式按实时流速跑（玩家在场）；快进倍数属于仿真模式，"
+                               "换模式要重开会话")
+        if self.proc.poll() is not None:
+            raise RuntimeError(f"会话已结束（{self.state}）：{self.error or '子进程已退出'}")
+        self._send({"op": "speed", "multiplier": m})
+        self.speed = m
+        return {"speed": m, "accepted_seq": self.seq}
+
     def swap_strategy(self, strategy_file: str) -> dict:
         """热切 V1（批 C）：把 swap 命令发进子进程通道（stdin / sc2 走控制文件）。
 
@@ -538,10 +561,38 @@ class LiveSession:
                 "state": self.state, "seq": self.seq, "game_time": round(self.game_time, 3),
                 "max_stale_seq": MAX_STALE_SEQ, "error": self.error,
                 "frames": len(self.frames), "acks": self._acks,
+                "mode": "normal" if self._realtime else "fast",
+                "speed": self.speed,
                 "pid": self.proc.pid, "alive": self.proc.poll() is None,
                 "meta": {k: v for k, v in self._meta.items() if k != "stderr_tail"},
                 "queues": [],   # 队列由子进程持有；UI 从 frame/production 看（单一真相源）
+                # 活跃警报（D 批）：子进程的 AlertService 我们够不着，从最近帧里捞
+                "alerts": self._recent_alerts(),
             }
+
+    def _recent_alerts(self, within: float = 15.0) -> list[dict]:
+        """frame/alerts 是「新报出的」增量帧 —— 最近 `within` 游戏秒内的都算还在响。
+
+        ⚠️ 只在 describe() 里调用（调用方**已持有** self._lock）—— 普通 Lock 同线程
+        重入 = 死锁（_control 的 terrain 分支踩过同一个坑，见上方注释）。
+        """
+        out: list[dict] = []
+        seen: set[str] = set()
+        cutoff = self.game_time - within
+        frames = self.frames
+        for f in reversed(frames):
+            if f.get("game_time", 0.0) < cutoff:
+                break
+            if f.get("topic") != "frame/alerts":
+                continue
+            for a in f.get("payload", {}).get("alerts", []):
+                aid = str(a.get("id"))
+                if aid in seen:
+                    continue
+                seen.add(aid)
+                out.append({"id": aid, "kind": a.get("kind"), "severity": a.get("severity"),
+                            "text_zh": a.get("text_zh"), "at": f.get("game_time")})
+        return out
 
 
 #: 种族中文名（复盘清单「人族 vs 神族」用；C4：zh 文案来自后端）

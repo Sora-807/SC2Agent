@@ -272,3 +272,23 @@ def test_strategy_write_invalid_refused_without_change_record(ws: ApiWorkspace):
     bad = STRATEGY_YAML.replace("reason: GO}", "reason: TYPO}", 1)  # 只改 exit_step（第一处），edge 仍是 GO → 撞不上
     with pytest.raises(WorkspaceError, match="TYPO|无匹配"):
         ws._write_file("strategies/agent-bad.yaml", bad)
+
+
+def test_strategy_lib_exists_probe(tmp_path):
+    """strategies/_lib.yaml 的 exists 探测（2026-08-24 trace 实证假 not found）：
+    read 走 REST 特判，exists 侧同源探测 —— 否则 vendor read 的 contains 预检
+    把锁定的模板库吞成 not found，模型被折磨整轮。"""
+    from agent.client import ApiClient
+    from agent.workspace import ApiWorkspace, ChangeLog
+
+    def transport(ok: bool):
+        def t(method: str, path: str, body: dict | None):
+            if path == "/api/strategies/_lib":
+                return (200, {"text": "# 模板库"}) if ok else (404, {"detail": "没有模板库"})
+            return 404, {"detail": "??"}
+        return t
+
+    ws_ok = ApiWorkspace(ApiClient(transport=transport(True)), tmp_path, ChangeLog())
+    assert ws_ok.contains("strategies/_lib.yaml") is True
+    ws_no = ApiWorkspace(ApiClient(transport=transport(False)), tmp_path, ChangeLog())
+    assert ws_no.contains("strategies/_lib.yaml") is False

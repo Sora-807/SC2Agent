@@ -200,3 +200,69 @@ groups:
     # 无曲线 / 无装配 → 空（live 窗口投影不该走这条对账）
     assert AlertService(CAT).assembly_gaps(None, asm) == []
     assert AlertService(CAT).assembly_gaps(_curve([pt]), None) == []
+
+
+# ---------------- D 批（2026-08-24）：敌方踪迹滚动窗 + 活跃警报面 ----------------
+
+def _enemy(tag, name="Marine", x=50.0, y=50.0) -> Unit:
+    return Unit(tag=tag, type_name=name, position=Point2(x, y), owner=Owner.ENEMY,
+                hp=100.0, hp_max=100.0, shield=0.0, energy=0.0,
+                build_progress=1.0, orders=[])
+
+
+def test_enemy_contact_rolls_over_10s_window():
+    """敌方踪迹在窗内保留：离开视野后 10s 内仍可见统计（observe 只看当前帧）。"""
+    svc = AlertService(catalog=CAT)
+    fired = svc.evaluate(_gs(t=100.0, units=[_enemy(1), _enemy(2)]))
+    contact = [a for a in fired if a.kind == "enemy_contact"]
+    assert len(contact) == 1
+    assert "见过 2 个不同敌兵" in contact[0].text_zh
+    assert contact[0].severity == "info"          # 2 个 = info（没到 3）
+
+    # 敌人离开视野：t=105 记忆仍在（冷却压住了重报 —— 直接看滚动表）
+    svc.evaluate(_gs(t=105.0, units=[]))
+    assert len(svc._contact) == 2
+    # t=150：窗早已过，踪迹蒸发（此时冷却也过了 —— 有记忆才会报，没有才是对）
+    fired = svc.evaluate(_gs(t=150.0, units=[]))
+    assert not [a for a in fired if a.kind == "enemy_contact"]
+    assert len(svc._contact) == 0
+
+
+def test_enemy_contact_escalates_by_window_stats():
+    """窗内 ≥3 个不同敌兵（或峰值同屏 ≥5）→ warn：够格叫醒 sleep。"""
+    svc = AlertService(catalog=CAT)
+    fired = svc.evaluate(_gs(t=100.0, units=[_enemy(1), _enemy(2), _enemy(3)]))
+    contact = [a for a in fired if a.kind == "enemy_contact"]
+    assert contact[0].severity == "warn"
+    assert "峰值同屏 3" in contact[0].text_zh
+    assert "@ (50,50)" in contact[0].text_zh        # 最后出现位置如实带上
+
+
+def test_active_alerts_exposes_recent_warn_plus():
+    """活跃面：最近 15 游戏秒内报过的 warn+ 可查 —— sleep 轮询的唤醒数据源。"""
+    svc = AlertService(catalog=CAT)
+    svc.evaluate(_gs(t=100.0, units=[_enemy(1), _enemy(2), _enemy(3)]))
+    hot = svc.active_alerts(105.0, min_severity="warn")
+    assert [a["kind"] for a in hot] == ["enemy_contact"]
+    assert hot[0]["severity"] == "warn"
+    # 20s 冷却内不重报，但活跃面仍能查到（报过 = 在响）
+    assert not svc.active_alerts(130.0, min_severity="warn")
+
+
+# ---------------- E 批（2026-08-24）：TRAIN 卡死区分「被摧毁/还没建」（只告警） ----------------
+
+def test_queue_blocked_distinguishes_destroyed_from_unbuilt():
+    """producer_ever_ready=True（曾建成、被摧毁）→ 文案指向重排/重建；
+    False（从没建过）→ 指向建造被卡。只给文案，不动队列（用户拍板）。"""
+    base = {"name": "main", "head_status": "阻塞",
+            "items": [{"stable_id": "terran/marine", "op": "train"}],
+            "blocked": {"reason": "缺就绪产出建筑 terran/barracks",
+                        "since": 90.0, "frames": 10, "warned": True}}
+    for ever, mark in ((True, "被摧毁"), (False, "从没建成过")):
+        svc = AlertService(catalog=CAT)   # 同 id 有冷却，两轮各用新实例
+        production = {"queues": [{**base,
+                                  "blocked": {**base["blocked"], "producer_ever_ready": ever}}]}
+        fired = svc.evaluate(_gs(t=100.0), production=production)
+        hit = [a for a in fired if a.kind == "queue_blocked"][0]
+        assert mark in hit.text_zh
+        assert hit.payload["producer_ever_ready"] is ever

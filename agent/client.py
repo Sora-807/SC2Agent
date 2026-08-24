@@ -59,6 +59,14 @@ class ApiClient:
     def session(self) -> dict:
         return self._get("/api/session")
 
+    def latest_frame(self, topic: str, *, source: str = "live") -> dict | None:
+        """某 topic 的最新一帧 payload（游标拉满取尾）。F 批体检用（frame/production）。"""
+        frames = self._get(f"/api/sources/{source}/frames?game_time=999999")
+        for f in reversed(frames or []):
+            if isinstance(f, dict) and f.get("topic") == topic:
+                return f.get("payload") or {}
+        return None
+
     # ---- 写（只有提案；命令类刻意不暴露给 agent，见模块 docstring）----
 
     def propose(self, body: dict) -> dict:
@@ -105,7 +113,9 @@ class ApiClient:
 
     def session_start(self, *, driver: str = "sim", map_plan: str | None = None,
                       strategy: str | None = None, loadout: str | None = None,
-                      spawn: str | None = None, autotick: bool = True) -> dict:
+                      spawn: str | None = None, mode: str | None = None,
+                      speed: float | None = None, autotick: bool = True,
+                      production: dict | None = None) -> dict:
         q = f"driver={driver}&autotick={'true' if autotick else 'false'}"
         if map_plan:
             q += f"&map_plan={urllib.parse.quote(map_plan)}"
@@ -115,7 +125,17 @@ class ApiClient:
             q += f"&loadout={urllib.parse.quote(loadout)}"
         if spawn:
             q += f"&spawn={urllib.parse.quote(spawn)}"
-        return self._post(f"/api/session/start?{q}", {})
+        if mode:
+            q += f"&mode={urllib.parse.quote(mode)}"
+        if speed is not None:
+            q += f"&speed={float(speed):g}"
+        # 结构化参数走请求体（query 放不下 dict；§0.52 C 批）
+        return self._post(f"/api/session/start?{q}",
+                          {"production": production} if production else {})
+
+    def session_stop(self) -> dict:
+        """结束当前会话（子进程树杀，防孤儿 SC2）。"""
+        return self._post("/api/session/stop", {})
 
     def strategies_list(self) -> list[dict]:
         return self._get("/api/strategies")

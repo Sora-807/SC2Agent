@@ -23,6 +23,7 @@ from view.schema import (
     BranchHitView,
     CompositionView,
     DroppedView,
+    TrainingView,
     EconomyFrame,
     EconomyNodeView,
     EconomyReservationView,
@@ -448,7 +449,13 @@ def production_frame(snap: dict, catalog: Catalog) -> ProductionFrame:
         DroppedView(at=d["at"], op=d["op"], stable_id=d["stable_id"], reason=d["reason"])
         for d in snap["dropped"]
     ]
-    return ProductionFrame(queues=queues, in_flight=in_flight, dropped=dropped)
+    training = [
+        TrainingView(stable_id=t["stable_id"], producer_tag=t["producer_tag"],
+                     started_at=t["started_at"])
+        for t in snap.get("training") or []
+    ]
+    return ProductionFrame(queues=queues, in_flight=in_flight, dropped=dropped,
+                           training=training)
 
 
 def with_waited(frame: ProductionFrame, game_time: float) -> ProductionFrame:

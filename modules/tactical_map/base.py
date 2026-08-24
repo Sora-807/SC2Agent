@@ -163,6 +163,20 @@ def spawn_layout_nearest(template: BaseTemplate, cc: Point2) -> SpawnLayout | No
     )
 
 
+def pick_spawn_layout(template: BaseTemplate, cc: Point2) -> tuple[str, "SpawnLayout"]:
+    """实际 CC 坐标 → **就近**的出生点分支（真机随机出生点检测，2026-08-24 事故修）。
+
+    SC2 会把我们随机放在 bl 或 tr；构造期不知道实际位置（此前写死 bl 导致出生 tr 时
+    工人被派去左下采矿）。分支选择 = 离实际 CC 最近的 layout.origin。
+    """
+    best_key, best_layout, best_d = None, None, None
+    for key, layout in template.spawns.items():
+        d = (layout.origin.x - cc.x) ** 2 + (layout.origin.y - cc.y) ** 2
+        if best_d is None or d < best_d:
+            best_key, best_layout, best_d = key, layout, d
+    return best_key, best_layout
+
+
 def instantiate_spawn(
     template: BaseTemplate,
     layout: SpawnLayout,

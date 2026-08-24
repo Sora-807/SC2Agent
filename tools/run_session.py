@@ -121,16 +121,25 @@ class Session:
         self.seq = 0
         self.game_time = 0.0
         self.stopping = False
+        #: 仿真模式倍速：None=未设（sim 按原 tick-seconds 节拍）；0=不限速；N>1=目标 N 倍。
+        #: sim 与 sc2 共用这一个控制命令（speed op），sc2 落到 bot 配速、sim 缩放节拍睡眠。
+        self._speed: float | None = None
+        self._sc2_port = None   # sc2 模式挂 port 引用（speed 控制命令热改配速用）
         #: 控制文件通道（B1/C）：sc2 的 stdin 是 DEVNULL（burnysc2 继承管道会挂起），
         #: 命令改经文件 —— 父进程 append 写，帧边界 rename→读→删（无损）。
         self._control_path = Path(control_path) if control_path else None
 
         # 会话装配用**选定的地图规划文件**（进入游戏加载哪一份）；缺省 = 手写出厂模板
         tpl = load_map_plan(map_plan) if map_plan else load_ladder_map()
+        self._map_tpl = tpl                    # 出生点检测要用（就近选 bl/tr 分支）
         if spawn and spawn in tpl.spawns:
             _, layout = spawn, tpl.spawns[spawn]      # loadout 显式选出生点布局
         else:
             _, layout = sorted(tpl.spawns.items())[0]  # 缺省 = 排序第一个（现状）
+        # 真机的实际出生点首帧才知道：构造期这套 layer 是**临时假定**（排序第一 = bl），
+        # 第一帧用实测 CC 重建（2026-08-24 事故修：此前锚点写死左下，出生右上时
+        # 工人被派去左下采矿、槽位/地图层全错）。sim 世界就在 bl，无需检测。
+        self._spawn_detected = driver != "sc2"
         self.layer = instantiate_spawn(tpl, layout, cc)
         # I8：预设固定建造点名进 layer（与 OfflineSession 同一语义，见 api/session.py）
         from tactical_map.reserved import reserved_marks
@@ -183,10 +192,19 @@ class Session:
                 self._enemy_race = r
                 self.producer.enemy_race = r
         if not self._statics_done:
+            spawn_key = None
+            if not self._spawn_detected:
+                # 首帧实测出生点 → 就近分支 → 重建 layer（必须在 statics 发出**之前**，
+                # 这样第一张 static/map 就是修正后的，不需要事后补帧）
+                spawn_key = self._detect_spawn(gs)
+                self._spawn_detected = True
             self._statics_done = True
             for frame in self.producer.statics(gs):
                 _emit(frame)
-            _emit({"_": "meta", "map_name": self.layer.map_name, "driver": self.driver})
+            meta = {"_": "meta", "map_name": self.layer.map_name, "driver": self.driver}
+            if spawn_key is not None:
+                meta["spawn"] = spawn_key          # 实测出生点（诊断/前端可见）
+            _emit(meta)
 
         # 命令在**帧边界**应用：帧中间改状态会让"这一帧的观察对应哪个世界"说不清
         for cmd in self._drain_control():
@@ -230,6 +248,33 @@ class Session:
                 _emit({"_": "error", "detail": f"控制行不是合法 JSON：{line[:120]}"})
         return out
 
+    # ---- 出生点检测（2026-08-24 事故修：真机随机 bl/tr，构造期不知道）----
+
+    def _detect_spawn(self, gs: GameState) -> str | None:
+        """实测我方 CC 位置 → 就近选模板分支 → 重建 layer 并同步给全部持有者。
+
+        CC 找不到（异常局面）= 保持临时假定的 layer，meta 不带 spawn 键（如实）。
+        """
+        from game import Owner
+        from tactical_map.base import instantiate_spawn, pick_spawn_layout
+        from tactical_map.reserved import reserved_marks
+
+        name = self.catalog.burnysc2_name_for("terran/commandcenter")
+        cc = next((u.position for u in gs.units
+                   if u.owner is Owner.SELF and u.type_name == name), None)
+        if cc is None:
+            return None
+        key, layout = pick_spawn_layout(self._map_tpl, cc)
+        self.layer = instantiate_spawn(self._map_tpl, layout, cc)
+        self.layer.pos_marks.update(reserved_marks(self.catalog))
+        # 持有 layer 的四方全部换到实测层（引擎动作解析/经济锚点/摆放/静态面）
+        self.engine._region_layer = self.layer
+        self.keeper._region_layer = self.layer
+        self.runtime._region_layer = self.layer
+        self.producer.region_layer = self.layer
+        self.producer.spawn = key
+        return key
+
     # ---- 命令 ----
 
     def _derive_enemy_race(self, gs: GameState) -> str | None:
@@ -257,6 +302,15 @@ class Session:
                 # 热切 V1（批 C）：整份策略文件切换，帧边界应用（本方法就在帧边界被调）
                 self._swap_strategy(str(cmd["strategy"]))
                 _emit({"_": "ack", "op": op, "seq": self.seq})
+            elif op == "speed":
+                # 仿真模式变速（倍数即时生效；sc2 落 bot 配速，sim 缩放节拍睡眠）
+                m = float(cmd.get("multiplier", 0))
+                if m != 0 and not (1 <= m <= 64):
+                    raise ValueError("multiplier 只能是 0（不限速）或 1..64")
+                self._speed = m
+                if self._sc2_port is not None:
+                    self._sc2_port.set_speed(m)
+                _emit({"_": "ack", "op": "speed", "multiplier": m, "seq": self.seq})
             elif op == "workers":
                 self.keeper.set_target(str(cmd["task"]), int(cmd["count"]))
                 _emit({"_": "ack", "op": op, "seq": self.seq})
@@ -386,7 +440,8 @@ def _run_sim(session: Session, *, seconds: float, workers: int, minerals: float,
     _emit({"_": "bye", "reason": "已结束" if session.stopping else "到时长上限"})
 
 
-def _run_sc2(session: Session, *, map_name: str, seconds: int, realtime: bool) -> None:
+def _run_sc2(session: Session, *, map_name: str, seconds: int, realtime: bool,
+             speed: float = 0.0) -> None:
     """真 SC2：driver 拥有循环，我们只当 RuntimeSink 被回调。"""
     from sc2.data import Difficulty, Race
 
@@ -403,7 +458,8 @@ def _run_sc2(session: Session, *, map_name: str, seconds: int, realtime: bool) -
 
     port = SC2GamePort(map_name=map_name, race=Race.Terran, difficulty=Difficulty.Easy,
                        sink=_RawSink(), game_time_limit=seconds, realtime=realtime,
-                       catalog=session.catalog)
+                       speed=speed, catalog=session.catalog)
+    session._sc2_port = port   # speed 控制命令热改配速的落点
     # B4：game_info 就绪后把静态地形推出去（父进程合并进 static/terrain）。
     # expansions（基地/扩张位置）走同一控制行的**旁挂键**：不进 terrain 帧 payload
     #（契约干净），父进程存 meta 供采集/诊断。
@@ -454,7 +510,9 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=600.0, help="时长上限（游戏秒）")
     ap.add_argument("--workers", type=int, default=12, help="sim：开局工兵数")
     ap.add_argument("--minerals", type=float, default=400.0, help="sim：开局矿")
-    ap.add_argument("--realtime", action="store_true", help="sc2：实时模式")
+    ap.add_argument("--realtime", action="store_true", help="sc2：正常模式（实时流速）")
+    ap.add_argument("--speed", type=float, default=None,
+                    help="仿真模式倍速：0=不限速（最快）；N>1=目标 N 倍。sc2 落 bot 配速，sim 缩放节拍")
     ap.add_argument("--tick-seconds", type=float, default=0.25,
                     help="sim：每游戏秒睡多久（0=不限速）")
     args = ap.parse_args()
@@ -467,12 +525,14 @@ def main() -> int:
                           strategy_file=args.strategy_file,
                           spawn=args.spawn,
                           control_path=Path(args.control_file) if args.control_file else None)
+        if args.speed is not None:
+            session._speed = args.speed
         if args.driver == "sim":
             _run_sim(session, seconds=args.seconds, workers=args.workers,
                      minerals=args.minerals, tick_seconds=args.tick_seconds)
         else:
             _run_sc2(session, map_name=args.map, seconds=int(args.seconds),
-                     realtime=args.realtime)
+                     realtime=args.realtime, speed=args.speed or 0.0)
     except Exception:                                  # noqa: BLE001
         # 崩溃要**结构化**报给父进程：否则父进程只能看到 exit code，说不出崩在哪
         _emit({"_": "error", "fatal": True, "detail": traceback.format_exc(limit=6)})

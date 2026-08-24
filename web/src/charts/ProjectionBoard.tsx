@@ -1,31 +1,25 @@
 /**
  * 投影板（I5/F15/F17）—— 曲线 + 泳道共享**同一条时间轴**，一张图上下两带。
  *
- * F17 交互（2026-08-22 二十轮重定义：拖动=平移视野，不再拖时间轴）：
- * - **历史累积**：投影帧只含 [based_on, +horizon]，随回放/对局推进把走过的每秒
- *   累积（accumulateInto），数据像向左流走一样保留；
- * - **左键拖图 = 平移视野**：视窗横移、零点是最左边界（拖不过 0）—— 旧版
- *   「拖图=seek」会在拖动中大幅回退时间 → 历史清空重累积 → 泳道突现突失、
- *   曲线跳变（用户实测报的「跳跃性变化」根因），退役；
- * - **跟随改为边缘触发**：时间位置贴近视窗边缘才平移滑窗（居中重定会整轴跳）；
- *   滚轮调宽度 2026-08-22 退役 —— 宽度固定跟 horizon；
- * - **hover 线**：root 级统一几何换算（frac），拖时间轴后线不再滞后错位；
- *   uPlot 自带 legend 隐藏，hover 读数进 footer —— 线也就不会越过时间轴；
- * - **泳道**：bar 自带 zh 名（圆角矩形内文字），全局行打包（跨类型并行），
- *   固定 7 行高度、超出滚动；
- * - **检查面板常驻**：默认显示「现在」，点击任意时刻切换，× 回到现在（面板不移位）。
+ * 复盘改版（2026-08-24 用户拍板，F17 历史累积退役）：
+ * - **只画本帧投影 [T, T+horizon]**：旧的跨帧累积把每次重投影的 t 漂移事件全叠起来，
+ *   复盘泳道爆炸（用户实测「堆了特别多的泳道」根因）—— 这一帧不该知道之前的曲线；
+ * - **红截断线钉 T**（当前帧 based_on）：左侧为空，只留 LEFT_MARGIN_SECS（30s）
+ *   给跨线的在产/在建**部分条**显名字（按 build_progress 反推已耗时长）；
+ * - **左缘钳 max(0, T-30)**：拖不过截断线左侧 30s（原「零点钉最左」语义让位）；
+ * - **左键拖图 = 平移视野**、**跟随 = 边缘触发**（重锚定时截断线回到左缘 +30s）、
+ *   hover/检查面板等其余交互不变。
  *
- * 红线 C7/G5：泳道/在产明细/历史累积都是显示层派生（gantt-data.ts，同一套配对），
+ * 红线 C7/G5：泳道/在产明细/部分条都是显示层派生（gantt-data.ts，同一套配对），
  * 不算新数值、不入决策路径。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, ProjectionFrame } from "../contract";
 import { ProjectionChart, PROJECTION_GUTTER } from "./ProjectionChart";
 import {
-  activeAt, packBars, toStalls, zoomSpan,
-  type TimeDomain,
+  LEFT_MARGIN_SECS, activeAt, nowAnchoredRange, packPairs, pairEvents,
+  toStalls, zoomSpan, type PairedBar, type TimeDomain,
 } from "./gantt-data";
-import { useAccumulatedProjection } from "./use-accumulated";
 import { fmtMMSS } from "./projection-data";
 import { T } from "../shell/tokens";
 import { useFrames } from "../store/frames";
@@ -66,53 +60,78 @@ export function ProjectionBoard(props: {
 }) {
   const { frame } = props;
 
-  // ---- 历史累积（F17；二十四轮抽共享 hook，与复盘队列卡同源）----
-  const merged = useAccumulatedProjection(frame);
+  // ---- 复盘改版（2026-08-24）：F17 累积退役 —— 板上只有本帧投影 [T, T+horizon] ----
+  const T0 = frame.based_on_game_time;
 
-  const packed = useMemo(() => packBars(merged), [merged]);
-  const stalls = useMemo(() => toStalls(merged), [merged]);
+  // 在建/在训部分条（截断线左延伸，G2+G3）：
+  // - 在建建筑：0<build_progress<1 + 目录 build_time 反推已耗/剩余；
+  // - 在训单位：production 帧的 training 账本（SC2 订单不带进度 —— rev13 收窄 None，
+  //   开始时刻由 runtime 在 emit 时自己记，rev 17）。
+  const world = useFrames((s) => s.world);
+  const production = useFrames((s) => s.production);
+  const partials = useMemo(() => {
+    const bt = new Map((props.catalog?.entries ?? [])
+      .map((e) => [e.stable_id, e.build_time] as const));
+    const out: PairedBar[] = [];
+    if (world && props.catalog) {
+      for (const u of world.units) {
+        if (u.owner !== "self" || u.build_progress <= 0 || u.build_progress >= 1) continue;
+        const total = bt.get(u.stable_id);
+        if (!total) continue;
+        out.push({ stableId: u.stable_id, from: T0 - total * u.build_progress,
+                   to: T0 + total * (1 - u.build_progress), done: false });
+      }
+    }
+    for (const t of production?.training ?? []) {
+      const total = bt.get(t.stable_id);
+      if (!total) continue;
+      out.push({ stableId: t.stable_id, from: t.started_at,
+                 to: t.started_at + total, done: false });
+    }
+    return out;
+  }, [world, production, props.catalog, T0]);
 
-  // ---- 视窗（二十轮）：零点钉最左（from >= 0，拖不过去）；跟随 = 边缘触发滑窗 ----
+  const packed = useMemo(() => {
+    const pairs = pairEvents(frame);
+    for (const p of partials) {
+      // 投影已含这条跨线在途项 → 只把它的左端延出去；没有才单开一条
+      const hit = pairs.find((m) => m.stableId === p.stableId && m.from <= T0 && m.to > T0);
+      if (hit) hit.from = Math.min(hit.from, p.from);
+      else pairs.push(p);
+    }
+    return packPairs(pairs);
+  }, [frame, partials, T0]);
+  const stalls = useMemo(() => toStalls(frame), [frame]);
+
+  // ---- 视窗（复盘改版）：截断线钉 T、左缘 max(0, T-30)、右缘不出数据末端空白 ----
   const position = useFrames((s) => s.position);
-  // 数据末端（二十七轮用户拍板：右侧不许出现空白 —— 滚动范围钳在 [0, dataEnd]，
-  // 和左侧「零点钉最左」对称）。取累积曲线最后一个采样点；没数据时退 horizon。
   const dataEnd = Math.max(
-    merged.points.length ? merged.points[merged.points.length - 1]!.t : 0,
-    merged.based_on_game_time,
+    frame.points.length ? frame.points[frame.points.length - 1]!.t : 0,
+    T0,
   );
-  const [range, setRange] = useState<TimeDomain>(() => {
-    // 初始窗口钳到 ZOOM_SPAN_MAX（二十七轮 5 分钟）：until_complete 后 horizon 可能是
-    // 整局 30-60 分钟，全塞一屏 = 拖一下十几分钟 + 事件密到不可读（二十六轮用户反馈）。
-    // 右端不超过数据末端（不留空白）。曲线数据仍是完整的 —— 拖动/边缘跟随走全程。
-    const to = Math.min(zoomSpan(Math.max(1, frame.horizon), 1), Math.max(1, dataEnd));
-    return { from: 0, to };
-  });
+  const [range, setRange] = useState<TimeDomain>(() =>
+    nowAnchoredRange(T0, zoomSpan(Math.max(1, frame.horizon), 1), Math.max(1, dataEnd)));
   const rangeRef = useRef(range);
   rangeRef.current = range;
-  // dataEnd 的同步镜像（pan 处理器挂在 [] 依赖的 effect 里，闭包里的 dataEnd 会陈旧）
+  // dataEnd / T0 的同步镜像（pan 处理器挂在 [] 依赖的 effect 里，闭包里的值会陈旧）
   const dataEndRef = useRef(dataEnd);
   dataEndRef.current = dataEnd;
+  const t0Ref = useRef(T0);
+  t0Ref.current = T0;
   const panningRef = useRef(false);
-  // 时间位置滑出视窗（回放 seek / live 推进到边缘）→ 平移滑窗把它带回来；
-  // 拖动中不动（拖动就是用户在定视窗）。居中重定已退役（整轴跳的另一半根因）。
+  // 时间位置滑出视窗（回放 seek / live 推进到边缘）→ 重锚定：截断线回到左缘 +30s。
+  // 拖动中不动（拖动就是用户在定视窗）。
   useEffect(() => {
     if (panningRef.current) return;
     setRange((r) => {
       const span = r.to - r.from;
       const margin = span * 0.08;
-      if (position <= r.from + margin) {
-        const from = Math.max(0, position - span * 0.2);
-        return { from, to: from + span };
-      }
-      if (position >= r.to - margin) {
-        // 右端钳数据末端：跟随可以贴到末尾，但不出空白（二十七轮）
-        const to = Math.min(position + span * 0.2, dataEnd);
-        const from = Math.max(0, to - span);
-        return { from, to: Math.max(from + 1, to) };
+      if (position <= r.from + margin || position >= r.to - margin) {
+        return nowAnchoredRange(position, span, dataEndRef.current);
       }
       return r;
     });
-  }, [position, dataEnd]);
+  }, [position]);
   const span = Math.max(1e-9, range.to - range.from);
   const pct = (t: number): number => clamp(((t - range.from) / span) * 100, 0, 100);
 
@@ -175,9 +194,10 @@ export function ProjectionBoard(props: {
             const end = dataEndRef.current;
             const dt = -(dx / track) * Math.min(span, PAN_SPAN_CAP) * PAN_GAIN;
             setRange(() => {
-              // 双侧钳制（二十七轮）：from ≥ 0（零点钉最左）且 to ≤ 数据末端
-              //（右侧不出空白——和左侧对称，滚到头就是头）
-              const from = clamp(r.from + dt, 0, Math.max(0, end - span));
+              // 双侧钳制（复盘改版）：from ≥ max(0, T-30)（截断线左侧只留 30s）且
+              // to ≤ 数据末端（右侧不出空白——滚到头就是头）
+              const left = Math.max(0, t0Ref.current - LEFT_MARGIN_SECS);
+              const from = clamp(r.from + dt, left, Math.max(left, end - span));
               return { from, to: Math.max(from + 1, Math.min(from + span, Math.max(1, end))) };
             });
           }
@@ -223,9 +243,9 @@ export function ProjectionBoard(props: {
   const stallsInView = stalls.filter((s) => s.t >= range.from && s.t <= range.to);
 
   // ---- 检查面板（常驻：默认「现在」，点击切换） ----
-  const inspectT = selectedT ?? merged.based_on_game_time;
-  const inspectPt = nearestPoint(merged, inspectT);
-  const activeBars = useMemo(() => activeAt(merged, inspectT), [merged, inspectT]);
+  const inspectT = selectedT ?? T0;
+  const inspectPt = nearestPoint(frame, inspectT);
+  const activeBars = useMemo(() => activeAt(frame, inspectT), [frame, inspectT]);
   const producerOf = useMemo(() => {
     const m = new Map<string, string>();
     for (const e of props.catalog?.entries ?? []) {
@@ -234,7 +254,7 @@ export function ProjectionBoard(props: {
     return m;
   }, [props.catalog]);
 
-  const hoverPt = hoverT !== null ? nearestPoint(merged, hoverT) : null;
+  const hoverPt = hoverT !== null ? nearestPoint(frame, hoverT) : null;
   const laneBodyH = Math.max(1, packed.rows) * LANE_ROW_PX;
 
   return (
@@ -321,6 +341,20 @@ export function ProjectionBoard(props: {
             </div>
           )}
 
+          {/* —— 贯穿两带的截断线（复盘改版）：红实线钉「现在」—— 左侧只有 30s 在产/在建余量 —— */}
+          {T0 >= range.from && T0 <= range.to && (
+            <div
+              className="pointer-events-none absolute inset-y-0 z-10"
+              style={{ left: PROJECTION_GUTTER.left, right: PROJECTION_GUTTER.right }}
+            >
+              <div
+                className="absolute inset-y-0 w-0.5 bg-[color:var(--err-fg)]"
+                style={{ left: pct(T0) + "%" }}
+                title={`${fmtMMSS(T0)} 现在（截断）：这一帧只知道 T 之后的投影；左侧 30s 只画在产/在建条`}
+              />
+            </div>
+          )}
+
           {/* —— 贯穿两带的游标线（hover/选中）：只到时间轴为止（legend 已隐藏） —— */}
           {hoverFrac !== null && (
             <div
@@ -345,7 +379,7 @@ export function ProjectionBoard(props: {
 
           {/* —— 下带：曲线（x 轴在整板底部；legend 隐藏，hover 读数在 footer） —— */}
           <ProjectionChart
-            frame={merged}
+            frame={frame}
             height={props.height ?? 190}
             domain={range}
             hideFooter

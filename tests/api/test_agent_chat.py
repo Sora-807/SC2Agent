@@ -38,8 +38,8 @@ def _client_for(app_client: TestClient) -> ApiClient:
 
 
 def _done(text: str) -> LLMResponse:
-    return LLMResponse(Message("assistant", None, [
-        ToolCall("c", "done", {"result": text})]), 0, 0, "fake")
+    """回合结束 = 纯文字回复（§0.52 F 批 done 下线；命名沿用减少 churn）。"""
+    return LLMResponse(Message("assistant", text), 0, 0, "fake")
 
 
 def _talk(api: TestClient, script: list, tmp_path: Path) -> AgentTalk:
@@ -236,13 +236,12 @@ def test_get_chat_returns_running_steps_field(api: TestClient, tmp_path: Path):
 
 def test_start_round_streams_deltas_and_round(api: TestClient, tmp_path: Path):
     """流式轮：事件从第一个思考 token 起就有（delta），工具/终态齐全，收尾 None。"""
-    # 脚本：先调一个真工具（list_plans），再 done —— 事件流应含 delta/tool_call/run_end/round
+    # 脚本：先调一个真工具（list_plans），再纯文字收尾（done 已下线，§0.52 F 批）
     script = [
         LLMResponse(Message("assistant", None, [
             ToolCall("c1", "list_plans", {})]), 0, 0, "fake"),
-        # 带正文的 done：FakeLLM 对 content 会发一条 delta（流式管道的凭证）
-        LLMResponse(Message("assistant", "结论：有一份默认规划。", [
-            ToolCall("c2", "done", {"result": "结论：有一份默认规划。"})]), 0, 0, "fake"),
+        # 纯文字收尾：FakeLLM 对 content 会发一条 delta（流式管道的凭证）
+        LLMResponse(Message("assistant", "结论：有一份默认规划。"), 0, 0, "fake"),
     ]
     talk = _talk(api, script, tmp_path)
     handle = talk.start_round("看看规划")
@@ -255,9 +254,9 @@ def test_start_round_streams_deltas_and_round(api: TestClient, tmp_path: Path):
         kinds.append(ev["type"])
         if ev["type"] == "tool_call":
             tools_seen.append(ev["tool"])
-    assert "delta" in kinds                      # 流式分片真的发了
-    assert tools_seen == ["list_plans", "done"]   # 工具事件带名字（done 也是工具）
-    assert kinds[-1] == "round"                  # 终态最后到
+    assert "delta" in kinds                        # 流式分片真的发了
+    assert tools_seen == ["list_plans"]            # 工具事件带名字（文字收尾不再有 done）
+    assert kinds[-1] == "round"                    # 终态最后到
     assert handle.result is not None and handle.result["reply"].startswith("结论")
     assert [m["role"] for m in handle.result["messages"][-2:]] == ["user", "agent"]
 
@@ -309,7 +308,7 @@ def test_round_watchdog_frees_channel_and_surfaces_error(api: TestClient, tmp_pa
     talk = AgentTalk(
         _client_for(api), llm_factory=lambda: fake,
         trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws",
-        round_timeout=0.5)
+        round_timeout=2.0)   # 满载套件下 0.5s 偶发误杀第二轮（时序敏感，非回归）
     r = asyncio.run(talk.say("卡住的一轮"))
     assert r.get("error") and "看门狗" in r["error"]
 
@@ -331,3 +330,301 @@ def test_round_handle_finish_is_idempotent():
             break
         drained.append(ev)
     assert len(drained) == 1 and drained[0]["error"] == "first"
+
+
+# ---------------- 对局跟随（2026-08-24 用户拍板：游戏没结束不许停）----------------
+
+
+class _AliveStub:
+    """_game_alive 的替身：先活着（t 递增），N 轮后结束。"""
+
+    def __init__(self, alive_rounds: int) -> None:
+        self.left = alive_rounds
+
+    def __call__(self):
+        if self.left > 0:
+            self.left -= 1
+            return True, 100.0 + 10.0 * self.left
+        return False, 0.0
+
+
+def test_follow_game_nudges_until_game_ends(api: TestClient, tmp_path: Path, monkeypatch):
+    """对局进行中 → 每轮后注入（跟随提醒）再跑；游戏结束 → 正常收尾。"""
+    fake = FakeLLMClient([_done("开局看了，没问题") for _ in range(5)])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws")
+    stub = _AliveStub(alive_rounds=2)   # 前两轮"活着" → 两次提醒；随后结束
+    monkeypatch.setattr(AgentTalk, "_game_alive", lambda self: stub())
+    r = asyncio.run(talk.say("开局看一眼"))
+    nudges = [m for m in r["messages"] if m["role"] == "user" and "跟随提醒" in m.get("text", "")]
+    assert len(nudges) == 2, "活两轮 = 两次提醒"
+    assert all(m.get("nudge") for m in nudges), "提醒轮带 nudge 标记（前端渲染成系统条）"
+
+
+def test_follow_never_gives_up_on_text_only_rounds(api: TestClient, tmp_path: Path, monkeypatch):
+    """§0.52 拍板：连续纯文字轮不再「跟随停止」—— 游戏活着就一直提醒到轮数上限，
+    唯一止损是总轮数（启动期 agent 爱回文字，3 轮放弃正是启动期停摆的根因）。"""
+    import agent.talk as talk_mod
+    monkeypatch.setattr(talk_mod, "FOLLOW_MAX_ROUNDS", 5)
+    fake = FakeLLMClient([_done("好了") for _ in range(8)])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws")
+    monkeypatch.setattr(AgentTalk, "_game_alive", lambda self: (True, 123.0))  # 永远活着
+    r = asyncio.run(talk.say("看一下"))
+    texts = [m.get("text", "") for m in r["messages"]]
+    assert not any("跟随停止" in t for t in texts), "不许再放弃跟随"
+    nudges = [m for m in r["messages"] if "跟随提醒" in m.get("text", "")]
+    assert len(nudges) == 5, "提醒到轮数上限"
+    assert all(m.get("nudge") for m in nudges)
+
+
+def test_follow_tolerates_transient_session_hiccups(api: TestClient, tmp_path: Path, monkeypatch):
+    """启动/收尾窗口 session 接口偶发取不到 ≠ 对局结束 —— 活过之后再取不到要短重试
+    （§0.52 启动期跟随中断的另一半根因）；从未活过（普通聊天）不重试。"""
+    seq = [(True, 10.0), (False, 0.0), (True, 20.0),
+           (False, 0.0), (False, 0.0), (False, 0.0)]
+    calls = {"n": 0}
+
+    def stub(self):
+        out = seq[calls["n"]] if calls["n"] < len(seq) else (False, 0.0)
+        calls["n"] += 1
+        return out
+
+    fake = FakeLLMClient([_done("好") for _ in range(8)])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws")
+    monkeypatch.setattr(AgentTalk, "_game_alive", stub)
+    r = asyncio.run(talk.say("看一下"))
+    nudges = [m for m in r["messages"] if "跟随提醒" in m.get("text", "")]
+    # 第 2 次检查先取不到（seq[1] False）→ 重试拿到 True（seq[2]）→ 继续提醒；
+    # 第 3 次连续三次 False → 判死收尾
+    assert len(nudges) == 2
+    assert calls["n"] == 6, "重试把瞬时取不到问穿了（2 次 True 各一次 + 死前两次重试）"
+
+
+def test_no_game_no_follow(api: TestClient, tmp_path: Path):
+    """没有对局（默认测试 app 无会话）：一轮即止，无提醒。"""
+    talk = _talk(api, [_done("规划已读")], tmp_path)
+    r = asyncio.run(talk.say("看看默认规划"))
+    assert r["reply"].startswith("规划已读")
+    assert not any("跟随提醒" in m.get("text", "") for m in r["messages"])
+
+
+# ---------------- 思考流容错 + 首分片诊断（2026-08-24「token 流很慢」）----------------
+
+
+def test_reasoning_tolerant_client_parses_both_field_names():
+    """端点用 reasoning（o 系风格）而非 reasoning_content 时，思考分片也要流出来。"""
+    import asyncio
+
+    from agentic.types import LLMDelta, LLMResponse, Message
+    from agent.talk import ReasoningTolerantClient
+
+    class _Delta:
+        """duck-typed chunk delta：content/tool_calls 缺省 None/()（与 SDK 形态一致）"""
+
+        def __init__(self, **kw):
+            self.content = None
+            self.tool_calls = None
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    class _Chunk:
+        def __init__(self, delta, usage=None):
+            self.usage = usage
+            # usage-only 末块 choices 为空（真实 SDK 形态）；delta 块恒一个 choice
+            self.choices = [] if delta is None else [type("C", (), {"delta": delta})()]
+
+    class _Stream:
+        def __init__(self, chunks):
+            self._it = iter(chunks)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._it)
+            except StopIteration:
+                raise StopAsyncIteration from None
+
+    class _Completions:
+        async def create(self, **kwargs):
+            assert kwargs.get("stream") is True, "必须走流式"
+            return _Stream([
+                _Chunk(_Delta(reasoning="我想想")),        # o 系字段：父类不认 → 这里必须认
+                _Chunk(_Delta(reasoning_content="再想")),  # 百炼字段
+                _Chunk(_Delta(content="答案")),
+                _Chunk(None, usage=type("U", (), {"prompt_tokens": 1, "completion_tokens": 2})()),
+            ])
+
+    class _Client:
+        chat = type("Chat", (), {"completions": _Completions()})()
+
+    c = ReasoningTolerantClient.__new__(ReasoningTolerantClient)
+    c._client = _Client()
+    got: list[LLMDelta] = []
+    resp = asyncio.run(c._stream_call({"model": "m", "stream": True}, on_delta=got.append))
+    kinds = [(d.kind, d.text) for d in got]
+    assert ("reasoning", "我想想") in kinds and ("reasoning", "再想") in kinds
+    assert ("content", "答案") in kinds
+    assert resp.reasoning == "我想想再想"
+    assert resp.message.content == "答案"
+
+
+# ---------------- /clean：清空对话上下文（2026-08-24，记忆文件保留）----------------
+
+
+def test_clean_clears_history_and_engine_state(api: TestClient, tmp_path: Path):
+    """旧上下文里的过时认知（"我没有 stop 工具"）会一直误导模型 —— clean 从空白开始。"""
+    fake = FakeLLMClient([
+        _done("第一轮"),
+        _done("第二轮（应该看不到第一轮）"),
+    ])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws")
+    r1 = asyncio.run(talk.say("第一句"))
+    assert len(r1["messages"]) == 2
+
+    out = asyncio.run(talk.clear_context())
+    assert out["ok"] is True and out["messages"] == []
+    assert talk.history == []
+
+    r2 = asyncio.run(talk.say("第二句"))
+    # 历史从零开始：只有第二轮的两条，旧轮不回灌
+    assert len(r2["messages"]) == 2
+    # LLM 侧也是干净的：第二次调用的消息里没有第一轮的用户话
+    second_call_messages = fake.calls[-1][0]
+    texts = [m.content for m in second_call_messages]
+    assert any(t == "第二句" for t in texts)
+    assert not any(t == "第一句" for t in texts)
+
+
+def test_interject_queue_and_undelivered_round(api: TestClient, tmp_path: Path):
+    """插话闭环：轮内 interject 入队；没赶上工具检查点的插话由跟随循环补送一轮。"""
+    fake = FakeLLMClient([_done("第一轮完成") for _ in range(4)])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws")
+    # 没有进行中的轮：不排队（前端正常发送即可）
+    assert talk.interject("没人跑的时候插话")["queued"] is False
+    # 预置一条未送达的插话 → 首轮结束后跟随循环应补送一轮（哪怕没有对局）
+    talk.interjections.add("改打空军")
+    r = asyncio.run(talk.say("开局看一眼"))
+    texts = [m.get("text", "") for m in r["messages"]]
+    assert any("改打空军" in t for t in texts), "未送达插话必须被补送（不能丢）"
+    # 第二轮的输入里带插话（FakeLLM 收到的消息）
+    second = fake.calls[1][0]
+    assert any(m.content and "改打空军" in m.content for m in second)
+
+
+# ---------------- 断流三修（2026-08-24 用户报「工具调用之后没有下文」） ----------------
+
+def test_max_turns_pause_leaves_visible_note(api: TestClient, tmp_path: Path):
+    """max_turns 截停（最后一轮常是纯工具调用，无正文）→ 落史必须带说明 +
+    「继续」指引 —— 不许凭空断线。默认上限 500（§0.57），测试里显式给小值。"""
+    from agentic.types import ToolCall
+    script = [LLMResponse(Message("assistant", None,
+                                  [ToolCall(f"c{i}", "list_modules", {})]), 0, 0, "fake")
+              for i in range(6)]
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: FakeLLMClient(list(script)),
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws",
+                     max_turns=6)
+    r = asyncio.run(talk.say("反复列模块"))
+    assert r["outcome"] == "paused"
+    assert "轮数上限暂停" in r["reply"]
+    assert "继续" in r["reply"]
+    assert talk.history[-1]["role"] == "agent"
+
+
+def test_output_token_budget_stops_round_with_note(api: TestClient, tmp_path: Path):
+    """轮输出 token 预算（§0.57 用户拍板：turn 放开 500，token 做刹车）：
+    累计到预算 → 不再调 LLM、空响应自然收轮，落史带「预算用完 + 继续」说明。"""
+    from agentic.types import ToolCall
+
+    class _BudgetFake(FakeLLMClient):
+        """带预算协议的替身：AgentTalk 轮首会 reset_round_budget（有该方法才设限）。"""
+
+        def reset_round_budget(self, budget):
+            self.output_budget = budget
+            self.round_output_tokens = 0
+
+        async def complete(self, messages, tools=None, **kw):
+            if self.round_output_tokens >= self.output_budget:
+                return LLMResponse(Message("assistant", None), 0, 0, "budget-stop")
+            resp = await super().complete(messages, tools, **kw)
+            self.round_output_tokens += resp.output_tokens
+            return resp
+
+    fake = _BudgetFake([
+        LLMResponse(Message("assistant", None, [ToolCall("c1", "list_modules", {})]),
+                    0, 700_000, "fake"),
+        LLMResponse(Message("assistant", None, [ToolCall("c2", "list_modules", {})]),
+                    0, 400_000, "fake"),   # 累计 1.1M ≥ 1M 预算
+    ])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws",
+                     max_output_tokens=1_000_000)
+    r = asyncio.run(talk.say("反复列模块"))
+    assert "预算" in r["reply"] and "继续" in r["reply"]
+    assert r["output_tokens"] == 1_100_000
+    assert talk.history[-1]["output_tokens"] == 1_100_000
+    assert len(fake.calls) == 2            # 第三次调用没发生（预算拦在 API 前）
+
+
+def test_stream_retry_once_when_nothing_emitted(tmp_path: Path):
+    """连接类瞬断：一个分片都没发 → 重试一次成功（用户怀疑的『网络错误没有重试』）。"""
+    from types import SimpleNamespace
+
+    from agent.talk import ReasoningTolerantClient
+
+    def chunk(text):
+        d = SimpleNamespace(reasoning_content=None, reasoning=None,
+                            content=text, tool_calls=None)
+        return SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=d)])
+
+    calls = {"n": 0}
+
+    class _Completions:
+        async def create(self, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("瞬断")
+            async def gen():
+                yield chunk("重试成功")
+            return gen()
+
+    c = object.__new__(ReasoningTolerantClient)
+    c._client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions()))
+    out = asyncio.run(c._stream_call({"model": "m"}))
+    assert calls["n"] == 2
+    assert out.message.content == "重试成功"
+
+
+def test_stream_no_retry_after_partial_output(tmp_path: Path):
+    """已发过分片 → 不重试（重发会让前端正文重复），异常照抛给引擎记 run_end。"""
+    from types import SimpleNamespace
+
+    import pytest
+
+    from agent.talk import ReasoningTolerantClient
+
+    def chunk(text):
+        d = SimpleNamespace(reasoning_content=None, reasoning=None,
+                            content=text, tool_calls=None)
+        return SimpleNamespace(usage=None, choices=[SimpleNamespace(delta=d)])
+
+    calls = {"n": 0}
+
+    class _Completions:
+        async def create(self, **kw):
+            calls["n"] += 1
+            async def gen():
+                yield chunk("半句话")
+                raise ConnectionError("中途断")
+            return gen()
+
+    c = object.__new__(ReasoningTolerantClient)
+    c._client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions()))
+    with pytest.raises(ConnectionError):
+        asyncio.run(c._stream_call({"model": "m"}, on_delta=lambda d: None))
+    assert calls["n"] == 1

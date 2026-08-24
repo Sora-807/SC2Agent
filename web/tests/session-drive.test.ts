@@ -45,8 +45,20 @@ describe("会话区纪律（2026-08-22 十四轮起：session-store + StartCard 
     expect(store).not.toContain("window.confirm");
   });
 
-  it("真机两段式确认在 StartCard，收尾入口在 ModeBar（按驱动语义命名）", () => {
-    expect(card).toContain("再点一次 · 确认启动 SC2");
+  it("开启游戏收敛为两模式（2026-08-23 用户拍板）：正常/仿真 + 仿真倍数", () => {
+    expect(card).toContain("正常模式");
+    expect(card).toContain("仿真模式");
+    expect(card).toContain("快进倍数");
+    expect(store).toContain('gameMode: "normal" | "fast"');
+    expect(store).toContain('mode: gameMode');            // 启动带模式（driver 恒 sc2）
+    // 仿真会话运行中：ModeBar 有即时变速（快进倍数），不重启
+    const bar = code("shell/ModeBar.tsx");
+    expect(bar).toContain("changeGameSpeed");
+    expect(bar).toContain("最快");
+  });
+
+  it("开启游戏两段式确认在 StartCard，收尾入口在 ModeBar（按驱动语义命名）", () => {
+    expect(card).toContain("再点一次 · 确认开启游戏");
     expect(code("shell/ModeBar.tsx")).toContain("结束会话");
   });
 

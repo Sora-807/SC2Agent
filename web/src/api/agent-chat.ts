@@ -12,11 +12,27 @@ export interface ChatMessage {
   text: string;
   /** epoch 秒（对话时间，不是游戏时间） */
   at: number;
-  /** agent 消息可选：本轮可见过程（工具调用 + 思考） */
+  /** user 消息可选：跟随提醒（对局未结束系统注入的轮输入）——渲染成系统条，
+   *  不冒充用户气泡（§0.52 用户拍板） */
+  nudge?: boolean;
+  /** user 消息可选：轮内插话 —— 已按真实时序进下一条 agent 消息的 segments，
+   *  独立条目只喂 LLM（_seed_history），前端渲染时跳过（A 批） */
+  interjection?: boolean;
+  /** agent 消息可选：本轮可见过程（工具调用 + 思考）—— 旧两段式，segments 的兜底 */
   steps?: ChatStep[];
+  /** agent 消息可选：本轮交错时间线（A 批）—— 正文/思考/工具/插话按真实顺序，
+   *  工具间正文不再被吞；有它优先于 steps+text 渲染 */
+  segments?: ChatSegment[];
   /** agent 消息可选：本轮落盘的改动（写钩子/自动应用提案收集，轮末随消息进历史） */
   changes?: ChatChange[];
 }
+
+/** 轮内时间线的最小段（A 批）：与后端 talk._round_segments 同形 */
+export type ChatSegment =
+  | { kind: "text"; text: string }
+  | { kind: "reasoning"; text: string }
+  | { kind: "tool"; tool: string; args: string; preview: string; duration_ms: number }
+  | { kind: "user"; text: string };
 
 /** 一条成功落盘的改动 —— 聊天里渲染成可点击的跳转 chip */
 export interface ChatChange {
@@ -53,6 +69,31 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const getChat = (): Promise<ChatState> => call("/api/agent/chat");
+
+/** 轮内插话：顾问运行中随时插话（sleep 早醒 / 工具结果捎带）。
+ *  queued=false = 当前没有进行中的轮（正常发送即可）。 */
+export async function interjectChat(text: string): Promise<{ queued: boolean; reason?: string }> {
+  try {
+    const res = await fetch(new URL("/api/agent/chat/interject", API_BASE), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) return { queued: false, reason: `后端返回 ${res.status}` };
+    return (await res.json()) as { queued: boolean; reason?: string };
+  } catch (err) {
+    return { queued: false, reason: "连不上后端：" + (err as Error).message };
+  }
+}
+
+/** 斜杠指令（2026-08-24 首批只有 clean）：清空对话上下文，记忆文件保留。 */
+export async function cleanChat(): Promise<boolean> {
+  try {
+    const res = await fetch(new URL("/api/agent/chat/clean", API_BASE), { method: "POST" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export const sayChat = (text: string): Promise<{ reply: string; messages: ChatMessage[] }> =>
   call("/api/agent/chat", {

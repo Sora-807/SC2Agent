@@ -38,27 +38,44 @@ class BuildFlightsMixin:
                          if u.owner is Owner.SELF and u.type_name == name)
 
     def _confirm_build(self, flight: dict, gs: GameState) -> str:
-        """在途建造：started（实体出现）/ failed（放置失败或超时 → 转重试）/ waiting。
+        """在途建造：started（建筑**完工**）/ failed（放置失败/超时/实体消失 → 转重试）/ waiting。
 
         真机教训（ops check）：SC2 对非法放置位静默丢弃命令——实体不出现、
         builder 的 build order 消失。以此作为失败信号换候选位重试。
+        §0.53 修正：实体出现 ≠ 完工（SC2 放置即出 0% 实体，SCV 还要盖 build_time
+        秒）—— 提前释放征用会让维持器立刻把 SCV 派回采矿、顶掉建造单，0% 建筑
+        被弃（真机两次补给站都这么死的）。征用握到 build_progress>=1 才放。
         caller 管理 flights 列表，本方法只返回状态（不 pop）。
         """
         flight["frames"] += 1
+        # 已锁定实体：等它盖完；消失（被拆/弃建 Decay 死）→ 转重试
+        etag = flight.get("entity_tag")
+        if etag is not None:
+            ent = next((u for u in gs.units if u.tag == etag), None)
+            if ent is None:
+                flight["entity_tag"] = None
+                flight["builder"] = None
+                return "failed"
+            if ent.build_progress >= 1.0:
+                return "started"
+            return "waiting"
         new_entities = self._type_entity_tags(gs, flight["type"]) - flight["seen_tags"]
         if new_entities:
             expect = flight.get("expect_pos")
             if expect is None:
-                # 挂件：无放置位，按类型计数确认
-                return "started"
-            radius2 = flight.get("radius", 1.5) ** 2
-            matched = any(
-                u.tag in new_entities
-                and (u.position.x - expect.x) ** 2 + (u.position.y - expect.y) ** 2 <= radius2
-                for u in gs.units
-            )
-            if matched:
-                return "started"
+                # 挂件：无放置位，按类型计数确认（任一新实体 → 等它盖完）
+                ent = next((u for u in gs.units if u.tag in new_entities), None)
+            else:
+                radius2 = flight.get("radius", 1.5) ** 2
+                ent = next((u for u in gs.units
+                            if u.tag in new_entities
+                            and (u.position.x - expect.x) ** 2
+                            + (u.position.y - expect.y) ** 2 <= radius2), None)
+            if ent is not None:
+                if ent.build_progress >= 1.0:
+                    return "started"
+                flight["entity_tag"] = ent.tag   # 锁定 → 后续帧按进度判
+                return "waiting"
             # 类型计数误报（同类型其他在途实体晚到）→ 不算，继续等本放置位实体
         name = self._catalog.burnysc2_name_for(flight["type"])
         builder = next((u for u in gs.units if u.tag == flight["builder"]), None)
@@ -110,7 +127,7 @@ class BuildFlightsMixin:
             self._release_flight(flight)
             return False
         res = check_build(gs, self._catalog, head.type, pos)
-        builder = self._pick_builder(gs)
+        builder = self._pick_builder(gs, near=pos)
         if not res.ok or builder is None:
             return True  # 资源不够/没工兵：flight 保持 builder=None，下帧继续重试
         self._emit(
@@ -249,7 +266,7 @@ class BuildFlightsMixin:
             self._drop(head, f"气矿放置失败：气井候选耗尽（已试 {sorted(tried)}）")
             self._release_flight(flight)
             return False
-        builder = self._pick_builder(gs)
+        builder = self._pick_builder(gs, near=geyser.position)
         if not res.ok or builder is None:
             # 资源不够 / 没工兵：保持 builder=None，下帧继续重试（原因进 flight，便于观测）
             flight["last_wait"] = self._why(res, "无空闲 SCV 可派去建气矿")

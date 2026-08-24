@@ -14,6 +14,7 @@ export function StartCard() {
   const { info, mapPlans, mapPlanId, setMapPlanId,
           strategies, strategyId, setStrategyId,
           loadouts, loadoutId, setLoadoutId,
+          gameMode, setGameMode, gameSpeed, setGameSpeed,
           confirming, start } = useSessionStore();
 
   if (!api.ok) {
@@ -55,6 +56,38 @@ export function StartCard() {
                   {l.title_zh}
                 </option>
               ))}
+            </select>
+          </label>
+        )}
+
+        {/* 开启游戏的模式（2026-08-23 收敛）：正常=实时可见；仿真=快进看结果 */}
+        <div className="mb-3 flex overflow-hidden rounded-lg border border-l1 text-label">
+          <button
+            className={"flex-1 px-2 py-1.5 " + (gameMode === "normal"
+              ? "bg-select font-semibold text-strong" : "text-dim hover:bg-raised")}
+            title="正常模式：游戏窗口可见，按真实流速进行 —— 你在旁边看/玩的时候用"
+            onClick={() => setGameMode("normal")}
+          >正常模式</button>
+          <button
+            className={"flex-1 px-2 py-1.5 " + (gameMode === "fast"
+              ? "bg-select font-semibold text-strong" : "text-dim hover:bg-raised")}
+            title="仿真模式：同样是真游戏，快进跑完看实际结果（agent 验证也用它）；倍数可先选、跑起来也能改"
+            onClick={() => setGameMode("fast")}
+          >仿真模式</button>
+        </div>
+        {gameMode === "fast" && (
+          <label className="mb-3 flex items-center gap-2">
+            <span className={T.label + " text-dim"}>快进倍数</span>
+            <select
+              value={String(gameSpeed)}
+              onChange={(e) => setGameSpeed(Number(e.target.value))}
+              className="min-w-0 flex-1 rounded border border-l2 bg-inset px-2 py-1 text-label"
+              title="仿真模式的推进速度；开起来之后顶栏还能随时改"
+            >
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+              <option value="8">8×</option>
+              <option value="0">最快</option>
             </select>
           </label>
         )}
@@ -105,10 +138,10 @@ export function StartCard() {
           }
           title={confirming
             ? "再点一次才会启动（4 秒内不点自动还原）"
-            : "连真实 SC2：会启动一个 SC2 游戏进程（结束后用顶栏「结束会话」收尾）"}
+            : "开启一局真实 SC2（" + (gameMode === "fast" ? "仿真模式：快进看实际结果" : "正常模式：实时流速") + "）；结束后用顶栏「结束会话」收尾"}
           onClick={() => void start()}
         >
-          {confirming ? "再点一次 · 确认启动 SC2" : "启动真机（SC2）"}
+          {confirming ? "再点一次 · 确认开启游戏" : "开启游戏"}
         </button>
 
         {stateLine && (

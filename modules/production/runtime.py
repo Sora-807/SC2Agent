@@ -78,6 +78,12 @@ class ProductionRuntime(BuildFlightsMixin):
         # 队首阻塞可观测性（H1）：queue_name -> {item, reason, since, frames, warned}
         # 队首门控会冻结整条队列，必须能看见"卡在哪、卡多久"，否则就是静默失速。
         self.blocked: dict[str, dict] = {}
+        # 曾建成过的建筑类型 stable_id（E 批 2026-08-24）：TRAIN 阻塞在「缺产出建筑」时，
+        # 用它区分「被摧毁」（曾就绪、现在没了）和「还没建」—— 文案给 agent 的整改方向不同
+        self._ever_ready: set[str] = set()
+        # 在训记账（G3，rev 17）：emit 训练单时记开始时刻 —— SC2 订单不带进度，
+        # 复盘截断线左侧的"训练中部分条"全靠这本账 + catalog build_time
+        self._trainings: list[dict] = []
         self.stalls: list[tuple[QueueItem, str]] = []  # 失速告警（同一队首只报一次）
         self._block_reason: str = ""  # 最近一次门控失败原因（_block 写入，_note_block 读取）
         self._build_flights: dict[str, list[dict]] = {}  # queue_name -> [在途建造确认状态]（多并行）
@@ -248,6 +254,16 @@ class ProductionRuntime(BuildFlightsMixin):
 
     # ---- 读模型（B1）----
 
+    def _producer_ever_ready(self, rec: dict) -> bool | None:
+        """阻塞项的产出建筑「曾建成过吗」。只对 train 类阻塞有意义（E 批）。"""
+        if "产出建筑" not in (rec.get("reason") or ""):
+            return None
+        item = rec.get("item")
+        entry = self._catalog.by_stable_id(item.type) if item is not None else None
+        if entry is None or not entry.produced_by:
+            return None
+        return entry.produced_by in self._ever_ready
+
     def snapshot(self) -> dict:
         """生产运行时的显式只读快照（供 view / agent / 复盘录制）。
 
@@ -290,6 +306,9 @@ class ProductionRuntime(BuildFlightsMixin):
                     "since": rec["since"],
                     "frames": rec["frames"],
                     "warned": rec["warned"],
+                    # E 批：仅对「缺产出建筑」类阻塞有意义 —— True=曾建成（被摧毁），
+                    # False=从没建过（建造被卡/掉单）；None=其他原因
+                    "producer_ever_ready": self._producer_ever_ready(rec),
                 },
                 "items": items,
             })
@@ -315,6 +334,9 @@ class ProductionRuntime(BuildFlightsMixin):
         return {
             "queues": queues,
             "in_flight": in_flight,
+            # 在训条目（G3，rev 17）：开始时刻我们自己记（SC2 订单不带进度）
+            "training": [{"stable_id": t["type"], "producer_tag": t["producer_tag"],
+                          "started_at": t["started_at"]} for t in self._trainings],
             # dropped 目前不带时间戳（QueueItem 被丢时没有记 game_time）→ 帧里 at=None，
             # UI 显示"未知"而不是编一个时间（不静默）。要时间戳得在 _drop 处补记。
             "dropped": [
@@ -334,6 +356,28 @@ class ProductionRuntime(BuildFlightsMixin):
         self._frame_min = 0  # 帧账本（P3）：跨队列共享，drain 前重置
         self._frame_gas = 0
         self._frame_supply = 0
+        # E 批：记曾建成过的建筑类型（区分「缺产出建筑」= 被摧毁 还是 还没建）
+        for u in gs.units:
+            if u.owner is Owner.SELF and u.build_progress >= 1.0:
+                entry = self._catalog.by_burnysc2_name(
+                    self._catalog.normalize_burnysc2_name(u.type_name.upper()))
+                if entry is not None:
+                    self._ever_ready.add(entry.stable_id)
+        # G3：在训记账的淘汰 —— 产出建筑没了 = 完成/被取消；订单空**且已超训练时长**
+        # 才算完（emit 当帧到订单落地之间有间隙，离线世界也不保证 orders 非空）
+        by_tag = {u.tag: u for u in gs.units}
+        kept: list[dict] = []
+        for t in self._trainings:
+            u = by_tag.get(t["producer_tag"])
+            if u is None:
+                continue
+            if not u.orders:
+                entry = self._catalog.by_stable_id(t["type"])
+                dur = float(entry.build_time) if entry is not None else 30.0
+                if gs.game_time - t["started_at"] > dur:
+                    continue
+            kept.append(t)
+        self._trainings = kept
         for q in self._queues.values():
             self._drain(q, gs)
 
@@ -348,9 +392,10 @@ class ProductionRuntime(BuildFlightsMixin):
                     if outcome == "waiting":
                         still_pending.append(flight)
                     elif outcome == "started":
-                        self._release_flight(flight)  # 实体已出现 → 建造工回去采矿
+                        self._release_flight(flight)  # 建筑**完工**（§0.53：实体出现不算，
+                        # 要等 build_progress>=1）→ 建造工回去采矿
                     elif outcome == "failed":
-                        self._release_flight(flight)  # 命令没了 → 先放回，重试时再征用
+                        self._release_flight(flight)  # 命令没了/实体消失 → 先放回，重试时再征用
                         # _confirm_build 已设 builder=None；下帧再重试
                         # （不在本帧重试——避免同帧 failed→retry→failed 循环）
                         still_pending.append(flight)
@@ -467,6 +512,8 @@ class ProductionRuntime(BuildFlightsMixin):
         if producer is None:
             return self._block(f"无就绪产出建筑（{head.type} 的产出建筑未完工/训练槽满）")
         self._emit([Emission("train", [producer.tag], {"type": head.type})], gs.seq)
+        self._trainings.append({"type": head.type, "producer_tag": producer.tag,
+                                "started_at": gs.game_time})   # G3：进度自己记账
         self._charge(head.type)  # P3
         return "emitted"
 
@@ -498,9 +545,9 @@ class ProductionRuntime(BuildFlightsMixin):
         res = check_build(gs, self._catalog, head.type, pos)
         if not res.ok:
             return self._block(self._why(res, f"build {head.type} 门控不通过"))
-        builder = self._pick_builder(gs)
+        builder = self._pick_builder(gs, near=pos)
         if builder is None:
-            return self._block("无空闲 SCV 可派去建造")
+            return self._block(self._no_builder_reason())
         self._emit(
             [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
             gs.seq,
@@ -544,15 +591,45 @@ class ProductionRuntime(BuildFlightsMixin):
                 return u
         return None
 
-    def _pick_builder(self, gs: GameState):
+    def _pick_builder(self, gs: GameState, near: Point2 | None = None):
+        """选建造工兵（2026-08-24 用户拍板：**就近抽采矿 SCV**）。
+
+        - `near`（建造点）给了 → 选离它最近的候选 —— 采矿中的 SCV 就是被抽的对象，
+          建造期间征用保护 + 维持器的外来订单规则都不动它；
+          建完（flight 确认/取消 → 征用释放 → 订单清空）维持器自动派回采矿。
+        - 没给 near（无坐标的路径）→ 退回旧规则：优先真空闲，否则任一候选。
+        - 诊断：None 时 caller 的阻塞原因带上计数（场上几个/忙几个/征用几个），
+          「缺少建造者」不再是一句猜不出原因的话。
+        """
         names = {e.burnysc2_name for e in self._catalog.where(role="worker")}
         reserved = self._reservations.tags() if self._reservations is not None else frozenset()
-        candidates = [u for u in gs.units
-                      if u.owner is Owner.SELF and u.type_name in names
-                      and u.tag not in self._frame_busy  # 本帧已被命令的工兵不重复用
+        pool = [u for u in gs.units
+                if u.owner is Owner.SELF and u.type_name in names]
+        candidates = [u for u in pool
+                      if u.tag not in self._frame_busy  # 本帧已被命令的工兵不重复用
                       and u.tag not in reserved]  # 已在给别的 flight 盖房子的不抢（ADR-0030 D3.3）
+        # 诊断三元组（§0.52 D 批）：总数 / 建造征用 / 本帧已令 ——「无可用 SCV」的
+        # 阻塞与告警带上它，用户/agent 才看得出是谁占着（截图事故里裸喊了整场）
+        self._builder_diag = (
+            len(pool),
+            sum(1 for u in pool if u.tag in reserved),
+            sum(1 for u in pool if u.tag in self._frame_busy),
+        )
+        if not candidates:
+            return None
+        if near is not None:
+            return min(candidates,
+                       key=lambda u: (u.position.x - near.x) ** 2 + (u.position.y - near.y) ** 2)
         idle = [u for u in candidates if not u.orders]  # 优先空闲工兵
-        return (idle or candidates or [None])[0]
+        return (idle or candidates)[0]
+
+    def _no_builder_reason(self) -> str:
+        """「缺少建造者」的如实版本：带上分类计数，让 agent/用户看得出是谁占着。"""
+        total, held, busy = getattr(self, "_builder_diag", (0, 0, 0))
+        if not total:
+            return "无可用 SCV 去建造（场上工兵 0 —— 一个都没有，先造/保工兵）"
+        return (f"无可用 SCV 去建造（场上工兵 {total}：建造征用 {held}、本帧已令 {busy}"
+                "—— 等在途建造完工/下一帧再试）")
 
     # ---- placement 解析（薄包装；实现在 production/placement.py 纯函数）----
 

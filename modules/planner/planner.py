@@ -43,7 +43,8 @@ class Planner:
         self._tech_units = {e.stable_id for e in catalog.where() if is_tech_unit(e, catalog)}
 
     def project(self, gs: GameState, seq: list, until: float, *,
-                until_complete: bool = False, tail: float = 0.0) -> ProjectionCurve:
+                until_complete: bool = False, tail: float = 0.0,
+                auto_supply: bool = False) -> ProjectionCurve:
         """从 gs 快照 + production_sequence 投影到 until 秒。
 
         until_complete（2026-08-22 二十三轮用户拍板）：跑到**队列完成**为止 ——
@@ -54,6 +55,10 @@ class Planner:
         tail（2026-08-23 二十七轮用户拍板）：队列跑空后再多跑 N 秒 —— 曲线末端
         留一小段尾巴（最后一个事件完成后还能看到经济的余势），仿真范围与
         「最后事件 + 30s」对齐，前端右缘钳制才有个自然的数据末端。
+
+        auto_supply（H 批 2026-08-24 用户拍板：**默认关**）：供给守卫只在显式
+        要求时插 depot —— 投影不再替用户补供给：卡人口要真实浮出（配合
+        audit_queue 的体检建议手动插），「一切尽可能手动」。
         """
         st = derive_from(gs, self._catalog)
         queue = expand(seq) if seq else []
@@ -82,8 +87,9 @@ class Planner:
             if done:
                 self._apply_completed(st, done, curve)
                 st.in_flight = [f for f in st.in_flight if f.progress < f.build_time]
-            # 3b. 供给守卫：队首 Train 即将卡人口 → 自动插入补给站（尽可能晚）
-            self._supply_guard(queue, st, curve)
+            # 3b. 供给守卫（H 批：默认关 —— 只有显式 auto_supply 才插 depot）
+            if auto_supply:
+                self._supply_guard(queue, st, curve)
             # 4. 消费队列（可行性门控）
             while queue:
                 ok, reason, wait = self._feasible(queue[0], st)

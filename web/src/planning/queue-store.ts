@@ -101,7 +101,13 @@ export const useQueueStore = create<QueueStore>((set, get) => ({
 
   async refresh() {
     const rows = await listPlans();
-    set({ plans: rows });
+    // 地图规划引用清单一起刷（2026-08-24 用户报「不刷新看不到最新规划」：
+    // agent 走 REST 写的规划，前端清单此前只在 initOnce 拉一次）
+    try {
+      set({ plans: rows, refPlans: await listMapPlans() });
+    } catch {
+      set({ plans: rows });   // 引用清单失败不致命，保规划清单更新
+    }
     return rows;
   },
 

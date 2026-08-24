@@ -11,7 +11,6 @@ import { sendCommand, type CommandResult } from "../api/commands";
 import type { ProjectionFrame } from "../contract";
 import { createPlan, savePlan } from "../api/plans";
 import { ProjectionBoard } from "../charts/ProjectionBoard";
-import { useAccumulatedProjection } from "../charts/use-accumulated";
 import { packBars } from "../charts/gantt-data";
 import { writeGate } from "../shell/mode";
 import { Card, Empty, fmtTime } from "../shell/ui";
@@ -160,25 +159,23 @@ function CommandBanner(props: { last: CommandResult | null }) {
   );
 }
 
-/** 整局操作序列（二十四轮用户定义的生产队列）：已执行 = 回放累积的开工→完成
- *  配对（拖时间轴不重排）；待执行 = 当前帧队列里还没轮到的项（随回放推进缩短）。
- *  向后大幅拖动时间轴会重置累积（回放数据没有全量历史，只能向前累积）。 */
+/** 操作序列（复盘改版 2026-08-24：F17 累积退役）：上段 = 当前帧投影 [T, +horizon]
+ *  排出的操作；下段灰字 = 当前帧队列里还没轮到的项。换帧即整体重排，无历史叠加。 */
 function WholeOpsList(props: {
   projection: ProjectionFrame;
   production: ReturnType<typeof useFrames.getState>["production"];
   zhOf: (id: string | null) => string;
 }) {
-  const merged = useAccumulatedProjection(props.projection);
   const ops = useMemo(
-    () => packBars(merged).bars.slice().sort((a, b) => a.from - b.from),
-    [merged]);
+    () => packBars(props.projection).bars.slice().sort((a, b) => a.from - b.from),
+    [props.projection]);
   const pending = useMemo(() => {
     const rows = (props.production?.queues ?? []).flatMap((q) =>
       q.items.map((it) => ({ index: it.index, op: it.op, type: it.stable_id, count: it.count, task: it.task })));
     return rows.sort((a, b) => a.index - b.index);
   }, [props.production]);
   if (ops.length === 0 && pending.length === 0) {
-    return <Empty text="还没有操作（回放推进/seek 后累积）" />;
+    return <Empty text="还没有操作（当前帧投影没有开工/完成事件）" />;
   }
   return (
     <div>
@@ -218,8 +215,7 @@ function WholeOpsList(props: {
         </tbody>
       </table>
       <div className="mt-1 text-note text-ghost">
-        上段 = 已执行（回放累积，拖时间轴不重排）；下段灰字 = 此后待执行。
-        向后大幅拖时间轴会重置累积（回放没有全量历史，只能向前累积）。
+        上段 = 当前帧投影排出的操作（T 之后，换帧重排不叠加）；下段灰字 = 此后待执行。
       </div>
     </div>
   );
