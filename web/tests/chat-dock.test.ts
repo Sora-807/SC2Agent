@@ -156,8 +156,10 @@ describe("ChatDock：真流式（2026-08-22 十五轮，接 BaseAgent start_stre
     expect(c).toContain("m.segments");
     expect(c).toMatch(/m\.segments\s*\?\s*m\.segments\.map/);
     expect(c).toContain("<UserBubble");
-    // 插话 append 进 live 时间线末尾 —— 不再 setMessages（那是「跑到最上面」的根因）
-    expect(c).toContain("appendUserEntry(l, text)");
+    // 插话进排队条（2026-08-25 用户拍板）：不再插 live 时间线/对话流 ——
+    // 输入框上方一行省略显示；轮末服务端 segments 内嵌（记录不丢）+ 排队列清空
+    expect(c).toContain("setPendingSays((q) => [...q, text])");
+    expect(c).not.toContain("appendUserEntry(l, text)");
     // 插话独立历史条目只喂 LLM：下一条 agent 消息带 segments 时跳过，不重复显示
     expect(c).toMatch(/m\.interjection && messages\[i \+ 1\]\?\.segments/);
     expect(code(client)).toContain("segments?: ChatSegment[]");

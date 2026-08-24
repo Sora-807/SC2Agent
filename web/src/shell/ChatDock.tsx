@@ -19,7 +19,7 @@ import { useFrames } from "../store/frames";
 import { useQueueStore } from "../planning/queue-store";
 import { Markdown } from "./markdown";
 import { chatScroll, isNearBottom } from "./chat-scroll";
-import { applyLiveEvent, appendUserEntry, type LiveEntry } from "./chat-live";
+import { applyLiveEvent, type LiveEntry } from "./chat-live";
 
 /** 斜杠指令（2026-08-24 首批只有 clean）：输入 / 弹建议，回车/点选执行 —— 不发给 LLM */
 const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
@@ -300,6 +300,10 @@ export function ChatDock() {
   const [chatErr, setChatErr] = useState<string | null>(null);
   /** 流式中的当前轮：按到达顺序的时间线（round 到达后由服务端真源替换） */
   const [live, setLive] = useState<LiveEntry[] | null>(null);
+  /** 轮内插话的排队条（2026-08-25 用户拍板）：不插进对话流 —— 输入框上方一行
+   *  省略显示「排队中」；轮末服务端真源会把插话按真实时序内嵌进 agent 消息
+   *  segments（记录不丢），排队列清空 */
+  const [pendingSays, setPendingSays] = useState<string[]>([]);
   // ---- 滚动跟随（chat-scroll.ts 的转移表；用户往上拨 = 钉住阅读位 + 显示回底浮钮）----
   const listRef = useRef<HTMLDivElement | null>(null);
   const [follow, setFollowState] = useState(true);
@@ -383,13 +387,13 @@ export function ChatDock() {
     if (!text) return;
     if (runSlash(text)) return;
     if (busy) {
-      // 顾问运行中 = 插话（2026-08-24）：立刻排进队列（sleep 早醒 / 工具结果捎带），
-      // 本地即显（A 批：落 live 时间线末尾 —— 刚发的话显示在已流出内容**下方**，
-      // 不再 append 进 messages 造成「用户消息跑到最上面」的双槽错位）
+      // 顾问运行中 = 插话（2026-08-24）：立刻排进队列（sleep 早醒 / 工具结果捎带）。
+      // 显示走输入框上方排队条（2026-08-25 用户拍板：「气泡直接插进对话流」不对，
+      // 要的是排队感）；轮末服务端真源把插话内嵌进 agent segments —— 双向不丢记录
       void (async () => {
         const r = await interjectChat(text);
         if (r.queued) {
-          setLive((l) => (l ? appendUserEntry(l, text) : l));
+          setPendingSays((q) => [...q, text]);
           setInput("");
         } else {
           setChatErr("插话没排上（" + (r.reason ?? "刚好在轮间隙") + "）—— 再按一次发送");
@@ -408,9 +412,11 @@ export function ChatDock() {
         if (ev.error) {
           setChatErr(ev.error);   // G7：失败理由原样显形
           setLive(null);
+          setPendingSays([]);
         } else if (ev.messages) {
           setMessages(ev.messages);
           setLive(null);
+          setPendingSays([]);   // 插话已内嵌进 agent segments，排队条清空
           // 改动落盘 → 清单可能过期（agent 走 REST 写，前端清单不会自己更新 ——
           // 2026-08-24 用户报「不刷新看不到最新规划」）：轮末按改动域重拉
           const areas = new Set((ev.changes ?? []).map((c) => c.area));
@@ -428,7 +434,10 @@ export function ChatDock() {
       setChatErr(err.message);
       setLive(null);
       setMessages((m) => [...m, { role: "agent", text: `（发送失败：${err.message}）`, at: Date.now() / 1000 }]);
-    }).finally(() => setBusy(false));
+    }).finally(() => {
+      setBusy(false);
+      setPendingSays([]);   // 流断/异常兜底：排队列不允许跨轮残留
+    });
   };
 
   const inputPlaceholder = !api.ok
@@ -484,6 +493,21 @@ export function ChatDock() {
       </div>
 
       <div className="border-t border-l1 p-2">
+        {pendingSays.length > 0 && (
+          <div className="mb-1.5 space-y-1">
+            {pendingSays.map((t, i) => (
+              <div key={i}
+                   className="flex items-center gap-2 rounded-lg border border-l2 bg-inset px-2 py-1 text-note"
+                   title={t}>
+                <span className="shrink-0 text-blue-fg">
+                  {pendingSays.length > 1 ? `排队 ${i + 1}/${pendingSays.length}` : "排队中"}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-dim">{t}</span>
+                <span className="shrink-0 text-ghost">下一个检查点送达</span>
+              </div>
+            ))}
+          </div>
+        )}
         {input.startsWith("/") && (
           <div className="mb-1 rounded-lg border border-l1 bg-inset px-2 py-1 text-note">
             {SLASH_COMMANDS
