@@ -25,10 +25,12 @@ def _basic_opening(params: dict):
 
 
 def _bio_tank_opening(params: dict):
-    """步坦协同开局 V2：农民优先 + 晚插补给 + 科技攀升 + 二矿 + 攻防升级。
+    """步坦协同开局 V3：农民优先 + 显式补给 + 科技攀升 + 二矿 + 攻防升级。
 
-    补给站由 planner supply_guard 自动插入（本模块不含 depot）——
-    卡人口时 / Build 缺 depot 前置时自动插，尽可能晚。
+    V3（2026-08-24）：**显式插 depot** —— V2 依赖 planner supply_guard 自动插入，
+    但 supply_guard 已按 PLAN-V2 D7 删除（诊断取代掩盖），模块没跟着改导致
+    12/13 人口死等（真机与干跑同款：只执行 1 个 SCV 后整队冻结）。
+    补给位仍取「尽可能晚」：只在即将卡人口的批次前插。
 
     设计原则：
     - 农民优先：每阶段间插 SCV 保持经济（scv_interleave 控制）
@@ -43,9 +45,12 @@ def _bio_tank_opening(params: dict):
     second_rax = bool(params.get("second_barracks", True))
     expansion = bool(params.get("expansion", True))
 
+    depot = Build("terran/supplydepot")
     ops: list = []
-    # Phase 1: 农民 + 兵营（supply_guard 自动插 depot 作 barracks 前置）
-    ops += [Train("terran/scv") for _ in range(n)]
+    # Phase 1: 农民 + 兵营（12/13 起步：第 1 个 SCV 后即插 depot，其余照训）
+    ops.append(Train("terran/scv"))
+    ops.append(depot)                            # 13 → 21
+    ops += [Train("terran/scv") for _ in range(n - 1)]
     ops.append(Build("terran/barracks"))
     ops += [Train("terran/scv") for _ in range(n)]
 
@@ -64,6 +69,7 @@ def _bio_tank_opening(params: dict):
     if second_rax:
         ops.append(Build("terran/reactor"))      # 兵营 #2 反应堆
     ops.append(Build("terran/engineeringbay"))
+    ops.append(depot)                            # 20/21 → 29（Phase 3 农民前）
     ops += [Train("terran/scv") for _ in range(n)]
 
     # Phase 4: 首批机枪 + 坦克科技 + 二矿 + 攻防升级
@@ -73,9 +79,11 @@ def _bio_tank_opening(params: dict):
         ops.append(Build("terran/commandcenter"))         # 二矿（71s 期间持续出兵）
     ops.append(Research("terran/infantryweapons1"))
 
-    # Phase 5: 持续出兵 + 坦克 + 装甲升级
+    # Phase 5: 持续出兵 + 坦克 + 装甲升级（机枪/坦克批次前补足供给）
     ops += [Train("terran/scv") for _ in range(4)]       # 二矿完工后多出农民
+    ops.append(depot)                            # 31/42 → 50
     ops += [Train("terran/marine") for _ in range(marine_target - 4)]
+    ops += [depot, depot]                        # 47/50 → 66（坦克 ×4 吃 12 人口）
     ops += [Train("terran/siegetank") for _ in range(tank_count)]
     ops.append(Build("terran/armory"))
     ops.append(Research("terran/infantryarmor1"))

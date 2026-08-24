@@ -103,6 +103,14 @@ class PlanStore:
         if DEFAULT_PLAN_ID not in self._plans:
             self._plans[DEFAULT_PLAN_ID] = self._default_plan()
             self._write(self._plans[DEFAULT_PLAN_ID])
+        else:
+            # 锁定预设自愈升级（bio_tank V3 修供给死等，2026-08-24）：锁定件用户
+            # 不可改 → 磁盘内容与新版种子不一致 = 旧种子残留，安全覆盖。
+            fresh = self._default_plan()
+            cur = self._plans[DEFAULT_PLAN_ID]
+            if cur.locked and [(i.op, i.type, i.count) for i in cur.queue] !=                     [(i.op, i.type, i.count) for i in fresh.queue]:
+                self._plans[DEFAULT_PLAN_ID] = fresh
+                self._write(fresh)
 
     # ---- 默认规划 ----
 

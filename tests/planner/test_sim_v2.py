@@ -170,3 +170,26 @@ def test_project_accepts_initial_state():
     # 跑同队列也是 skipped，所以再验 minerals 起点直接来自 doc）
     curve = p.project(_gs(), ops.ops, 10, initial=st)
     assert curve.points[0].minerals >= 500
+
+
+def test_bio_tank_module_completes_without_supply_deadlock():
+    """2026-08-24 真机/干跑双卡死回归：模块 V2 依赖已删除的 supply_guard，
+    12/13 人口下整队死等（只执行 1 个 SCV）。V3 显式插 depot 后必须全程完成。"""
+    from collections import Counter
+
+    from planner.build_order import ProductionModuleInstance, expand
+    from planner.opening import opening_game_state
+
+    ops = expand([ProductionModuleInstance("m0", "bio_tank_opening", 1, {})])
+    assert sum(1 for o in ops if getattr(o, "type", None) == "terran/supplydepot") >= 4, \
+        "V3 必须显式带补给站（supply_guard 已删，没人替它插）"
+    for i, o in enumerate(ops, 1):
+        o.uid = f"q{i:02d}"
+    curve = Planner(CAT).project(opening_game_state(CAT), ops, 120,
+                                 until_complete=True, tail=30)
+    dist = Counter(q["status"] for q in curve.queue_status)
+    assert dist.get("skipped", 0) == 0 and dist.get("pending", 0) == 0, \
+        f"步坦协同开局必须全程可执行（V2 卡死事故的验收）: {dist}"
+    fs = curve.final_state
+    assert fs.supply_used >= 55 and fs.supply_cap >= 60   # 59/66 终态锚
+    assert fs.units.get("terran/marine", 0) >= 20 and fs.units.get("terran/siegetank", 0) >= 4

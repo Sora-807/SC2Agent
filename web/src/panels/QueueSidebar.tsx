@@ -138,17 +138,23 @@ export function QueueSidebar() {
         {st.msg && <div className="mt-1 text-label text-[color:var(--warn-fg)]">{st.msg}</div>}
       </Section>
 
-      {/* 前瞻警报：与实时风险面板同一数据模型（后端 AlertView）+ 同一渲染组件 */}
-      {st.sim && (st.sim.alerts.length > 0 || st.sim.skipped.length > 0) && (
-        <Section title={"前瞻警报（" + st.sim.alerts.length + "）"}>
-          <AlertsList alerts={st.sim.alerts} empty={<Empty text="没有卡点：规划全程可行" />} />
-          {st.sim.skipped.map((s, i) => (
-            <div key={"s" + i} className="text-label text-faint">
-              {s.op} 没进投影：{s.reason}
-            </div>
-          ))}
-        </Section>
-      )}
+      {/* 前瞻警报：与实时风险面板同一数据模型（后端 AlertView）+ 同一渲染组件。
+          打开规划即显示（baseSim = 打开时自动跑的对照干跑）；点过试算后以草稿结果为准 */}
+      {(() => {
+        const sim = st.sim ?? st.baseSim;
+        if (!sim || (sim.alerts.length === 0 && sim.skipped.length === 0)) return null;
+        const tag = st.sim ? "" : "（当前规划）";
+        return (
+          <Section title={"前瞻警报（" + sim.alerts.length + "）" + tag}>
+            <AlertsList alerts={sim.alerts} empty={<Empty text="没有卡点：规划全程可行" />} />
+            {sim.skipped.map((s, i) => (
+              <div key={"s" + i} className="text-label text-faint">
+                {s.op} 没进投影：{s.reason}
+              </div>
+            ))}
+          </Section>
+        );
+      })()}
     </div>
   );
 }
