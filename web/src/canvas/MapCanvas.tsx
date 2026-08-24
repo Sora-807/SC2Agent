@@ -16,7 +16,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogStatic, EconomyFrame, MapStatic, WorldFrame, ProductionFrame } from "../contract";
-import { slotTl, type MarkView, type SlotView } from "../planning/map-draft";
+import { snapToCellCenter, slotTl, type MarkView, type SlotView } from "../planning/map-draft";
 import { bakeGrid, bakeTerrain, decodeGrid, regionColor, terrainClassifier, terrainKindZh, type Palette } from "./grid";
 import { clusterUnits } from "./cluster";
 import { ALPHA_BUDGET, COLOR, LOD, SHAPE, canvasBase, fontCss, ownerColor, slotColor } from "./theme";
@@ -326,13 +326,13 @@ export function MapCanvas(props: {
           if (d.mode === "slot") {
             const r = e.currentTarget.getBoundingClientRect();
             const [wx, wy] = screenToWorld(vp!, e.clientX - r.left, e.clientY - r.top);
-            // 吸附格点（footprint 整数格，与落点 previewPlacement 同规则）+ bump 重绘：
-            // ghost 是 ref 直改，绘制循环空转跳过（painted===dirty）不重画就永远冻在起点
-            const meta = (props.draggableSlots ?? []).find((x) => x.name === d.slotName);
-            const gs = meta?.size ?? 2;
+            // 吸附 = snapToCellCenter（与落点 previewPlacement **同一份公式**：
+            // 曾自推 round(wx-size/2)+size/2，偶数尺寸(2×2)在小数<0.5 处与
+            // floor+0.5+ceil 差一格 —— ghost 显示一格、实际落点右上偏一格，用户实测）
+            // + bump 重绘：ghost 是 ref 直改，空转跳过不重画就冻在起点
             slotGhost.current = {
               name: d.slotName!,
-              pos: [Math.round(wx - gs / 2) + gs / 2, Math.round(wy - gs / 2) + gs / 2],
+              pos: snapToCellCenter([wx, wy]),
             };
             dirty.current += 1;
             return;   // 槽位拖动不吃 pan
