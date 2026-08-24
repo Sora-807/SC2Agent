@@ -178,7 +178,8 @@ class MapsArea(ReadOnlyArea):
 
     prefix = "maps/"
     _REGION_PATH = re.compile(
-        r"maps/(?P<src>[\w.-]+)/(?P<x1>-?\d+)_(?P<y1>-?\d+)_(?P<x2>-?\d+)_(?P<y2>-?\d+)(?:_s(?P<step>\d+))?\.md")
+        r"maps/(?P<src>[\w.-]+)(?:@(?P<side>bl|tr))?/"
+        r"(?P<x1>-?\d+)_(?P<y1>-?\d+)_(?P<x2>-?\d+)_(?P<y2>-?\d+)(?:_s(?P<step>\d+))?\.md")
 
     def __init__(self, client, map_plans_dir: Path) -> None:
         self._client = client
@@ -241,12 +242,26 @@ class MapsArea(ReadOnlyArea):
             from game.catalog import load_all
 
             self._catalog = load_all()
-        # 双分支规划（批 2）：文件路径没有分支位 —— 默认渲染 bl 侧（说明行标注）
+        # 双分支规划（批 2 + 本修）：显式 @bl/@tr 选侧；缺省按 bbox 自动选
+        # （中心 x ≥ 半场 → tr）—— 用哪侧的坐标框选就看哪侧，不再永远 bl。
         spawns = doc.get("spawns") or {}
         if spawns:
-            bl = spawns.get("bl") or {}
-            slots = bl.get("build_slots") or {}
-            note = (note + "；" if note else "") + "双分支规划默认显示 bl 侧"
+            from tactical_map.region_view import load_placeable
+
+            (w, _h), _ = load_placeable()
+            cx = (int(m["x1"]) + int(m["x2"])) / 2
+            side = m["side"] or ("tr" if cx >= w / 2 else "bl")
+            branch = spawns.get(side)
+            if branch is None:
+                other = "bl" if side == "tr" else "tr"
+                branch = spawns.get(other)
+                if branch is None:
+                    raise WorkspaceError(f"地图规划 {m['src']!r} 没有 {side} 侧分支")
+                side = other
+                note = (note + "；" if note else "") + f"该规划没有所选侧，回落 {side} 侧"
+            slots = branch.get("build_slots") or {}
+            how = "指定" if m["side"] else "bbox 自动"
+            note = (note + "；" if note else "") + f"双分支规划显示 {side} 侧（{how}；显式用 maps/<源>@bl|tr/…）"
         else:
             slots = doc.get("build_slots") or {}
         try:
@@ -278,8 +293,8 @@ class MapsArea(ReadOnlyArea):
                 for r in rows]
         out += ["", "示例：`read maps/live/38_27_52_41_s2.md` —— 主矿补给站方阵 + 工厂区。",
                 "`default` 是空白预设（无槽位，只有地形/预设点）；`layout` 是出厂校准布局。",
-                "批 2 起规划是双分支（bl+tr 一份文件）；文件渲染默认取 bl 侧 —— "
-                "对局的实时图层用 observe（按实际出生端实例化）。"]
+                "批 2 起规划是双分支（bl+tr 一份文件）；文件渲染按 bbox 自动选侧"
+                "（中心 x ≥ 半场 → tr），也可显式 `maps/<源>@bl|tr/…` 指定。"]
         return "\n".join(out) + "\n"
 
 

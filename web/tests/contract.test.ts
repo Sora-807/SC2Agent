@@ -198,3 +198,14 @@ describe("契约", () => {
     }
   });
 });
+
+it("alerts kind 开放字符串：新词表（enemy_contact/supply_capped/placement_collision…）不拒整局", () => {
+  const env = { topic: "frame/alerts", seq: 1, game_time: 1, wall_ms: 0, rev: REV,
+    payload: { alerts: [
+      { id: "a1", kind: "enemy_contact", severity: "warn", at: 1, eta: null,
+        text_zh: "敌方踪迹", source: "session", payload: { distinct: 3 } },
+      { id: "a2", kind: "placement_collision", severity: "error", at: 1, eta: null,
+        text_zh: "放置失败", source: "projection", payload: {} },
+    ] } };
+  expect(parseEnvelope(env).payload).toBeDefined();
+});

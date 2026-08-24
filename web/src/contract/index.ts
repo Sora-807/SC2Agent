@@ -717,15 +717,10 @@ export const zAlertsFrame = z.object({
   alerts: z.array(
     z.object({
       id: z.string(),
-      kind: z.enum([
-        "supply_block",
-        "mineral_float",
-        "gas_float",
-        "line_idle",
-        "prereq_missing",
-        "plan_drift",
-        "queue_blocked",
-      ]),
+      /** 开放字符串（rev 5 先例）：kind 词表由后端持续扩充（enemy_contact/
+       *  supply_capped/assembly_gap/plan_stalled/placement_collision…），闭集会
+       *  把新录像整局拒掉（复盘「第 N 行不合契约」事故）。前端只透传展示。 */
+      kind: z.string(),
       severity: z.enum(["info", "warn", "error"]),
       at: z.number(),
       eta: z.number().nullable(),

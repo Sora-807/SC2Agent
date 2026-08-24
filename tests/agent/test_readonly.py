@@ -207,3 +207,43 @@ def test_workspace_snapshot_excludes_readonly_and_rest(tmp_path: Path):
                                map_plans_dir=_map_plans_dir(tmp_path)))
     snap = ws.snapshot()
     assert snap == {"memory/user-preferences.md": "偏好"}
+
+
+def _dual_dir(tmp_path: Path) -> Path:
+    d = tmp_path / "map-plans"
+    d.mkdir(exist_ok=True)
+    (d / "dual.yaml").write_text(
+        "id: dual\ntitle_zh: 双分支\nmap_name: LadderMap\n"
+        "spawns:\n"
+        "  bl:\n    origin: [48.5, 28.5]\n    anchor: [48.5, 28.5]\n"
+        "    build_slots:\n"
+        "      D1: {pos: [40.5, 32.5], size: 2, kind: supply}\n    pos_marks: {}\n"
+        "  tr:\n    origin: [131.5, 127.5]\n    anchor: [131.5, 127.5]\n"
+        "    build_slots:\n"
+        "      D1: {pos: [130.5, 106.5], size: 2, kind: supply}\n    pos_marks: {}\n",
+        encoding="utf-8")
+    return d
+
+
+def test_maps_area_picks_side_by_bbox_and_suffix(tmp_path: Path):
+    """2026-08-24 修：maps/<源>/ 以前永远 bl 侧（提示词说『默认』实为只能）——
+    现按 bbox 自动选侧（中心 x ≥ 半场 → tr），显式 maps/<源>@bl|tr/ 覆盖。"""
+    from agent.readonly import MapsArea
+
+    area = MapsArea(None, _dual_dir(tmp_path))
+    tr = area.read("maps/dual/128_104_134_110.md")          # tr 坐标 → 自动 tr
+    assert "tr 侧（bbox 自动" in tr and "130" in tr
+    bl = area.read("maps/dual/38_30_44_36.md")              # bl 坐标 → 自动 bl
+    assert "bl 侧（bbox 自动" in bl
+    assert "D1" in bl                                       # bl 的 D1 在框内
+    explicit = area.read("maps/dual@tr/38_30_44_36.md")     # 显式 tr + bl 框
+    assert "tr 侧（指定" in explicit
+    assert "D1" not in explicit.split("# 区域", 1)[1]        # tr 的 D1 不在 bl 框里（如实空）
+
+
+def test_maps_area_legacy_single_branch_still_works(tmp_path: Path):
+    from agent.readonly import MapsArea
+
+    area = MapsArea(None, _map_plans_dir(tmp_path))          # 既有夹具 = 双分支 layout
+    t = area.read("maps/layout/39_31_41_34.md")
+    assert "D1" in t
