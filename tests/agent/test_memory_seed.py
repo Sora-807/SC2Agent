@@ -1,4 +1,8 @@
-"""记忆工作区种子（agent/memory_seed.py）：丢失自动初始化、绝不覆盖用户修改。"""
+"""记忆工作区种子（agent/memory_seed.py）：丢失自动初始化、绝不覆盖用户修改。
+
+2026-08-25（I31/I33）：提示词模板（system/prompt.md + templates/*）从 runtime 迁入
+seeds —— 提示词面进版本库（D16：改模板=改提示词），eval 的全新工作区与真机同面。
+"""
 from pathlib import Path
 
 from agent.memory_seed import SEED_ROOT, seed_memory_workspace
@@ -10,6 +14,11 @@ SEED_FILES = [
     "memory/system-capabilities.md",
     "memory/user-preferences.md",
     "session/current.md",
+    "system/prompt.md",
+    "templates/catalog-structure.md",
+    "templates/observe-output.md",
+    "templates/simulate-plan-v2-output.md",
+    "workspace.md",
 ]
 
 

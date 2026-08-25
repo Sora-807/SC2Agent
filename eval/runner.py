@@ -101,28 +101,36 @@ class FakeFollowRunner:
     """假 live（⑦）：离线世界后台推进 + AgentTalk 全跟随回路（D4：同回路换驱动）。
 
     horizon_game/tick_interval：推到多少游戏秒停局、墙钟多久一 tick。
+    min_wall：**到点后至少等这么多墙钟秒才停**——真 LLM 一轮要几十秒，游戏若在
+    agent 开口前就结束，停局会把 proposals.session 置 None，之后的提案校验
+    「不在队列里」全崩（冒烟实测的竞态）。给 agent 留出至少一轮的活局窗口。
     会话在 fixture 里以 autotick=false 起（推进完全由本 runner 驱动，可控可复现）。
     """
 
     name = "fake_live"
 
     def __init__(self, max_turns: int = 200, horizon_game: float = 120.0,
-                 tick_interval: float = 0.1, mount_readonly: bool = False) -> None:
+                 tick_interval: float = 0.1, min_wall: float = 90.0,
+                 mount_readonly: bool = False) -> None:
         self.max_turns = max_turns
         self.horizon_game = horizon_game
         self.tick_interval = tick_interval
+        self.min_wall = min_wall
         self.mount_readonly = mount_readonly
 
     async def run(self, world: dict, task, llm_factory: Callable[[], object],
                   run_dir: Path) -> RunResult:
         client = world["client"]
         stop = threading.Event()
+        t0 = time.perf_counter()
 
         def drive() -> None:
             while not stop.is_set():
                 info = client.get("/api/session").json()
                 t = float(info.get("game_time") or 0.0)
-                if t >= self.horizon_game or info.get("state") in ("已结束", "未连接"):
+                wall = time.perf_counter() - t0
+                if ((t >= self.horizon_game and wall >= self.min_wall)
+                        or info.get("state") in ("已结束", "未连接")):
                     # stop 端点会把 session 置 None —— 终态先落 extras（_session_end 消费）
                     world.setdefault("extras", {})["session_end"] = {
                         "state": "已结束", "game_time": t, "alive": False}

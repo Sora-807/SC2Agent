@@ -178,7 +178,10 @@ def make_tools(client: ApiClient, *, source: str = "live",
                                         '下标会漂移，引用必须走 uid。'
                                         'item 形如 {"op":"build|train|assign_workers",'
                                         '"type":"terran/xxx","count":1,'
-                                        '"placement":{"kind":"in_region","region":"home"}}'),
+                                        '"placement":{"kind":"in_region","region":"home"}}；'
+                                        'placement 只有两种 kind：in_region（region=区域名，'
+                                        '自动找位）/ exact（mark=槽位裸名，点名）；'
+                                        '气矿建筑（refinery）免 placement（自动选气井）'),
                         "items": {"type": "object"},
                     },
                 },

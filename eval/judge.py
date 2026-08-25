@@ -95,11 +95,10 @@ def _parse(text: str) -> tuple[float | None, str]:
     if m:
         rm = re.search(r"reason[\"']?\s*[:=]\s*[\"']?([^\"'}\n]{1,120})", stripped, re.I)
         return float(m.group(1)), (rm.group(1) if rm else "")[:120]
-    # 短回复（判官偷懒只给结论）：「5分」「4.5 分，理由…」——必须带「分」，
-    # 且文本要短（长文本里的孤立数字太容易误伤，宁可判解析失败）
-    if len(stripped) <= 24:
-        m = re.search(r"([0-5](?:\.\d)?)\s*分", stripped)
-        if m:
-            rm = re.search(r"[，,。]\s*(.{1,100})", stripped)
-            return float(m.group(1)), (rm.group(1) if rm else "").strip()[:120]
+    # 判官偷懒形态：「5分。」或「5分。\n\n评分理由：…」——分数锚定在开头，
+    # 不受后续理由长度影响；正文中段的孤立数字仍不认（误伤风险）
+    m = re.match(r"\s*([0-5](?:\.\d)?)\s*分", stripped)
+    if m:
+        rm = re.search(r"[，,。:：]\s*(.{1,100})", stripped)
+        return float(m.group(1)), (rm.group(1) if rm else "").strip()[:120]
     return None, ""

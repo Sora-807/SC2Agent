@@ -16,7 +16,7 @@ register(Project(
         text="跟着这局打完：该修的生产问题用提案修，游戏结束后给我终局总结",
         note="假 live 跟随（⑦）：后台 tick 到 120 游戏秒停局；observe→提案→跟随→终局总结",
     ),
-    runner=FakeFollowRunner(horizon_game=120.0, tick_interval=0.05),
+    runner=FakeFollowRunner(horizon_game=120.0, tick_interval=0.05, min_wall=90.0),
     graders=[
         ToolSequenceGrader(must=["observe"], forbid=["queue_op"]),
         ProposalGrader(expect_op="build", expect_type="terran/refinery",

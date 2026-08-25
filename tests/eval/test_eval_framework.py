@@ -66,6 +66,21 @@ def test_offline_fixture_builds_seeded_world(tmp_path: Path):
     assert world["seed_hash"]          # D16：种子指纹在 run 前定死
 
 
+def test_fixture_workspace_carries_prompt_templates(tmp_path: Path):
+    """保真度锁（I31/I33 整改随行）：提示词模板进了 seeds → eval 的全新工作区必须
+    带上它们（与真机 serve_api 工作区同面）——否则 eval 测的是残缺提示词。"""
+    world = _world(tmp_path)
+    ws = world["workspace"]
+    assert (ws / "system" / "prompt.md").is_file()
+    observe_doc = ws / "templates" / "observe-output.md"
+    assert observe_doc.is_file()
+    text = observe_doc.read_text(encoding="utf-8")
+    assert "机器可读 facts 的口径" in text          # I31：buildings 口径在
+    prompt = (ws / "system" / "prompt.md").read_text(encoding="utf-8")
+    assert "只有两种 kind" in prompt                 # I33：placement 写法在
+    assert "不需要 placement" in prompt              # 气矿免 placement 在
+
+
 # ---------------- 端到端（FakeLLM） ----------------
 
 def test_single_round_end_to_end(tmp_path: Path):
@@ -228,8 +243,11 @@ def test_judge_parses_json_fenced_and_lenient():
     assert _parse("score=2.5 reason=有点乱") == (2.5, "有点乱")
     assert _parse("5分。") == (5.0, "")          # 冒烟实测形态：判官裸回结论
     assert _parse("4 分，理由充分") == (4.0, "理由充分")
+    # 分数开头+长理由跟随（冒烟第二形态）：行首锚定，不受长度影响
+    score, reason = _parse("5分。\n\n评分理由：诊断准确，提案对症，表达清楚。")
+    assert score == 5.0 and "诊断准确" in reason
     assert _parse("完全跑题没有数字")[0] is None
-    assert _parse("这个回复引用了 3 个数据源但论证有 2 处漏洞" * 1)[0] is None  # 长文本不认孤立数字
+    assert _parse("这个回复引用了 3 个数据源但论证有 2 处漏洞" * 1)[0] is None  # 中段数字不认
 
 
 def test_judge_grader_blind_and_async(tmp_path: Path):
@@ -306,8 +324,9 @@ def test_fake_follow_runner_end_to_end(tmp_path: Path):
     from eval.runner import FakeFollowRunner
 
     world = OfflineSessionFixture(setup_gas_block).setup(tmp_path / "w")
-    # 小 horizon：游戏很快结束 → 跟随循环退出（FakeLLM 立即回，不真的睡）
-    runner = FakeFollowRunner(horizon_game=8.0, tick_interval=0.01)
+    # 小 horizon + min_wall=0：游戏很快结束 → 跟随循环退出（FakeLLM 立即回，不真的睡；
+    # 真 LLM 场景要给 min_wall 留活局窗口，见 runner 的竞态注释）
+    runner = FakeFollowRunner(horizon_game=8.0, tick_interval=0.01, min_wall=0.0)
     result = asyncio.run(runner.run(
         world, _task_t("跟着这局：有问题提案修，打完总结"),
         _fake_llm, tmp_path / "run"))

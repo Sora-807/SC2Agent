@@ -490,6 +490,12 @@ I28 修维持器不派空闲工。
 
 ## I31 agent 拿 buildings JSON 当建筑总数、漏掉在建项→误判补给站数量（**提示词整改为主**，用户 2026-08-25 立项）
 
+> **已整改（2026-08-25，随 I33 批 eval 验收闭环）**：提示词模板迁入 `agent/seeds/`（进版本库，
+> D16 的 seed_hash 开始覆盖提示词面；eval 工作区与真机同面）。`observe-output.md` 加
+> 「机器可读 facts 的口径」节（buildings=只数完工；数量算术用建筑汇总表总数列=含在建）；
+> `system/prompt.md` 域一加「读 observe 的口径」两条（buildings 键口径 + enemy_contact
+> 只在视野内报）。辅修 `buildings_total` 字段未做（提示词先行，够用暂不加字段）。
+
 > **2026-08-25 已定位（trace `2026-08-25T093323` + 录像 `rec-20260825-093336`，未动工）**：
 > 这局 agent 以为只造了 1 个补给站，实际造了 2 个（t=118/t=141 落成，队列 q02+q06 两个 depot 项）。
 > 用户定性：**这是 agent 提示词整改任务，不是系统数据缺失 bug**——总数一直在 observe 文字表里。
@@ -573,6 +579,16 @@ agent 天然更信结构化 JSON 做算术，模板没点这层口径，于是�
 
 ## I33 agent 提示词整改批：placement schema / enemy_contact 指向 / pos_marks 引用（用户 2026-08-25 立项，先挂账不改）
 
+> **已整改（2026-08-25，eval 验收闭环：B5 2/2 绿 + L1 确定性四轴全绿 + H0 3/3 绿）**：
+> `system/prompt.md` 病灶段（原「槽位/点位名用『规划id/名』限定」「精炼厂→蓝方主矿气井1」
+> 两句正是在教 agent 写错）重写为「placement 写法」专节：只有两种 kind、in_region=区域名
+> 自动找位、exact=槽位**裸名**点名（前缀只在跨规划引用时用）、**气矿建筑免 placement**、
+> pos_marks 引用固定点位别猜坐标；enemy_contact/buildings 口径进域一（见 I31）；propose
+> 工具描述同步补两种 kind + 免 placement。模板迁 `agent/seeds/` 进版本库。**整改前基线**
+> （B5 红：自创 kind:at_slot + mark 带命名空间 layout/D3；四次独立复现）已归档
+> `runtime/eval/index.jsonl` 可 diff。验收细节：B5 首提仍有失败尝试后改对（容忍语义过）——
+> schema 认知从「不知道」变「查得到」，残留为措辞可再收紧，观察后续真机。
+
 > 2026-08-25 定位（trace `2026-08-25T110728` 对话 + 代码核验，未动工）。归 I31 同族（agent 读错字段/不懂
 > schema→误判），提示词层堵。三处缺口均**非系统数据缺失**，是 agent 读 observe/工具的口径认知没被提示词讲清。
 
@@ -645,6 +661,11 @@ payload/text 加 `mine_region`（最近矿区名）。属系统增强（非 bug�
 ---
 
 ## I37 propose 校验不查 placement region、执行才丢（次要系统粗糙点，用户 2026-08-25 立项）
+
+> **2026-08-25 eval 假 live 冒烟又暴露一处同类断层**：session 停局把 `proposals.session`
+> 置 None 后，之后的提案校验报「before_uid 不在队列里」（误导性错误——队列还在，是校验
+> 查不到会话）。轻管线侧已用 min_wall 留活局窗口绕过（eval/runner.py 注释）；系统侧
+> 是否要给「会话已结束」单独报错，随本条一并考虑。
 
 > 现状（trace `2026-08-25T110728`）：propose"校验通过并自动应用"，执行时才"被丢弃（作者错误）：区域
 > 'xxx' 未登记"。校验和执行断层——agent 以为提案生效了，实际静默丢弃，得靠 observe 看 dropped 才发现。
