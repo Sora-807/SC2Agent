@@ -14,6 +14,8 @@ from planner.opening import opening_game_state
 from planner.planner import Planner
 from view.projection import queue_to_ops
 
+import pytest
+
 CAT = load_all()
 
 
@@ -29,6 +31,41 @@ def test_queue_to_ops_carries_uid_and_expands_count():
     ops = queue_to_ops(items, CAT).ops
     assert [o.uid for o in ops] == ["q01", "q01", "q01", "q02", "q02"], \
         "count 展开共享同一 uid（状态表按队列项归并）"
+
+
+# ---------------- I32：终态/零余量项不进仿真（类规则直测，2026-08-25 审计批3d） ----------------
+# 原修复（40210ce）只被 drain 顺带盖住：这里对账本四值闭集 × 余量逐格直测过滤规则，
+# 防第 5 个终态或新的零余量形态再漏成「整条历史每帧重仿真」的幻影条。
+
+
+@pytest.mark.parametrize("status,count,want_ops", [
+    pytest.param("completed", 1, 0, id="completed"),
+    pytest.param("completed", 3, 0, id="completed-count3"),
+    pytest.param("skipped", 1, 0, id="skipped"),
+    pytest.param("in_progress", 0, 0, id="in-progress-all-sent"),
+    pytest.param("pending", 0, 0, id="pending-zero-remainder"),
+    pytest.param("in_progress", 2, 2, id="in-progress-partial"),
+    pytest.param("pending", 1, 1, id="pending-untouched"),
+])
+def test_queue_to_ops_filters_terminal_and_empty(status, count, want_ops):
+    """completed/skipped（终态历史）与 count<=0（零余量）不进仿真；活项余量照常投影。"""
+    items = [QueueItem(op="train", type="terran/marine", count=count, uid="q01",
+                       status=status)]
+    assert len(queue_to_ops(items, CAT).ops) == want_ops
+
+
+def test_queue_to_ops_history_plus_live_mix():
+    """I32 原案形态：整条终态历史（录像 q01-q07 场景的缩影）+ 在途/待办混排 ——
+    只有活项进仿真，幻影条/幻影矿开销从根上不可能再产生。"""
+    items = [
+        QueueItem(op="build", type="terran/supplydepot", count=0, uid="q01", status="completed"),
+        QueueItem(op="train", type="terran/marine", count=0, uid="q02", status="completed"),
+        QueueItem(op="build", type="terran/barracks", count=0, uid="q03", status="skipped"),
+        QueueItem(op="train", type="terran/scv", count=2, uid="q04", status="in_progress"),
+        QueueItem(op="train", type="terran/marine", count=2, uid="q05", status="pending"),
+    ]
+    ops = queue_to_ops(items, CAT).ops
+    assert [o.uid for o in ops] == ["q04", "q04", "q05", "q05"]
 
 
 def test_curve_queue_status_completed_with_times():

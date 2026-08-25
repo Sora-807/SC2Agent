@@ -28,161 +28,12 @@ def test_valid_strategy_parses():
     assert m.id == "v" and m.initial_step == "s1"
 
 
-def test_else_must_be_last():
-    bad = VALID.replace(
-        "      - when: {op: \">=\", args: [{op: group_count, group: main}, {param: p1}]}\n        do: [{op: exit_step, kind: done, reason: OK}]\n      - do: []",
-        "      - do: []\n      - when: {op: \">=\", args: [{op: group_count, group: main}, {param: p1}]}\n        do: [{op: exit_step, kind: done, reason: OK}]",
-    )
-    with pytest.raises(AssertionError, match="最后"):
-        parse_strategy(bad)
-
-
-def test_unknown_do_op_rejected():
-    bad = VALID.replace("{op: exit_step, kind: done, reason: OK}", "{op: fly}")
-    with pytest.raises(AssertionError, match="未知 do"):
-        parse_strategy(bad)
-
-
-def test_unknown_predicate_rejected():
-    bad = VALID.replace("{op: group_count, group: main}", "{op: fly_pred, args: []}")
-    with pytest.raises(AssertionError, match="未知谓词"):
-        parse_strategy(bad)
-
-
-def test_unimplemented_predicate_rejected_at_compile():
-    # engaged/under_attack/timer_elapsed 已落地（二十六轮）；仍待建的是事件/基地族
-    bad = VALID.replace("{op: group_count, group: main}", "{op: has_ready_base, args: [main]}")
-    with pytest.raises(AssertionError, match="未实现"):
-        parse_strategy(bad)
-
-
-def test_undeclared_slot_rejected():
-    bad = VALID.replace(
-        "do: [{op: exit_step, kind: done, reason: OK}]",
-        "do: [{op: group_action, group_slot: other, type: MARINE, action_atom: move_to, params: {position: [1, 1]}}, {op: exit_step, kind: done, reason: OK}]",
-    )
-    with pytest.raises(AssertionError, match="group_slot"):
-        parse_strategy(bad)
-
-
-def test_group_action_missing_required_param_rejected():
-    bad = VALID.replace(
-        "do: [{op: exit_step, kind: done, reason: OK}]",
-        "do: [{op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {}}, {op: exit_step, kind: done, reason: OK}]",
-    )
-    with pytest.raises(AssertionError, match="position"):
-        parse_strategy(bad)
-
-
-def test_action_after_exit_rejected():
-    bad = VALID.replace(
-        "do: [{op: exit_step, kind: done, reason: OK}]",
-        "do: [{op: exit_strategy, kind: done, reason: SAFE}, {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1, 1]}}]",
-    )
-    with pytest.raises(AssertionError, match="exit 之后"):
-        parse_strategy(bad)
-
-
-def test_duplicate_edge_rejected():
-    bad = VALID + "  - {from: s1, to: s1, kind: done, reason: OK}\n"
-    with pytest.raises(AssertionError, match="重复 edge"):
-        parse_strategy(bad)
-
-
-def test_undeclared_variable_write_rejected():
-    bad = VALID.replace(
-        "do: [{op: exit_step, kind: done, reason: OK}]",
-        "do: [{op: set_variable, name: nope, value: {const: 1}}, {op: exit_step, kind: done, reason: OK}]",
-    )
-    with pytest.raises(AssertionError, match="变量"):
-        parse_strategy(bad)
-
-
-def test_set_local_needs_declared_local():
-    """二十六轮 T8：set_local 转正 —— 但名字必须在 step 的 locals 里声明（拼错 = 永远读不到）。"""
-    bad = VALID.replace(
-        "do: [{op: exit_step, kind: done, reason: OK}]",
-        "do: [{op: set_local, name: nope, value: {const: 1}}, {op: exit_step, kind: done, reason: OK}]",
-    )
-    with pytest.raises(AssertionError, match="未声明的局部变量"):
-        parse_strategy(bad)
-
-
-def test_local_read_needs_declaration_too():
-    """{local: x} 读侧同查：没声明的名字编译期拒绝（写读两侧一起放行的 D8 完整版）。"""
-    bad = VALID.replace("{op: group_count, group: main}", "{local: nope}")
-    with pytest.raises(AssertionError, match="未声明的局部变量"):
-        parse_strategy(bad)
-
-
-def test_local_not_allowed_in_definitions():
-    bad = VALID.replace(
-        "variables: {v1: {type: int, default: 0}}",
-        "variables: {v1: {type: int, default: 0}}\ndefinitions: {d1: {local: v1}}",
-    )
-    with pytest.raises(AssertionError, match="definitions"):
-        parse_strategy(bad)
-
-
-def test_undeclared_param_ref_rejected():
-    bad = VALID.replace("{param: p1}", "{param: nope}")
-    with pytest.raises(AssertionError, match="参数"):
-        parse_strategy(bad)
-
-
-def test_undeclared_var_ref_rejected():
-    bad = VALID.replace("{param: p1}", "{var: nope}")
-    with pytest.raises(AssertionError, match="变量"):
-        parse_strategy(bad)
-
-
-def test_edge_endpoints_checked():
-    bad = VALID.replace("edges:", "edges:").replace("{from: s1, to: s1, kind: done, reason: OK}", "{from: s1, to: nope, kind: done, reason: OK}")
-    with pytest.raises(AssertionError, match="不是 step"):
-        parse_strategy(bad)
-
-
-# ---- T2：命名参数 / arity / definitions / 声明白名单（编译期）----
-
-
 def test_predicate_positional_args_rejected_with_migration_hint():
     """D2：谓词改命名参数 —— 旧的位置 args 写法编译失败，且只报"改用命名参数"这一条。"""
     bad = VALID.replace("{op: group_count, group: main}", "{op: group_count, args: [main]}")
     with pytest.raises(AssertionError, match="命名参数") as e:
         parse_strategy(bad)
     assert "缺必需参数" not in str(e.value)  # 迁移错误不叠加参数噪声
-
-
-def test_predicate_missing_required_named_param_rejected():
-    bad = VALID.replace("{op: group_count, group: main}", "{op: group_count}")
-    with pytest.raises(AssertionError, match="缺必需参数"):
-        parse_strategy(bad)
-
-
-def test_predicate_unknown_named_param_rejected():
-    """参数名写错（arrived 的 radius 写成 dist 之类）编译失败 —— 位置参数时代抓不到这类错。"""
-    bad = VALID.replace("{op: group_count, group: main}", "{op: group_count, grp: main}")
-    with pytest.raises(AssertionError, match="不认识参数"):
-        parse_strategy(bad)
-
-
-def test_operator_arity_checked():
-    """J2：运算符 arity 进签名表 —— and 单参 / not 双参此前都静默通过。"""
-    single_and = VALID.replace('{op: ">=", args: [{op: group_count, group: main}, {param: p1}]}',
-                               '{op: and, args: [{op: group_count, group: main}]}')
-    with pytest.raises(AssertionError, match="操作数"):
-        parse_strategy(single_and)
-    two_not = VALID.replace('{op: ">=", args: [{op: group_count, group: main}, {param: p1}]}',
-                            '{op: not, args: [{op: group_count, group: main}, {param: p1}]}')
-    with pytest.raises(AssertionError, match="操作数"):
-        parse_strategy(two_not)
-
-
-def test_operator_rejects_extra_named_keys():
-    bad = VALID.replace('{op: ">=", args: [{op: group_count, group: main}, {param: p1}]}',
-                        '{op: ">=", args: [{op: group_count, group: main}, {param: p1}], group: main}')
-    with pytest.raises(AssertionError, match="只接受 args"):
-        parse_strategy(bad)
 
 
 DEFS = """
@@ -210,51 +61,98 @@ def test_definitions_alias_accepted_in_when_and_params():
     assert set(m.definitions) == {"front"}
 
 
-def test_unknown_ref_rejected():
-    bad = DEFS.replace("{ref: front}", "{ref: nope}")
-    with pytest.raises(AssertionError, match="definitions 别名"):
-        parse_strategy(bad)
+# ---- 拒绝族单表（2026-08-25 审计批3a 收敛：~40 个同构 test_*_rejected → 一张表）----
+# 每条 = (基模板, old, new, match)：一次变异 + 一条锁定文案。错误文案是契约
+# （REFACTOR §2 G3：有测试锁），逐字锁定有意。行尾注释保留原独立测试的"为什么"。
+# 有额外断言/正向配对的用例不入表，仍独立成函数（见下）。
+
+_EDGE = "  - {from: s1, to: s1, kind: done, reason: OK}\n"
+_EXIT_DO = "do: [{op: exit_step, kind: done, reason: OK}]"
+_CMP = '{op: ">=", args: [{op: group_count, group: main}, {param: p1}]}'
+_ELSE_BLOCK = (
+    '      - when: {op: ">=", args: [{op: group_count, group: main}, {param: p1}]}\n'
+    f"        {_EXIT_DO}\n"
+    "      - do: []"
+)
+_ELSE_SWAPPED = (
+    "      - do: []\n"
+    '      - when: {op: ">=", args: [{op: group_count, group: main}, {param: p1}]}\n'
+    f"        {_EXIT_DO}"
+)
+_TIMEOUT_BRANCH = (
+    '      - when: {op: ">=", args: [{op: strategy_elapsed}, 600]}\n'
+    "        do: [{op: exit_strategy, kind: failed, reason: TIMEOUT}]\n"
+)
+
+REJECTED = [
+    pytest.param(VALID, _ELSE_BLOCK, _ELSE_SWAPPED, "最后", id="else-must-be-last"),
+    pytest.param(VALID, _EXIT_DO, "do: [{op: fly}]", "未知 do", id="unknown-do-op"),
+    pytest.param(VALID, "{op: group_count, group: main}", "{op: fly_pred, args: []}", "未知谓词", id="unknown-predicate"),
+    # engaged/under_attack/timer_elapsed 已落地（二十六轮）；仍待建的是事件/基地族
+    pytest.param(VALID, "{op: group_count, group: main}", "{op: has_ready_base, args: [main]}", "未实现", id="unimplemented-predicate"),
+    pytest.param(VALID, _EXIT_DO, "do: [{op: group_action, group_slot: other, type: MARINE, action_atom: move_to, params: {position: [1, 1]}}, {op: exit_step, kind: done, reason: OK}]", "group_slot", id="undeclared-slot"),
+    pytest.param(VALID, _EXIT_DO, "do: [{op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {}}, {op: exit_step, kind: done, reason: OK}]", "position", id="action-missing-required-param"),
+    pytest.param(VALID, _EXIT_DO, "do: [{op: exit_strategy, kind: done, reason: SAFE}, {op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1, 1]}}]", "exit 之后", id="action-after-exit"),
+    pytest.param(VALID, _EDGE, _EDGE + _EDGE, "重复 edge", id="duplicate-edge"),
+    pytest.param(VALID, _EXIT_DO, "do: [{op: set_variable, name: nope, value: {const: 1}}, {op: exit_step, kind: done, reason: OK}]", "变量", id="undeclared-variable-write"),
+    # 二十六轮 T8：set_local 转正，但名字必须在 step 的 locals 里声明（拼错 = 永远读不到）
+    pytest.param(VALID, _EXIT_DO, "do: [{op: set_local, name: nope, value: {const: 1}}, {op: exit_step, kind: done, reason: OK}]", "未声明的局部变量", id="set-local-undeclared"),
+    # {local: x} 读侧同查（D8 完整版：写读两侧一起放行）
+    pytest.param(VALID, "{op: group_count, group: main}", "{local: nope}", "未声明的局部变量", id="local-read-undeclared"),
+    pytest.param(VALID, "variables: {v1: {type: int, default: 0}}", "variables: {v1: {type: int, default: 0}}\ndefinitions: {d1: {local: v1}}", "definitions", id="local-not-in-definitions"),
+    pytest.param(VALID, "{param: p1}", "{param: nope}", "参数", id="undeclared-param-ref"),
+    pytest.param(VALID, "{param: p1}", "{var: nope}", "变量", id="undeclared-var-ref"),
+    pytest.param(VALID, "{from: s1, to: s1, kind: done, reason: OK}", "{from: s1, to: nope, kind: done, reason: OK}", "不是 step", id="edge-endpoint"),
+    pytest.param(VALID, "{op: group_count, group: main}", "{op: group_count}", "缺必需参数", id="predicate-missing-named-param"),
+    # 参数名写错（arrived 的 radius 写成 dist 之类）——位置参数时代抓不到这类错
+    pytest.param(VALID, "{op: group_count, group: main}", "{op: group_count, grp: main}", "不认识参数", id="predicate-unknown-named-param"),
+    # J2：运算符 arity 进签名表 —— and 单参 / not 双参此前都静默通过
+    pytest.param(VALID, _CMP, '{op: and, args: [{op: group_count, group: main}]}', "操作数", id="arity-and-single"),
+    pytest.param(VALID, _CMP, '{op: not, args: [{op: group_count, group: main}, {param: p1}]}', "操作数", id="arity-not-two"),
+    pytest.param(VALID, _CMP, _CMP[:-1] + ", group: main}", "只接受 args", id="operator-extra-named-keys"),
+    # H3：YAML 把 on/off/yes/no 解析成布尔 —— 标识符字段必须是字符串
+    pytest.param(VALID, "reason: OK", "reason: NO", "布尔", id="yaml-bool-trap"),
+    pytest.param(VALID, "      - do: []", "      - do: [{op: group_action, group_slot: main, type: MARINE, action_atom: move_to, params: {position: [1, 1]}}]", "两段式 stable id", id="action-type-single-segment"),
+    pytest.param(VALID, "      - do: []", "      - do: [{op: group_action, group_slot: main, action_atom: move_to, params: {position: [1, 1]}}]", "缺 type", id="action-missing-type"),
+    # T2c #5：parse 时 dict 覆盖会静默丢掉前一份
+    pytest.param(VALID, "edges:", "  - step_id: s1\n    branches:\n      - do: []\nedges:", "重复的 step_id", id="duplicate-step-id"),
+    pytest.param(VALID, "{type: int, default: 1}", "{type: int, default: 1, live_editable: true}", "未知键", id="param-unknown-key"),
+    pytest.param(VALID, "{type: int, default: 1}", "{type: unit, default: 1}", "未知 type", id="param-unknown-type"),
+    # 声明了却从 initial_step 无边路径可达 = 死配置（红线"不静默"）
+    pytest.param(VALID, "edges:", "  - step_id: island\n    branches:\n      - do: []\nedges:", "不可达", id="unreachable-step"),
+    # ADR-0021 反例：无出口的环（去掉了 TIMEOUT 分支后 s1 自环无出口）
+    pytest.param(VALID, _TIMEOUT_BRANCH, "", "无出口", id="cycle-without-exit"),
+    pytest.param(VALID, _EDGE, _EDGE + "loop_limits: {max_iterations: 5}\n", "loop_limits", id="loop-limits-unknown-key"),
+    # YAML 把 on/yes 解析成 bool（bool 是 int 子类，会绕过 isinstance(int) 检查）
+    pytest.param(VALID, _EDGE, _EDGE + "loop_limits: {max_step_transitions: on}\n", "正整数", id="loop-limits-bool"),
+    pytest.param(VALID, _EDGE, _EDGE + "loop_limits: {max_step_transitions: 0}\n", "正整数", id="loop-limits-non-positive"),
+    # 没有任何 exit_step 会走的 edge = 死配置
+    pytest.param(VALID, _EDGE, _EDGE + "  - {from: s1, to: s1, kind: failed, reason: NEVER}\n", "死 edge", id="dead-edge"),
+    pytest.param(VALID, _EDGE, _EDGE + "whatever: 1\n", "顶层未知键", id="top-level-unknown-key"),
+    # F3：branchs 拼错 → 旧行为是编译通过、该 step 每帧什么都不做（永远）
+    pytest.param(VALID, "    branches:", "    branchs:", "未知键", id="step-key-typo"),
+    # F3：wehn 拼错 → 旧行为是条件被丢掉、这条分支变成无条件执行
+    pytest.param(VALID, '      - when: {op: ">=", args: [{op: strategy_elapsed}, 600]}', '      - wehn: {op: ">=", args: [{op: strategy_elapsed}, 600]}', "未知键", id="branch-key-typo"),
+    pytest.param(VALID, "{type: int, default: 0}", "{type: int, default: 0, hot: true}", "未知键", id="variables-unknown-key"),
+    pytest.param(VALID, "{type: int, default: 0}", "{type: unit, default: 0}", "未知 type", id="variables-unknown-type"),
+    # F4/T2c #10：声明 type=int 却给了字符串
+    pytest.param(VALID, "{type: int, default: 1}", '{type: int, default: "x"}', "type=int", id="declared-default-type"),
+    pytest.param(VALID, "{type: int, default: 1}", "{type: point, default: [1, 2, 3]}", "type=point", id="point-default-3tuple"),
+    # assign_workers 是复合意图（driver translate_op 返回 []，flow 发它=运行期静默 no-op），编译期拦
+    pytest.param(VALID, "      - do: []", "      - do: [{op: group_action, group_slot: main, type: terran/scv, action_atom: assign_workers, params: {task: mineral, count: 8}}]", "复合意图", id="composite-action"),
+    # ---- DEFS 基模板 ----
+    pytest.param(DEFS, "{ref: front}", "{ref: nope}", "definitions 别名", id="unknown-ref"),
+    # ref 是纯替换语义，自引用/环会无限展开
+    pytest.param(DEFS, "  front: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: cover}}", "  front: {op: arrived, group: inf, target: {ref: front}, radius: 1.0}", "自引用/环", id="definitions-self-reference"),
+    # T2c #3：动作参数里的 {param}/{var}/{ref} 此前不查，写错要到运行期才发现
+    pytest.param(DEFS, "params: {position: {ref: front}}", "params: {position: {param: nope}}", "参数", id="do-params-bad-ref"),
+]
 
 
-def test_definitions_self_reference_rejected():
-    """ref 是纯替换语义，自引用/环会无限展开 → 编译期拒绝。"""
-    bad = DEFS.replace(
-        "  front: {op: point_toward, origin: {op: group_center, group: armor}, toward: {param: target}, dist: {param: cover}}",
-        "  front: {op: arrived, group: inf, target: {ref: front}, radius: 1.0}")
-    with pytest.raises(AssertionError, match="自引用/环"):
-        parse_strategy(bad)
-
-
-def test_do_params_references_validated():
-    """T2c #3：动作参数里的 {param}/{var}/{ref} 此前不查，写错要到运行期才发现。"""
-    bad = DEFS.replace("params: {position: {ref: front}}", "params: {position: {param: nope}}")
-    with pytest.raises(AssertionError, match="参数"):
-        parse_strategy(bad)
-
-
-def test_yaml_bool_trap_on_identifier_fields():
-    """H3：YAML 把 on/off/yes/no 解析成布尔 —— 标识符字段必须是字符串。"""
-    bad = VALID.replace("reason: OK", "reason: NO")
-    with pytest.raises(AssertionError, match="布尔"):
-        parse_strategy(bad)
-
-
-def test_group_action_requires_two_segment_stable_id():
-    bad = VALID.replace(
-        "      - do: []",
-        "      - do: [{op: group_action, group_slot: main, type: MARINE,"
-        " action_atom: move_to, params: {position: [1, 1]}}]")
-    with pytest.raises(AssertionError, match="两段式 stable id"):
-        parse_strategy(bad)
-
-
-def test_group_action_missing_type_rejected():
-    bad = VALID.replace(
-        "      - do: []",
-        "      - do: [{op: group_action, group_slot: main,"
-        " action_atom: move_to, params: {position: [1, 1]}}]")
-    with pytest.raises(AssertionError, match="缺 type"):
-        parse_strategy(bad)
+@pytest.mark.parametrize("base,old,new,match", REJECTED)
+def test_strategy_rejected(base, old, new, match):
+    with pytest.raises(AssertionError, match=match):
+        parse_strategy(base.replace(old, new))
 
 
 def test_timer_do_ops_and_local_roundtrip_parse():
@@ -269,20 +167,6 @@ def test_timer_do_ops_and_local_roundtrip_parse():
         "{op: group_count, group: main}",
         '{op: ">=", args: [{op: timer_elapsed, name: t1}, {const: 30}]}'))
     assert m2.steps["s1"] is not None
-
-
-def test_duplicate_step_id_rejected():
-    """T2c #5：parse 时 dict 覆盖会静默丢掉前一份。"""
-    bad = VALID.replace("edges:", "  - step_id: s1\n    branches:\n      - do: []\nedges:")
-    with pytest.raises(AssertionError, match="重复的 step_id"):
-        parse_strategy(bad)
-
-
-def test_param_declaration_keys_and_type_whitelist():
-    with pytest.raises(AssertionError, match="未知键"):
-        parse_strategy(VALID.replace("{type: int, default: 1}", "{type: int, default: 1, live_editable: true}"))
-    with pytest.raises(AssertionError, match="未知 type"):
-        parse_strategy(VALID.replace("{type: int, default: 1}", "{type: unit, default: 1}"))
 
 
 # ---- 图级校验（ADR-0021 §4 + 验收 #3）----
@@ -315,24 +199,6 @@ loop_limits: {max_step_transitions: 10}
 """
 
 
-def test_unreachable_step_rejected():
-    """声明了却从 initial_step 无边路径可达的 step = 死配置（红线"不静默"）→ 编译失败。"""
-    bad = VALID.replace("edges:", "  - step_id: island\n    branches:\n      - do: []\nedges:")
-    with pytest.raises(AssertionError, match="不可达"):
-        parse_strategy(bad)
-
-
-def test_cycle_without_exit_rejected():
-    """环内既无出环 edge 也无 exit_strategy → 拒绝（ADR-0021 反例：无出口的环）。"""
-    bad = VALID.replace(
-        '      - when: {op: ">=", args: [{op: strategy_elapsed}, 600]}\n'
-        "        do: [{op: exit_strategy, kind: failed, reason: TIMEOUT}]\n",
-        "",
-    )
-    with pytest.raises(AssertionError, match="无出口"):
-        parse_strategy(bad)
-
-
 def test_cycle_with_exit_strategy_accepted():
     """环的出口可以是 exit_strategy，不必是出环 edge。
 
@@ -347,22 +213,6 @@ def test_cycle_with_outgoing_edge_accepted():
     """环的出口也可以是指向环外的 edge（环内无 exit_strategy 也合法）。"""
     m = parse_strategy(CYCLE_WITH_EDGE_OUT)
     assert set(m.steps) == {"s1", "s2", "hold"}
-
-
-def test_loop_limits_unknown_key_rejected():
-    with pytest.raises(AssertionError, match="loop_limits"):
-        parse_strategy(VALID + "loop_limits: {max_iterations: 5}\n")
-
-
-def test_loop_limits_bool_value_rejected():
-    """YAML 把 on/yes 解析成 bool（bool 是 int 子类，会绕过 isinstance(int) 检查）→ 显式拒绝。"""
-    with pytest.raises(AssertionError, match="正整数"):
-        parse_strategy(VALID + "loop_limits: {max_step_transitions: on}\n")
-
-
-def test_loop_limits_non_positive_rejected():
-    with pytest.raises(AssertionError, match="正整数"):
-        parse_strategy(VALID + "loop_limits: {max_step_transitions: 0}\n")
 
 
 DEAD_EDGE_LAUNDERING = """
@@ -383,12 +233,6 @@ edges:
   - {from: s1, to: hold, kind: failed, reason: NEVER}
 loop_limits: {max_step_transitions: 5}
 """
-
-
-def test_dead_edge_rejected():
-    """没有任何 exit_step 会走的 edge = 死配置 → 编译失败。"""
-    with pytest.raises(AssertionError, match="死 edge"):
-        parse_strategy(VALID + "  - {from: s1, to: s1, kind: failed, reason: NEVER}\n")
 
 
 def test_dead_edge_cannot_launder_exitless_cycle():
@@ -489,33 +333,12 @@ def test_removed_on_exit_key_says_where_it_went():
     assert "D5" in str(e.value) or "已删" in str(e.value)
 
 
-def test_unknown_top_level_key_rejected():
-    with pytest.raises(AssertionError, match="顶层未知键"):
-        parse_strategy(VALID + "whatever: 1\n")
-
-
 def test_assembly_unknown_top_level_key_rejected():
     with pytest.raises(AssertionError, match="顶层未知键"):
         parse_assembly(_assembly_text("{min: 1, target: 1, max: 1}") + "on_exit: release\n")
 
 
-
 # ---- F3/F4/F5：键名打错 / 声明类型 / 绑定与兵种（编译期）----
-
-
-def test_step_key_typo_rejected():
-    """F3：branchs 拼错 → 旧行为是编译通过、该 step 每帧什么都不做（永远）。"""
-    bad = VALID.replace("    branches:", "    branchs:")
-    with pytest.raises(AssertionError, match="未知键"):
-        parse_strategy(bad)
-
-
-def test_branch_key_typo_rejected():
-    """F3：wehn 拼错 → 旧行为是条件被丢掉、这条分支变成无条件执行。"""
-    bad = VALID.replace('      - when: {op: ">=", args: [{op: strategy_elapsed}, 600]}',
-                        '      - wehn: {op: ">=", args: [{op: strategy_elapsed}, 600]}')
-    with pytest.raises(AssertionError, match="未知键"):
-        parse_strategy(bad)
 
 
 def test_locals_declaration_typechecked():
@@ -523,24 +346,6 @@ def test_locals_declaration_typechecked():
     parse_strategy(VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: [x]"))
     with pytest.raises(AssertionError, match="locals 必须是字符串列表"):
         parse_strategy(VALID.replace("  - step_id: s1", "  - step_id: s1\n    locals: 42"))
-
-
-def test_variables_declaration_validated_like_params():
-    with pytest.raises(AssertionError, match="未知键"):
-        parse_strategy(VALID.replace("{type: int, default: 0}", "{type: int, default: 0, hot: true}"))
-    with pytest.raises(AssertionError, match="未知 type"):
-        parse_strategy(VALID.replace("{type: int, default: 0}", "{type: unit, default: 0}"))
-
-
-def test_declared_default_type_checked():
-    """声明 type=int 却给了字符串 → 编译失败（F4/T2c #10）。"""
-    with pytest.raises(AssertionError, match="type=int"):
-        parse_strategy(VALID.replace("{type: int, default: 1}", '{type: int, default: "x"}'))
-
-
-def test_point_default_must_be_xy_pair():
-    with pytest.raises(AssertionError, match="type=point"):
-        parse_strategy(VALID.replace("{type: int, default: 1}", "{type: point, default: [1, 2, 3]}"))
 
 
 def test_assembly_instance_param_typo_rejected():
@@ -599,20 +404,6 @@ def test_group_action_type_must_be_in_bound_group():
         validate_assembly(parse_strategy(TWO_SLOT),
                           parse_assembly(_two_slot_assembly("{inf: G1, armor: G1}")))
 
-
-
-def test_composite_action_rejected_in_flow():
-    """assign_workers 是复合意图（需按单位扇出），driver 的 translate_op 对它返回 [] ——
-
-    flow 直接发它会编译通过、运行期静默 no-op。这类"能写但静默失效"的路径必须编译期拦。
-    等经济维持器接上（issues §3）再放开。
-    """
-    bad = VALID.replace(
-        "      - do: []",
-        "      - do: [{op: group_action, group_slot: main, type: terran/scv,"
-        " action_atom: assign_workers, params: {task: mineral, count: 8}}]")
-    with pytest.raises(AssertionError, match="复合意图"):
-        parse_strategy(bad)
 
 
 def test_branch_id_is_allowed_and_must_be_string():

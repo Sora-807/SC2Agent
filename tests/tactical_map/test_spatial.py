@@ -1,11 +1,11 @@
 """tactical_map 空间原语：center/distance/units_within/nearest。"""
 from game import Owner, Point2, Unit
 from tactical_map import center_of_units, distance, nearest, units_within
+from tests.factories import make_unit
 
 
 def _u(tag, x, y, hp=45.0, owner=Owner.SELF, type_name="MARINE"):
-    return Unit(tag=tag, type_name=type_name, position=Point2(x, y), owner=owner,
-                hp=hp, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return make_unit(tag, type_name, owner, x, y, hp=hp, hp_max=45.0)
 
 
 def test_center_of_units():

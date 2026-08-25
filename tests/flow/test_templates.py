@@ -17,6 +17,7 @@ from flow.manifest import parse_assembly, parse_strategy
 from flow.templates import expand_strategy, parse_lib
 from game import GameState, Grid, Owner, Point2, Unit
 from game.catalog import load_all
+from tests.factories import make_gs, make_unit
 from flow.templates import SEED_LIB_PATH
 
 CAT = load_all()
@@ -27,16 +28,13 @@ TEMPLATES = parse_lib(_LIB.read_text(encoding="utf-8"))
 
 
 def _unit(tag, type_name, pos, owner=Owner.SELF):
-    return Unit(tag=tag, type_name=type_name, position=pos, owner=owner,
-                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return make_unit(tag, type_name, owner, pos.x, pos.y, hp=45.0, hp_max=45.0)
 
 
 def _gs(seq, units, t=None):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=seq, game_time=float(seq) if t is None else t,
-                     minerals=0, vespene=0,
-                     supply_used=len(units), supply_cap=100, units=units,
-                     map_size=(176, 160), creep=g, visibility=g)
+    return make_gs(units, seq=seq, game_time=float(seq) if t is None else t,
+                   minerals=0, vespene=0,
+                   supply_used=len(units), supply_cap=100)
 
 
 def _marine_gs(seq, n, pos):

@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from game import GameState, Grid, Order, Owner, Point2, Unit
+from game import Order, Owner, Point2
 from game.catalog import load_all
 from production.economy import (
     RETASK_COOLDOWN_FRAMES,
@@ -11,25 +11,16 @@ from production.economy import (
     EconomyPolicy,
     WorkerReservations,
 )
+from tests.factories import FakePort, make_gs, make_unit
 
 CAT = load_all()
 
-
-class _Port:
-    def __init__(self):
-        self.ops = []
-
-    def submit_operations(self, ops):
-        self.ops.extend(ops)
-
-    def gathers(self):
-        return [(o.unit_tags[0], o.params["target_unit"]) for o in self.ops if o.action == "gather"]
+_Port = FakePort
 
 
 def _u(tag, type_name, x=0.0, y=0.0, owner=Owner.SELF, orders=(), progress=1.0):
-    return Unit(tag=tag, type_name=type_name, position=Point2(x, y), owner=owner,
-                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=progress,
-                orders=list(orders))
+    return make_unit(tag, type_name, owner=owner, x=x, y=y, progress=progress,
+                     hp=45.0, hp_max=45.0, orders=orders)
 
 
 def _scv(tag, gathering=None):
@@ -38,10 +29,9 @@ def _scv(tag, gathering=None):
 
 
 def _gs(units, resources=(), seq=0):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=seq, game_time=float(seq) * 0.05, minerals=0, vespene=0,
-                     supply_used=len(units), supply_cap=50, units=list(units),
-                     map_size=(176, 160), creep=g, visibility=g, resources=list(resources))
+    # 本地语义：game_time 随 seq 派生、supply 口径按单位数——留在包装里，不进共享工厂
+    return make_gs(units, resources, seq=seq, game_time=float(seq) * 0.05, minerals=0,
+                   vespene=0, supply_used=len(units), supply_cap=50)
 
 
 def _patches(n, tag0=900):
@@ -74,7 +64,7 @@ def test_mined_out_patch_workers_are_reassigned():
     k = _keeper(port)
     patches = _patches(2)
     k.on_game_state(_gs([_scv(1), _scv(2)], patches, seq=0))
-    before = len(port.ops)
+    before = len(port.submitted)
     # 900 采空（从 resources 消失）：两个工兵的 order 目标已不存在 → 应被重派到 901
     later = RETASK_COOLDOWN_FRAMES + 1
     k.on_game_state(_gs([_scv(1, gathering=900), _scv(2, gathering=900)], patches[1:], seq=later))
@@ -165,12 +155,12 @@ def test_steady_state_emits_nothing():
     k = _keeper(port)
     patches = _patches(2)
     k.on_game_state(_gs([_scv(1), _scv(2)], patches, seq=0))
-    n = len(port.ops)
+    n = len(port.submitted)
     assert n > 0
     settled = [_scv(1, gathering=900), _scv(2, gathering=901)]
     for seq in range(1, 6):
         k.on_game_state(_gs(settled, patches, seq=seq * 100))
-    assert len(port.ops) == n, "已在目标上就不该再发命令（每帧重发 = 命令风暴 + 被 SC2 去重丢单）"
+    assert len(port.submitted) == n, "已在目标上就不该再发命令（每帧重发 = 命令风暴 + 被 SC2 去重丢单）"
 
 
 # ---- 验收 7：不满采可控 ----
@@ -349,11 +339,8 @@ def test_keeper_and_allocator_share_one_reservation_table():
 
 def _carrying_scv(tag, from_patch):
     """送矿途中的工人：Return 单（目标是基地）+ 携带矿。"""
-    u = _scv(tag)
-    return Unit(tag=u.tag, type_name="SCV", position=u.position, owner=Owner.SELF,
-                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0,
-                orders=[Order(ability="Return", target_tag=800)],
-                is_carrying_minerals=True)
+    return make_unit(tag, "SCV", orders=[Order(ability="Return", target_tag=800)],
+                     carrying_minerals=True)
 
 
 def test_returning_worker_is_not_reassigned():
@@ -365,7 +352,7 @@ def test_returning_worker_is_not_reassigned():
     k = _keeper(port)
     patches = _patches(2)
     k.on_game_state(_gs([_scv(1, gathering=900)], patches, seq=0))
-    before = len(port.ops)
+    before = len(port.submitted)
     later = RETASK_COOLDOWN_FRAMES + 1
     k.on_game_state(_gs([_carrying_scv(1, 900)], patches, seq=later))
     k.on_game_state(_gs([_carrying_scv(1, 900)], patches, seq=later + RETASK_COOLDOWN_FRAMES))
@@ -378,7 +365,7 @@ def test_returning_worker_resumes_after_delivery():
     k = _keeper(port)
     patches = _patches(2)
     k.on_game_state(_gs([_scv(1, gathering=900)], patches, seq=0))
-    before = len(port.ops)
+    before = len(port.submitted)
     k.on_game_state(_gs([_carrying_scv(1, 900)], patches, seq=30))
     # 已送达、订单空（真机里 SC2 会自动续采；观测帧没看到时维持器补一条**同矿** gather，
     # 幂等无害——关键是不会把它派去别的矿）
@@ -411,10 +398,8 @@ def test_carrying_worker_with_foreign_order_is_not_touched():
     port = _Port()
     k = _keeper(port)
     patches = _patches(2)
-    builder = Unit(tag=1, type_name="SCV", position=Point2(0.0, 0.0), owner=Owner.SELF,
-                   hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0,
-                   orders=[Order(ability="SupplyDepot", target_tag=None)],
-                   is_carrying_minerals=True)   # 扛着矿被派去建造
+    builder = make_unit(1, "SCV", orders=[Order(ability="SupplyDepot", target_tag=None)],
+                        carrying_minerals=True)   # 扛着矿被派去建造
     idle = _scv(2)
     k.on_game_state(_gs([builder, idle], patches, seq=0))
     ops = port.gathers()
@@ -441,41 +426,35 @@ def test_stale_build_order_reclaimed_after_completion():
     根因：SC2 完工后**不清**工兵的建造单（实测挂 45s+），维持器把残留单
     当外来订单整体跳过 → 永不接管。修法：订单指向的建筑已完工 = 残留单，
     安全接管派回矿；在建中（progress<1）仍是外来单，保护不动。"""
-    from game import GameState, Grid, Owner, Point2, Unit, Order
+    from game import Order, Owner, Point2
     from game.catalog import load_all
     from production.economy import EconomyKeeper
+    from tests.factories import FakePort, make_gs, make_unit
 
     CAT = load_all()
 
     def u(tag, name, x, y, orders=(), prog=1.0, owner=Owner.SELF):
-        return Unit(tag=tag, type_name=name, position=Point2(x, y), owner=owner,
-                    hp=1, hp_max=1, shield=0, energy=0, build_progress=prog,
-                    orders=list(orders))
+        return make_unit(tag, name, owner=owner, x=x, y=y, hp=1.0, hp_max=1.0,
+                         progress=prog, orders=orders)
 
-    g = Grid(1, 1, [[0]])
-    patches = [Unit(tag=900 + i, type_name="MINERALFIELD", position=Point2(126 + i * 2, 118),
-                    owner=Owner.NEUTRAL, hp=1, hp_max=1, shield=0, energy=0,
-                    build_progress=1.0) for i in range(8)]
+    patches = [make_unit(900 + i, "MINERALFIELD", owner=Owner.NEUTRAL,
+                         x=float(126 + i * 2), y=118.0, hp=1.0, hp_max=1.0)
+               for i in range(8)]
     miners = [u(100 + i, "SCV", 126 + i * 2, 117,
                 orders=[Order(ability="Gather", target_tag=900 + i)]) for i in range(7)]
 
-    class _P:
-        submitted = []
-
-        def submit_operations(self, ops):
-            self.submitted.extend(ops)
+    port = FakePort()
 
     def _run(extra_units, probe_tag):
-        _P.submitted.clear()
-        gs = GameState(seq=100, game_time=15.0, minerals=200, vespene=0,
-                       supply_used=9, supply_cap=13,
-                       units=[u(1, "COMMANDCENTER", 131, 120)] + miners + extra_units,
-                       map_size=(176, 160), creep=g, visibility=g, resources=patches)
-        k = EconomyKeeper(CAT, _P())
+        port.submitted.clear()
+        gs = make_gs([u(1, "COMMANDCENTER", 131, 120)] + miners + extra_units,
+                     patches, seq=100, game_time=15.0, minerals=200,
+                     supply_used=9, supply_cap=13)
+        k = EconomyKeeper(CAT, port)
         k.set_target("mineral", 8)
         k.set_target("gas", 0)
         k.on_game_state(gs)
-        return [o for o in _P.submitted if probe_tag in o.unit_tags]
+        return [o for o in port.submitted if probe_tag in o.unit_tags]
 
     # 残留单（指向已完工 depot）→ 接管，gather 派回矿
     ops = _run([

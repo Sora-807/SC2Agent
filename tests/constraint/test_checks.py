@@ -1,21 +1,19 @@
 """constraint 可行性校验：build/train 的门控项逐一断言（资源/供给/前置/放置）。"""
 from game import GameState, Grid, Owner, Point2, Unit
 from game.catalog import load_all
+from tests.factories import make_gs, make_unit
 from constraint.checks import check_build, check_resources, check_train
 
 CAT = load_all()
 
 
 def _u(tag, type_name, owner=Owner.SELF, x=0.0, y=0.0, progress=1.0):
-    return Unit(tag=tag, type_name=type_name, position=Point2(x, y), owner=owner,
-                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=progress)
+    return make_unit(tag, type_name, owner, x, y, hp=400.0, hp_max=400.0, progress=progress)
 
 
 def _gs(units=(), minerals=200, vespene=0, supply_used=8, supply_cap=15):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=0.0, minerals=minerals, vespene=vespene,
-                     supply_used=supply_used, supply_cap=supply_cap, units=list(units),
-                     map_size=(176, 160), creep=g, visibility=g)
+    return make_gs(units, seq=0, game_time=0.0, minerals=minerals, vespene=vespene,
+                   supply_used=supply_used, supply_cap=supply_cap)
 
 
 def test_check_build_ok():

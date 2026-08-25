@@ -3,6 +3,7 @@ import pytest
 
 from game import GameState, Grid, Owner, Point2, Unit
 from game.catalog import load_all
+from tests.factories import make_gs, make_unit
 from flow.predicates import EvalCtx, UNIMPLEMENTED_PREDICATE_OPS, eval_when
 from tactical_map import load_region_layer
 
@@ -47,14 +48,12 @@ class FakeAllocator:
 
 
 def _u(tag, x, y, owner=Owner.SELF, type_name="MARINE", hp=45.0, hp_max=45.0, progress=1.0):
-    return Unit(tag=tag, type_name=type_name, position=Point2(x, y), owner=owner,
-                hp=hp, hp_max=hp_max, shield=0.0, energy=0.0, build_progress=progress)
+    return make_unit(tag, type_name, owner, x, y, hp=hp, hp_max=hp_max, progress=progress)
 
 
 def _gs(units, game_time=10.0):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=game_time, minerals=50, vespene=0, supply_used=0,
-                     supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g)
+    return make_gs(units, seq=0, game_time=game_time, minerals=50, vespene=0,
+                   supply_used=0, supply_cap=20)
 
 
 def _ctx(gs=None, alloc=None, bindings=None, params=None, variables=None, layer=None,

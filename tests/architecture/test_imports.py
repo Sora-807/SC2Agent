@@ -16,11 +16,23 @@
 
 "ports" 出现在每个模块的禁止列表里 = 回归守卫：顶层 ports 模块已删除，
 任何模块重新 import ports 即测试失败。
+
+顶层包（modules/ 之外，2026-08-25 补守卫）：
+- agent：引擎之外的消费者。可读 view/tactical_map/planner/constraint/game 的读模型与
+  vendor agentic；禁止碰 api（传输）/driver+sc2（驱动与游戏循环）/flow/production/
+  world/mechanics（引擎内部）——命令走 HTTP 客户端，观测走读模型，不内嵌引擎
+- eval：评测消费者，地位同 tests——可以 import 任何项目代码；反向禁止：
+  modules/ 与 agent/ 不认识 eval（评测框架渗进被测对象即失效）
+- voice：语音栈是可附加 sidecar（本地 WIP，未入库）。引擎与 agent 永不 import 它；
+  若日后回库，此规则防止它长进引擎依赖
+- api → agent 只许 lazy：装配根（create_app 内）可构造 agent 运行时，但模块级
+  import 即传输层反向硬依赖运行时，测试失败
 """
 import re
 from pathlib import Path
 
 MODULES_DIR = Path(__file__).resolve().parents[2] / "modules"
+AGENT_DIR = Path(__file__).resolve().parents[2] / "agent"
 
 # module -> 禁止 import 的顶层名（其余模块 + 第三方 sc2，driver 除外）
 PROHIBITED = {
@@ -40,11 +52,19 @@ PROHIBITED = {
 }
 
 _IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)")
+_MODULE_LEVEL_IMPORT_RE = re.compile(r"^(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)")
+
+# agent 包禁止 import 的顶层名（见模块 docstring：消费者边界）
+AGENT_PROHIBITED = {"ports", "api", "driver", "sc2", "flow", "production", "world", "mechanics", "eval", "voice"}
 
 
 def _module_files(module: str) -> list[Path]:
     d = MODULES_DIR / module
     return list(d.rglob("*.py")) if d.is_dir() else []
+
+
+def _pkg_files(root: Path) -> list[Path]:
+    return list(root.rglob("*.py")) if root.is_dir() else []
 
 
 def _imports_in(path: Path) -> set[str]:
@@ -111,3 +131,47 @@ def test_nobody_imports_view_or_api():
 def test_sc2_importable():
     """环境冒烟：driver 的 SC2 库可 import。"""
     import sc2  # noqa: F401
+
+
+def test_agent_dependency_direction():
+    """agent/ 是引擎之外的消费者：只读读模型 + vendor，不内嵌引擎/传输/驱动。
+
+    命令必须走 HTTP 客户端（agent.client），观测必须走 view 读模型——agent 一旦
+    import api/driver/引擎内部，"外接 agent"就变成了进程内耦合，评测与替换都失效。
+    """
+    violations = []
+    for f in _pkg_files(AGENT_DIR):
+        bad = _imports_in(f) & AGENT_PROHIBITED
+        if bad:
+            violations.append(f"{f.relative_to(AGENT_DIR.parent)}: imports {sorted(bad)} (prohibited)")
+    assert not violations, "agent 包依赖方向违规:\n" + "\n".join(violations)
+
+
+def test_nobody_imports_eval_or_voice():
+    """eval 是评测消费者（同 tests 地位），voice 是可附加 sidecar——被测对象不认识它们。
+
+    modules/ 与 agent/ 里出现 `import eval` / `import voice` 即方向反了：
+    评测框架或语音栈渗进引擎，被测系统就依赖了自己的裁判/外设。
+    """
+    violations = []
+    for root in (MODULES_DIR, AGENT_DIR):
+        for f in _pkg_files(root):
+            bad = _imports_in(f) & {"eval", "voice"}
+            if bad:
+                violations.append(f"{f.relative_to(root.parent)}: imports {sorted(bad)}")
+    assert not violations, "引擎/agent 反向 import 了 eval 或 voice:\n" + "\n".join(violations)
+
+
+def test_api_imports_agent_lazy_only():
+    """api 装配根可在函数体内 lazy 构造 agent 运行时；模块级 import 即硬违规。
+
+    现状：app.py create_app 内 `from agent... import`（缩进 = lazy）。这条测试把
+    lazy-only 固化——模块级 import 会让传输层在 import 期就拖起 agent/LLM 栈。
+    """
+    violations = []
+    for f in _module_files("api"):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            m = _MODULE_LEVEL_IMPORT_RE.match(line)
+            if m and m.group(1) == "agent":
+                violations.append(f"{f.relative_to(MODULES_DIR)}: `{line.strip()}`（模块级）")
+    assert not violations, "modules/api 对 agent 只许函数内 lazy import:\n" + "\n".join(violations)

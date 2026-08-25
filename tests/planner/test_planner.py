@@ -3,6 +3,7 @@ import pytest
 
 from game import GameState, Grid, Order, Owner, Point2, Unit
 from game.catalog import load_all
+from tests.factories import make_gs, make_unit
 from planner.build_order import Build, ProductionModuleInstance, Train, register_module
 from planner.planner import Planner
 
@@ -10,16 +11,13 @@ import planner  # noqa: F401  触发内置模块注册
 
 
 def _unit(tag, type_name, owner=Owner.SELF, build_progress=1.0, orders=()):
-    return Unit(tag=tag, type_name=type_name, position=Point2(0, 0), owner=owner,
-                hp=100.0, hp_max=100.0, shield=0.0, energy=0.0, build_progress=build_progress,
-                orders=list(orders))
+    return make_unit(tag, type_name, owner, 0.0, 0.0, hp=100.0, hp_max=100.0,
+                     progress=build_progress, orders=orders)
 
 
 def _gs(units, resources=(), minerals=5000, vespene=500, supply_used=12, supply_cap=15, t=0.0):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=t, minerals=minerals, vespene=vespene,
-                     supply_used=supply_used, supply_cap=supply_cap, units=list(units),
-                     map_size=(176, 160), creep=g, visibility=g, resources=list(resources))
+    return make_gs(units, resources, seq=0, game_time=t, minerals=minerals, vespene=vespene,
+                   supply_used=supply_used, supply_cap=supply_cap)
 
 
 def _start_with_cc_and_scv(minerals=5000, gas=500):

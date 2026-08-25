@@ -1,6 +1,7 @@
 """tactical_map.base：主基建造模板（多出生点变体 + 平移实例化 + 与生产运行时联动）。"""
 from game import GameState, Grid, GridPos, Owner, Point2, QueueItem, Unit
 from game.catalog import load_all
+from tests.factories import make_gs, make_unit
 from game.production import PlacementInRegion
 from production.runtime import ProductionRuntime
 from tactical_map.base import (
@@ -55,14 +56,12 @@ def test_instantiate_translates_slots_and_anchor(tmp_path):
 
 
 def _u(tag, tn, x=0.0, y=0.0):
-    return Unit(tag=tag, type_name=tn, position=Point2(x, y), owner=Owner.SELF,
-                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return make_unit(tag, tn, Owner.SELF, x, y, hp=400.0, hp_max=400.0)
 
 
 def _gs(units, minerals=400):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=0.0, minerals=minerals, vespene=0, supply_used=8,
-                     supply_cap=15, units=units, map_size=(176, 160), creep=g, visibility=g)
+    return make_gs(units, seq=0, game_time=0.0, minerals=minerals, vespene=0,
+                   supply_used=8, supply_cap=15)
 
 
 class _Port:

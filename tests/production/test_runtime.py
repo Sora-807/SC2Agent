@@ -1,6 +1,9 @@
 """生产运行时：队首 constraint 门控 + drain + 放置解析 + 队列工具操作（P0 生产模块安排）。"""
+import pytest
+
 from game import GameState, Grid, Owner, Point2, QueueItem, QueueOp, Unit, WorkerTask
 from game.catalog import load_all
+from tests.factories import FakePort, make_gs, make_unit
 from game.production import PlacementExact, PlacementInRegion
 from production.runtime import STALL_WARN_SECS, ProductionRuntime
 from tactical_map import load_region_layer
@@ -47,25 +50,18 @@ def _layer():
     return load_region_layer(LAYER_YAML)
 
 
-class _Port:
-    def __init__(self):
-        self.submitted = []
-
-    def submit_operations(self, ops):
-        self.submitted.extend(ops)
+_Port = FakePort
 
 
 def _u(tag, type_name, owner=Owner.SELF, x=0.0, y=0.0, progress=1.0):
-    return Unit(tag=tag, type_name=type_name, position=Point2(x, y), owner=owner,
-                hp=400.0, hp_max=400.0, shield=0.0, energy=0.0, build_progress=progress)
+    return make_unit(tag, type_name, owner=owner, x=x, y=y, progress=progress,
+                     hp=400.0, hp_max=400.0)
 
 
 def _gs(units=(), resources=(), minerals=200, vespene=0, supply_used=8, supply_cap=15,
         game_time=0.0):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=game_time, minerals=minerals, vespene=vespene,
-                     supply_used=supply_used, supply_cap=supply_cap, units=list(units),
-                     map_size=(176, 160), creep=g, visibility=g, resources=list(resources))
+    return make_gs(units, resources, game_time=game_time, minerals=minerals,
+                   vespene=vespene, supply_used=supply_used, supply_cap=supply_cap)
 
 
 def _runtime(port, queue_name="open"):
@@ -179,6 +175,44 @@ def test_retry_claims_late_entity_without_reemitting():
                           _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.5)], minerals=400))
     assert len(port.submitted) == 1    # 没有第二次发射
     assert rt._build_flights["open"][0]["entity_tag"] == 9
+
+
+# ---- I26 类泛化（2026-08-25 审计批3c）：收编是「任意 build 项 × 任意发射位」的规则，
+# 不是补给站@(3,3) 专属。期望实体位从实际提交的 op 读（ADR-0027：实体中心 = 发射位
+# +0.5），换建筑类型 / 换出现进度（含 progress=0.0 的地基）各验一遍。 ----
+@pytest.mark.parametrize("stable_id,sc2_name,progress", [
+    pytest.param("terran/supplydepot", "SUPPLYDEPOT", 0.0, id="depot-progress0"),
+    pytest.param("terran/barracks", "BARRACKS", 0.0, id="barracks-progress0"),
+    pytest.param("terran/engineeringbay", "ENGINEERINGBAY", 0.4, id="engbay-progress04"),
+])
+def test_late_entity_claim_is_type_agnostic(stable_id, sc2_name, progress):
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type=stable_id,
+                                       placement=PlacementInRegion("home"))])
+    # 前置从 catalog 推（换类型不用改测试）：已满足的不摆；缺的补到远角，别压槽位
+    base = [_u(1, "COMMANDCENTER"), _u(2, "SCV")]
+    have = {"COMMANDCENTER"}
+    n = 0
+    for pre in CAT.by_stable_id(stable_id).prerequisites or ():
+        name = CAT.burnysc2_name_for(pre)
+        if name is None or name in have:
+            continue
+        base.append(_u(20 + n, name, x=7.0, y=7.0 + 2 * n))
+        have.add(name)
+        n += 1
+    gs0 = _gs(base, minerals=2000)
+    rt.on_game_state(gs0)
+    ex, ey = port.submitted[0].params["position"]
+    late = _u(9, sc2_name, x=ex + 0.5, y=ey + 0.5, progress=progress)
+    rt.on_game_state(_gs(base + [late], minerals=2000))
+    assert rt._build_flights["open"][0]["entity_tag"] == 9, "晚到同型实体要收编（不分建筑类型）"
+    assert rt.queue("open").items[0].status == "in_progress"
+    for _ in range(3):
+        done = _u(9, sc2_name, x=ex + 0.5, y=ey + 0.5, progress=1.0)
+        rt.on_game_state(_gs(base + [done], minerals=2000))
+    assert len(port.submitted) == 1, "收编后不再换槽重发"
+    assert rt.queue("open").items[0].status == "completed"
 
 
 def test_build_dropped_when_candidates_exhausted():

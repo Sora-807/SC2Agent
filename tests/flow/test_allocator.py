@@ -2,19 +2,18 @@
 from game import GameState, Grid, Owner, Point2, Unit
 from game.catalog import load_all
 from flow.allocator import Allocator
+from tests.factories import make_gs, make_unit
 
 CAT = load_all()
 
 
 def _u(tag, type_name="MARINE", owner=Owner.SELF, x=0.0, y=0.0):
-    return Unit(tag=tag, type_name=type_name, position=Point2(x, y), owner=owner,
-                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return make_unit(tag, type_name, owner, x, y, hp=45.0, hp_max=45.0)
 
 
 def _gs(units):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=0.0, minerals=50, vespene=0, supply_used=0,
-                     supply_cap=20, units=units, map_size=(176, 160), creep=g, visibility=g)
+    return make_gs(units, seq=0, game_time=0.0, minerals=50, vespene=0,
+                   supply_used=0, supply_cap=20)
 
 
 def test_fill_to_target_fcfs():

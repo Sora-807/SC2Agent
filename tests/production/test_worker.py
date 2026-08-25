@@ -1,30 +1,27 @@
 """WorkerAllocator：矿 2 / 气 3 饱和 + 分摊 + idle 解放 + catalog 选工兵。"""
 from collections import Counter
 
-from game import GameState, Grid, Order, Owner, Point2, Unit, WorkerTask
+import pytest
+
+from game import Order, Owner, Point2, WorkerTask
 from game.catalog import load_all
 from production.worker import WorkerAllocator
+from tests.factories import make_gs, make_unit
 
 CAT = load_all()
 ALLOC = WorkerAllocator(CAT)
 
 
 def _u(tag, type_name="SCV", owner=Owner.SELF, orders=()):
-    return Unit(tag=tag, type_name=type_name, position=Point2(0, 0), owner=owner,
-                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0,
-                orders=list(orders))
+    return make_unit(tag, type_name, owner=owner, hp=45.0, hp_max=45.0, orders=orders)
 
 
 def _res(tag, type_name):
-    return Unit(tag=tag, type_name=type_name, position=Point2(0, 0), owner=Owner.NEUTRAL,
-                hp=0.0, hp_max=0.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return make_unit(tag, type_name, owner=Owner.NEUTRAL, hp=0.0, hp_max=0.0)
 
 
 def _gs(units=(), resources=()):
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=0, game_time=0.0, minerals=50, vespene=0, supply_used=0,
-                     supply_cap=20, units=list(units), map_size=(176, 160),
-                     creep=g, visibility=g, resources=list(resources))
+    return make_gs(units, resources, minerals=50, supply_used=0, supply_cap=20)
 
 
 def test_mineral_round_robin_distribution():
@@ -53,6 +50,18 @@ def test_gas_saturation_three():
     e = ALLOC.assign(_gs([_u(i) for i in range(1, 5)] + [refinery], [_res(20, "VESPENEGEYSER")]),
                      WorkerTask.GAS, 4)
     assert len(e) == 3  # 气井饱和 3，第 4 个不派
+
+
+@pytest.mark.parametrize("gas_building", ["EXTRACTOR", "ASSIMILATOR"])
+def test_gas_node_detection_is_race_agnostic(gas_building):
+    """批4（2026-08-25 审计）：气矿建筑识别走 catalog（where(capability="gas")），
+    不再写死 "REFINERY" —— Zerg EXTRACTOR / Protoss ASSIMILATOR 同样是合法 gas 节点
+    （否则 Z/P 对局里气矿工被当 idle、气收入=0）。"""
+    b = _u(99, gas_building)
+    b.position = Point2(0, 0)
+    e = ALLOC.assign(_gs([_u(i) for i in range(1, 5)] + [b], [_res(20, "VESPENEGEYSER")]),
+                     WorkerTask.GAS, 4)
+    assert len(e) == 3, "气矿建筑识别与饱和上限对三族一致"
 
 
 def test_no_nodes_or_no_workers_noop():

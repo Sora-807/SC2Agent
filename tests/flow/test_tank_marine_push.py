@@ -18,6 +18,7 @@ from flow.engine import FlowEngine
 from flow.manifest import parse_assembly, parse_strategy
 from game.catalog import load_all
 from game import GameState, Grid, Owner, Point2, Unit
+from tests.factories import make_gs, make_unit
 
 CAT = load_all()
 
@@ -32,8 +33,7 @@ TARGET = Point2(20.0, 0.0)  # tank_cover=10.4；前沿点轮1=(10.4,0)，轮2=(2
 
 
 def _unit(tag, type_name, pos, owner=Owner.SELF):
-    return Unit(tag=tag, type_name=type_name, position=pos, owner=owner,
-                hp=45.0, hp_max=45.0, shield=0.0, energy=0.0, build_progress=1.0)
+    return make_unit(tag, type_name, owner, pos.x, pos.y, hp=45.0, hp_max=45.0)
 
 
 def _gs(seq, inf_pos, tank_pos, enemies=()):
@@ -42,10 +42,8 @@ def _gs(seq, inf_pos, tank_pos, enemies=()):
     units += [_unit(200 + i, "SIEGETANK", tank_pos) for i in range(4)]
     for i, p in enumerate(enemies):
         units.append(_unit(300 + i, "ZERGLING", p, owner=Owner.ENEMY))
-    g = Grid(1, 1, [[0]])
-    return GameState(seq=seq, game_time=float(seq), minerals=0, vespene=0,
-                     supply_used=24, supply_cap=100, units=units,
-                     map_size=(176, 160), creep=g, visibility=g)
+    return make_gs(units, seq=seq, game_time=float(seq), minerals=0, vespene=0,
+                   supply_used=24, supply_cap=100)
 
 
 def _ops(port, action):
