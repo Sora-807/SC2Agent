@@ -268,16 +268,18 @@ sim/离线没有 game_info → 地形为 null → 前端仍降级纯色底（不
 | 写面 = 同一套命令 API + 提案通道 | B6 / B7 | 会出现 agent 专用后门,UI 看不见 agent 干了什么(违前端 U7/P4) |
 | 新鲜度 = `based_on_seq` 强制字段 | B6 | R8 无处落地;事后给所有命令加必填字段是破坏性变更 |
 
-**不在本轮设计**(归后续 `plan-agent.md`):LLM 选型、prompt、`IntentRouter`(ADR-0005)、
+**不在本轮设计**(归后续 agent 面——现落点 `docs/ARCHITECTURE.md` §6 与 `agent/seeds/` 提示词模板;
+原 `plan-agent.md` 已删除):LLM 选型、prompt、`IntentRouter`(ADR-0005)、
 工具目录细化、记忆与上下文压缩、思考深度分层。理由:这三样都依赖"命令 API 已稳定 + 有真实提案 diff 可看 +
 有一局真机帧数据",现在写等于凭空想象。
 
-**与 ADR-0005 的张力(需在 `plan-agent.md` 中显式处理)**:ADR-0005 把 V1 定为
+**与 ADR-0005 的张力**(现落点同上):ADR-0005 把 V1 定为
 `live_policy="no_think"` + `IntentRouter`(快速把自然语言变成 patch);而用户已确认的形态是
-**重对话栏 + agent 推草稿 + 用户审批**——这是一个会思考、产出提案的 agent,主次关系相对 ADR-0005 已经反转。
+**重对话栏 + agent 推草稿**——这是一个会思考、产出提案的 agent,主次关系相对 ADR-0005 已经反转
+(人审环节 2026-08-22 起停用,提案校验通过即自动应用)。
 两者不互斥(router 可作为 dispatch/look/start/stop 这类低延迟子集的优化),但 ADR-0005 的
 "V1 重点 = router" 与 "validate → simulate → commit 三步必过"(需求文档 R6 只要求 validate + compile,
-S11 明确队列 op 不走 validate/simulate)都需要在 `plan-agent.md` 里重新定位。
+S11 明确队列 op 不走 validate/simulate)都已在实现面重新定位。
 
 ### 与 ADR-0030（经济维持器 × 工兵所有权）的握手
 
@@ -358,7 +360,7 @@ interface EconomyFrame {
 **改动**:
 1. `modules/view/schema.py`:按 `plan-frontend.md` §2 写 dataclass —— `Envelope`、`MapStatic`、`CatalogStatic`、
    `SchemaStatic`、`SessionFrame`、`WorldFrame`、`FlowFrame`、`ProductionFrame`、`OpsFrame`、`ProjectionFrame`、`AlertsFrame`。
-   **只依赖 `game`**(V3)。`REV = 1` 常量。
+   **只依赖 `game`**(V3)。`REV` 常量(写作时 =1,**现为 18**,权威在 `modules/view/schema.py`)。
 2. `modules/view/encode.py`:`to_json(obj) -> dict`(dataclass→dict,枚举取 value,`Point2`→`[x,y]`);
    `grid_to_b64(Grid) -> GridB64`(行主序 uint8 + base64)。
 3. `modules/view/jsonl.py`:`write_frames(path, iter[Envelope])` / `read_frames(path) -> iter[Envelope]`。
@@ -404,7 +406,10 @@ interface EconomyFrame {
   (队首阻塞原因 + 起始时间 + 是否已超 `STALL_WARN_SECS=30`)、`dropped: [(item, reason)]`。
   → `ProductionFrame.queues[].blocked` 与 `.dropped` **零新增代码**即可产出(契约 rev 2 已按此形状定)。
 - ⏳ **仍需补**:`_drain` 每项 outcome 落到 `_item_status[(queue,index)] = (status, block_reason)`
-  (`队首阻塞/未处理/已发出/在途`);`_resolve_placement` 成功时记 `resolved_point`。
+  (`队首阻塞/未处理/已发出/在途`)。
+  > ⚠️ 2026-08-25 注:本段是设计时快照。实际落地走得更远——ADR-0032 队列执行账本已把
+  > items[].status 扩为 **uid + 四值闭集(pending/in_progress/completed/skipped) + reason**,
+  > 完成项留队、skip-and-continue;`resolved_point` 未做。以 ADR-0032 与 `docs/ARCHITECTURE.md` §3.8 为准。
 - `ProductionRuntime.snapshot() -> ProductionView`:queues(含每项 status/block_reason/resolved_point)
   + `in_flight`(从 `_build_flights` 摊平:stable_id/kind/builder_tag/expect_pos/radius/frames_waited/
   timeout_frames/retries/confirmed)+ `dropped` 全量。
@@ -524,7 +529,7 @@ zh 名一律取自 `static/catalog`(与 UI 同源,V5/U6)。
 **红线**:严禁为 agent 另建一条从 GameState 直接摘要的路径(那就是 ADR-0007 禁止的"第二份派生"的 agent 版);
 `ObservationPacket.seq` 必须等于其来源帧的 seq,以便 B6 的 `based_on_seq` 校验闭环。
 
-**不做**:prompt 模板、router、记忆压缩、思考分层 —— 全部归后续 `plan-agent.md`(见本文件 §6 说明)。
+**不做**:prompt 模板、router、记忆压缩、思考分层 —— 全部归 agent 面(现落点 `agent/seeds/` 与 `docs/ARCHITECTURE.md` §6;原 `plan-agent.md` 已删除)。
 
 ---
 
