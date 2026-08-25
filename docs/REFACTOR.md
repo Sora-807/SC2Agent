@@ -104,14 +104,14 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 
 ---
 
-## §5 空 / stub 模块
+## §5 空 / stub 模块（2026-08-25 N5 批收尾完毕——下表为处置留档）
 
-| 位置 | 状态 | 处理 |
+| 位置 | 状态 | 处置 |
 |---|---|---|
-| `modules/mechanics/__init__.py` | **整个空**，3 行 docstring 占位（D11 power/addon 机制待建）| 留占位可以，但加 issue/ADR 引用（否则无声腐烂）|
-| `modules/world/__init__.py` | docstring 头；`adapter.py`(88) 是真 V1 实现 | 非 stub，不动 |
-| `driver/sc2_adapter.py:496-498` | `SC2GamePort.stop()` 是 `pass`——**唯一真正的假实现**，靠 `LiveSession` 杀子进程兜底 | 要么真停 SC2，要么接口改名让 no-op 显式 |
-| `flow/engine.py:214-215` + `view/recorder.py:56-57` | `on_session_event` bare `pass` no-op（D7 事件流未定）| 加 issue 引用，别让它无声腐烂；engine 的 `pass` 与全文件"不静默"原则相悖，要么注释要么 wire |
+| `modules/mechanics/__init__.py` | 3 行 docstring 占位（D11 power/addon 机制待建）| **已挂账（N5）**：docstring 加 ADR-0002 §4（种族机制归层的约定）与本表引用；启用前调用层最小近似的先例（planner Zerg 钩子）已标注 |
+| `modules/world/__init__.py` | docstring 头；`adapter.py` 是真 V1 实现 | 非 stub，不动 |
+| `driver/sc2_adapter.py` `SC2GamePort.stop()` | **唯一真正的假实现**（`pass`）| **显式 no-op（N5）**：docstring 如实挂牌——真机停机链路在进程树清理（api/live_io.kill_tree），本方法无调用方、只为协议形状；真实现（surrender/leave）挂账本表 |
+| `flow/engine.py` + `view/recorder.py` `on_session_event` | bare no-op（D7 事件流未定）| **已加注（N5）**：engine 侧补 docstring（与 recorder 同一拍板：不猜字段、不静默造数据），wire 待事件源落地（ISSUES 开放清单 #9 世界推导路线） |
 
 ---
 

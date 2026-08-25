@@ -548,8 +548,11 @@ class SC2GamePort:
             self._bot._pace_multiplier = self._speed or None
 
     def stop(self) -> None:
-        # V1：run_game 到 game_time_limit 自止；显式 kill SC2 待补
-        pass
+        """显式 no-op（全 modules 唯一的假实现，如实挂牌）：真机的停机链路不在
+        这条进程内——run_session 子进程由 LiveSession 走进程树清理
+        （api/live_io.kill_tree），run_game 到 game_time_limit 自止。本方法只为
+        满足 GamePort 协议形状，无调用方（引擎/会话都不经它停机）；显式
+        kill SC2（surrender/leave）挂账 REFACTOR §5。"""
 
     def submit_operations(self, ops: list[Operation]) -> ApplyResult:
         """受理后**异步**应用（下一 step 生效），所以同步返回时全是 `ok=None`（待裁决）。

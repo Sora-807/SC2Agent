@@ -204,27 +204,38 @@ def test_copy_delete_roundtrip(client: TestClient):
 # ---------------- 会话装配（进入游戏加载哪一份） ----------------
 
 def test_sim_session_assembles_from_map_plan_and_emits_terrain(client: TestClient):
-    """沙盒会话带 map_plan 启动：装配用该规划文件，且 statics 里有真地形。"""
+    """沙盒会话带 map_plan 启动：装配用该规划文件，且 statics 里有真地形。
+
+    flaky 修（N5，2026-08-25 两次全量跑复现）：原来轮询 `frames>3`（10s 预算）后
+    直接断言 terrain——子进程冷启动偶发超预算就红（单跑绿）。改成**轮询真正的
+    断言前置**（statics 里出现 static/terrain 与 static/map），预算 30s；失败路径
+    finally 停会话（漏停的子进程会拖慢整场后续测试，雪上加霜）。
+    """
     r = client.post("/api/session/start",
                     params={"driver": "sim", "autotick": "false", "map_plan": "layout"})
     assert r.status_code == 200
     info = r.json()
     assert "layout" in info["label"], info["label"]
-    for _ in range(40):
-        desc = client.get("/api/session").json()
-        if desc.get("frames", 0) > 3:
-            break
-        time.sleep(0.25)
-    statics = client.get("/api/sources/live/statics").json()
-    topics = [f["topic"] for f in statics]
-    assert "static/terrain" in topics
-    terr = next(f for f in statics if f["topic"] == "static/terrain")["payload"]
-    assert terr["height"] is not None and terr["height"]["data_b64"], "真机采集的地形"
-    m = next(f for f in statics if f["topic"] == "static/map")["payload"]
-    names = {s["name"] for s in m["build_slots"]}
-    assert {"D1", "R1", "F1"} <= names, "装配来自出厂校准布局（默认裸名）"
-    assert "layout/D1" in names, "默认规划自己也带命名空间键（显式引用不受热切影响）"
-    client.post("/api/session/stop")
+    try:
+        deadline = time.monotonic() + 30.0
+        statics: list[dict] = []
+        topics: list[str] = []
+        while time.monotonic() < deadline:
+            statics = client.get("/api/sources/live/statics").json()
+            topics = [f["topic"] for f in statics]
+            if "static/terrain" in topics and "static/map" in topics:
+                break
+            time.sleep(0.25)
+        assert "static/terrain" in topics, \
+            f"30s 内未见 static/terrain（子进程冷启动超时；已见 {topics}）"
+        terr = next(f for f in statics if f["topic"] == "static/terrain")["payload"]
+        assert terr["height"] is not None and terr["height"]["data_b64"], "真机采集的地形"
+        m = next(f for f in statics if f["topic"] == "static/map")["payload"]
+        names = {s["name"] for s in m["build_slots"]}
+        assert {"D1", "R1", "F1"} <= names, "装配来自出厂校准布局（默认裸名）"
+        assert "layout/D1" in names, "默认规划自己也带命名空间键（显式引用不受热切影响）"
+    finally:
+        client.post("/api/session/stop")
 
 
 def test_session_rejects_unknown_map_plan(client: TestClient):

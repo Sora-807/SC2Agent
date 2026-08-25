@@ -1,9 +1,17 @@
 /**
- * 源码扫描小工具（供 layout.test.ts / F11 theme.test.ts 等结构约定测试共用）
+ * 源码扫描小工具（约定扫描 / 决策锁测试的**单点**，N4 治理定稿）
  *
  * 为什么需要它：结构约定测试要断言"代码里没有 X"，但**注释里往往正好解释了"为什么不用 X"**——
  * 直接 `toContain` 会被自己的注释绊倒（F10 第一次跑就踩了三条）。
  * 所以扫描前先剥注释，让断言只看代码。
+ *
+ * 政策（N4 / D3，2026-08-25）：tests/ 里的 readFileSync 只允许三类正当用途——
+ * ① fixtures 加载（economy/source/schema/graph/gantt 等）；
+ * ② 约定扫描（custom-lint：theme/layout 的全仓禁令——无行为可迁，走本助手单点）；
+ * ③ 跨语言契约对账（contract 精确解析后端 Python 的 REV/TOPICS）。
+ * 组件接线/决策锁（chat-dock/map-canvas/charts 的交互段）也统一经本助手读源——
+ * 它们锁的是**用户拍板的 UI/交互决策**（迁渲染测试不改变锁的性质，且本仓无渲染
+ * 基建、UI 由用户自测）；重构允许同步改断言字符串，但不许静默删测试。
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -66,3 +74,9 @@ export function stripComments(src: string): string {
 
 /** 剥掉注释的源码（结构约定断言一律用它） */
 export const code = (relPath: string): string => stripComments(raw(relPath));
+
+/** 绝对路径版（allSources() 的产物直接喂）：剥注释 */
+export const codeAbs = (abs: string): string => stripComments(readFileSync(abs, "utf8"));
+
+/** 绝对路径版：原样读（含注释） */
+export const rawAbs = (abs: string): string => readFileSync(abs, "utf8");

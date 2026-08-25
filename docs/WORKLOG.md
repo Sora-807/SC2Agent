@@ -116,6 +116,57 @@
   测试再跑 api**。另：`_StartBody` 定义在搬切点之前被复制成两份，发现后清。
 - **回填**：PLAN-NEXT N3 出队（D1 已决注记）。
 
+## 0.69 N4 批：前端测试形态治理（PLAN-NEXT 第四席，D3=分类处置，2026-08-25）
+
+> 摸底推翻了「迁为行为测试」的简单假设：12 个 readFileSync 文件里只有 3 个是
+> 审计抱怨的接线锁；5 个是 fixtures 加载（正当）、1 个是跨语言契约对账
+> （contract 用精确正则解析后端 schema.py 的 REV/TOPICS——正当）、2 个是全仓
+> 约定禁令（theme/layout = custom-lint，**无行为可迁**）。接线锁断言的大半是
+> **用户拍板的 UI/交互决策**（5 行输入框、无发送按钮、拖动=平移、框选下线）——
+> 本仓无渲染基建（vitest node 环境、纯函数哲学）且 UI 由用户自测，迁渲染测试
+> 不改变「锁」的性质。D3 据此拍板：分类处置而非全迁，验收口径如实修订。
+
+- **扫描单点化**：source-scan.ts 加政策头（三类正当用途 + 决策锁守则）与
+  `codeAbs/rawAbs`；chat-dock/charts 的**弱版内联 code()**（正则剥注释，不认识
+  字符串字面量）删并到 stripComments；map-canvas 的 cwd 相对路径
+  （`readFileSync("src/...")`，换目录跑就挂）改 SRC 锚定；theme 的本地文件
+  遍历器与 rel 计算删并到 allSources/rel；layout 的 `stripComments(readFileSync(p))`
+  改 codeAbs。
+- **真修一条注释依赖断言**：「流面失败回退整段」原本靠 `sayChat(text); // 回退`
+  的**行尾注释**才同线成立——真剥注释后断空，改锁代码事实
+  （`sayChatStream…sayChat\(text\)` 序列）。这正是审计说的子串锁的病根标本。
+- **it.each 立杆**：theme 的 FONT_PX 三载体对齐（index.css @utility = FONT_PX =
+  tokens.T）从 for 循环改 it.each——哪个 token 不齐单独红。
+- **验收（D3 口径）**：`grep readFileSync web/tests` = fixtures 加载（economy/
+  source/schema/graph/gantt/charts×1）+ contract 契约读 + source-scan 单点；
+  396 绿 + typecheck 净（后端本批零改动，N3 门仍有效）。
+- **教训**：bash heredoc 里写 Python 替换正则转义三连坑（`\\/`/`\\s` 层层失真）——
+  含正则的替换一律走 Edit 工具，别再在 heredoc 里猜。
+- **回填**：PLAN-NEXT N4 出队（D3 已决注记 + 验收口径修订理由）。
+
+## 0.70 N5 批：质量杂项收官（PLAN-NEXT 第五席，工程批 N1-N5 至此清空，2026-08-25）
+
+- **flaky 修**（`test_sim_session_assembles…terrain`，全量跑偶发红两次复现）：
+  根因 = 轮询 `frames>3`（10s 预算）后直接断言——子进程冷启动偶发超预算就红；
+  且失败路径不停会话，漏的 sim 子进程拖慢全场雪上加霜。修：轮询**真前置**
+  （statics 出现 static/terrain + static/map）、预算 30s、finally 停。
+- **llm_stream 迁直调**：`tests/agent/test_llm_stream.py` 8 条——双字段容错
+  parametrize（reasoning/reasoning_content 各一条 + 混用一条）、零分片重试
+  （sleep 打桩不真等）、partial 不重试、预算三态（用尽不调 API 返 budget-stop
+  哨兵落 model 字段——vendor 形状无 finish_reason、计数跨调用累计、reset 清限）。
+  tests/api/test_agent_chat.py 删 3 条装配版（鸭子类型样板三份重复随之归一）。
+- **覆盖缺口核实**（推翻「两区最危险」的行数比印象）：import 级扫描 agent/ 全
+  覆盖；view 裸模块只有 fmt（N2 新建）与 jsonl——补 `tests/view/test_fmt.py`
+  （7 参数）+ `tests/view/test_jsonl.py`（往返/一行一封/空行跳过/坏行带行号
+  parametrize）；map_plans/initial_states/loadouts 有 api 集成测罩（非裸）。
+- **stub 三件收尾**（REFACTOR §5 处置留档）：mechanics 占位挂 ADR-0002 §4 +
+  REFACTOR §5 引用；`SC2GamePort.stop()` 显式 no-op 挂牌（真机停机走
+  live_io.kill_tree，本方法无调用方）；engine `on_session_event` 补 docstring
+  （与 recorder 同拍板：不猜字段不造数据，wire 待 ISSUES #9 世界推导）。
+- **回填**：PLAN-NEXT N5 出队（工程批清空，只剩 N6 UI 后置）。
+
+
+
 
 
 

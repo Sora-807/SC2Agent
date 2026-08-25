@@ -14,10 +14,9 @@
 
 把 2026-08-25 全面审计后确认的全部后续工程任务收进**一份**按优先级排好的执行队列，
 让「下一步做什么」只有一个答案来源。审计清理轮（护栏/测试基建/泛化/REFINERY/归档/
-god file 拆分）已收官，这里装的是**剩下的**：
-前端测试形态、质量杂项、可用性后置项。
-（三族化 N1 / 去重与死代码 N2 / 生产运行时瘦身 N3 均已完结：2026-08-25，回填
-REFACTOR B6·§3·§4 / ISSUES #11，执行史 WORKLOG §0.66-0.68。）
+god file 拆分）已收官。**工程批 N1-N5 全部完结（2026-08-25）**，队列只剩 N6
+（UI 后置项，排期随用户痛感）。回填 REFACTOR B6·§3·§4·§5 / ISSUES #11，
+执行史 WORKLOG §0.66-0.70。
 
 ## ② 概念与原则
 
@@ -28,7 +27,7 @@ REFACTOR B6·§3·§4 / ISSUES #11，执行史 WORKLOG §0.66-0.68。）
   签名、API 形状（proposals/plans/simulate/session/start）、`seed_memory_workspace`、
   `api.app.DEFAULT_MAP_PLANS_DIR`、vendor FakeLLM 系——tests/eval 装配测是裁判；
   动其它 modules 内部实现自由。
-- **基线不降**：后端 1075+4skip / 前端 396 + typecheck（2026-08-25 N3 收官口径），每批收尾全绿才算完。
+- **基线不降**：后端 1092+4skip / 前端 396 + typecheck（2026-08-25 N5 收官口径），每批收尾全绿才算完。
 - **提交纪律**：`git mv`/暂存后尽快 commit（2026-08-25 并行互卷教训）；push 走临时代理 7890。
 
 ## ③ 任务批次（初步方案，会改）
@@ -44,24 +43,24 @@ REFACTOR B6·§3·§4 / ISSUES #11，执行史 WORKLOG §0.66-0.68。）
 > plans 353→99（session_start.py / plans_simulate.py 各自成路由文件）。
 > 执行史 WORKLOG §0.68。
 
-### N4 · 前端测试形态治理
+> N4（前端测试形态治理）已完结：2026-08-25 D3 拍板**分类处置而非全迁**——摸底后
+> 12 个 readFileSync 文件分四类：fixtures 加载×5（正当）、跨语言契约对账×1
+> （contract 精确解析后端 REV/TOPICS，正当）、约定扫描×2（theme/layout 全仓禁令
+> = custom-lint，无行为可迁）、组件接线/决策锁×3（chat-dock/map-canvas/charts——
+> 锁的是用户拍板的 UI/交互决策，本仓无渲染基建且 UI 用户自测，迁渲染测试不改变
+> 锁的性质）。执行：扫描全部收敛到 source-scan.ts 单点（政策头注明三类正当用途；
+> chat-dock/charts 的弱版内联 code() 正则删并、map-canvas 的 cwd 相对路径修掉、
+> theme 的本地文件遍历器删并）；**it.each 立杆**（theme FONT_PX 三载体对齐）；
+> 一条靠行尾注释才成立的断言改锁代码事实（sayChat 回退路径）。验收口径按 D3
+> 修订：`grep readFileSync web/tests` = fixtures + contract 契约读 + source-scan
+> 单点（396 绿 + typecheck 净）。执行史 WORKLOG §0.69。
 
-**问题**：chat-dock/map-canvas/charts/layout 等测试是**源码扫描式断言**（readFileSync +
-toContain 子串）——锁死 CSS 类名/JSX 文本，重构被强加「子串逐字保留」约束（MapCanvas
-拆分实锤）；前端 `it.each` 全仓零处。
-**方案**：源码扫描测试迁为行为测试（纯函数提取 + vitest 直测）；新测试默认 `it.each`。
-**[待定] D3**：改造范围——只迁源码扫描型（约 4-5 文件）vs 全部 30 文件梳理。
-**验收**：`grep readFileSync web/tests` 只剩 fixtures 加载类正当用途。
-
-### N5 · 质量杂项
-
-- **flaky 立项**：`tests/api/test_map_plans::test_sim_session_assembles_from_map_plan_and_emits_terrain`
-  全量跑偶发红、单跑绿（2026-08-25 两次复现）——定位时序依赖，修或隔离；
-- llm_stream 重试/预算逻辑测试从 tests/api 装配形式迁直调单测（模块已独立可测）；
-- 覆盖缺口补齐（2026-08-25 审计）：view（5686 源/2747 测）、agent（3384/1635）两区
-  最危险，planner 缺口随 N1 补；
-- stub 收尾（REFACTOR §5）：mechanics 空模块挂 issue 引用、`engine.on_session_event`
-  bare pass 加注或 wire、`driver.stop()` no-op 改显式命名。
+> N5（质量杂项）已完结（2026-08-25，WORKLOG §0.70）：flaky 修为轮询真前置
+> （static/terrain+static/map，30s 预算，finally 停会话防漏子进程）；llm_stream
+> 迁直调单测 8 条（双字段容错 parametrize/零分片重试/预算三态，API 文件删 3 条
+> 装配版）；覆盖缺口核实（agent 区 import 级全覆盖；view 裸模块仅 fmt/jsonl
+> ——补 12 条直测，map_plans/initial_states/loadouts 有 api 集成测罩）；stub
+> 三件收尾（REFACTOR §5 处置留档）。队列只剩 N6。
 
 ### N6 · 可用性后置项（UI，用户自验）
 
@@ -72,11 +71,9 @@ toContain 子串）——锁死 CSS 类名/JSX 文本，重构被强加「子串
 
 ## [待定] 决策点汇总
 
-| # | 决策 | 关联批次 |
-|---|---|---|
-| D3 | 前端测试改造范围：仅源码扫描型 vs 全量梳理 | N4 |
-
-（已决：D4 三族化深度 = hybrid——catalog 推导结构、显式钩子管 Zerg 语义，2026-08-25；
+（已决全部：D4 三族化深度 = hybrid——catalog 推导结构、显式钩子管 Zerg 语义，2026-08-25；
 D2 FrameSource 落点 = api 内独立模块 `api/frame_source.py`——纯函数 + 薄壳不给基类，
 2026-08-25；D1 runtime 回吐边界 = Mixin 继续——flights 扩建造域 + ledger 新 Mixin，
-协作对象明确不做（与 G2 拍板一致），2026-08-25。）
+协作对象明确不做（与 G2 拍板一致），2026-08-25；D3 前端测试 = 分类处置而非全迁——
+约定扫描保留为 custom-lint（source-scan 单点）、决策锁如实标注、只迁真注释依赖，
+2026-08-25。）

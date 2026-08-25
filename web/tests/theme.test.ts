@@ -7,31 +7,23 @@
  * 两边是同一套 token 的两种载体，本测试锁死 px 值同步。
  * 任何 tsx 里出现裸 `text-[Npx]` 都会失败 —— 想加字号先去改 token（并想清楚值不值得）。
  */
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FONT_PX } from "../src/canvas/theme";
 import { T } from "../src/shell/tokens";
+import { SRC, allSources, rawAbs, rel as relPath } from "./source-scan";
 
-const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+// 约定扫描（custom-lint）：全仓禁令无行为可迁（N4/D3 分类），读取走 source-scan 单点。
+const tsxFiles = (): string[] => allSources().filter((p) => p.endsWith(".tsx"));
 
 const BARE_SIZE = /text-\[\d+(?:\.\d+)?px\]/g;
-
-function* tsxFiles(dir: string): Generator<string> {
-  for (const name of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, name.name);
-    if (name.isDirectory()) yield* tsxFiles(full);
-    else if (name.name.endsWith(".tsx")) yield full;
-  }
-}
 
 describe("G6 字号 token", () => {
   it("tsx 里没有裸 text-[Npx]（全量生效，无 allowlist）", () => {
     const violations: string[] = [];
-    for (const file of tsxFiles(SRC)) {
-      const rel = file.slice(SRC.length + 1).replace(/\\/g, "/");
-      const text = readFileSync(file, "utf-8");
+    for (const file of tsxFiles()) {
+      const rel = relPath(file);
+      const text = rawAbs(file);
       const hits = text.match(BARE_SIZE);
       if (hits) violations.push(`${rel}: ${hits.join(", ")}`);
     }
@@ -40,9 +32,9 @@ describe("G6 字号 token", () => {
 
   it("字号全走 token：text-xs / text-sm 也禁（按钮级打磨轮收编，2026-08-22）", () => {
     const violations: string[] = [];
-    for (const file of tsxFiles(SRC)) {
-      const rel = file.slice(SRC.length + 1).replace(/\\/g, "/");
-      const text = readFileSync(file, "utf-8");
+    for (const file of tsxFiles()) {
+      const rel = relPath(file);
+      const text = rawAbs(file);
       const hits = text.match(/text-(?:xs|sm)\b/g);
       if (hits) violations.push(`${rel}: ${[...new Set(hits)].join(", ")}`);
     }
@@ -50,7 +42,7 @@ describe("G6 字号 token", () => {
   });
 
   it("index.css 的 @utility 与 canvas/theme.ts 的 FONT_PX 是同一套 token（px 值一一对齐）", () => {
-    const css = readFileSync(join(SRC, "index.css"), "utf8");
+    const css = rawAbs(join(SRC, "index.css"));
     const keys = Object.keys(FONT_PX) as Array<keyof typeof FONT_PX>;
     expect(keys).toHaveLength(6);
     for (const key of keys) {
@@ -71,9 +63,9 @@ describe("G6 字号 token", () => {
 describe("双主题 token", () => {
   it("tsx 里没有裸 bg/text/border-neutral-N（一律走语义 token，配色才可维护）", () => {
     const violations: string[] = [];
-    for (const file of tsxFiles(SRC)) {
-      const rel = file.slice(SRC.length + 1).replace(/\\/g, "/");
-      const text = readFileSync(file, "utf-8");
+    for (const file of tsxFiles()) {
+      const rel = relPath(file);
+      const text = rawAbs(file);
       const hits = text.match(/(?:^|[\s"'])(?:bg|text|border|ring)-neutral-\d/g);
       if (hits) violations.push(`${rel}: ${[...new Set(hits)].join(", ")}`);
     }
@@ -81,7 +73,7 @@ describe("双主题 token", () => {
   });
 
   it("index.css 调色板定义全变量 + 语义 @utility 齐（2026-08-22 十五轮：蓝底白卡定稿）", () => {
-    const css = readFileSync(join(SRC, "index.css"), "utf8");
+    const css = rawAbs(join(SRC, "index.css"));
     const vars = ["--bg-base", "--bg-panel", "--bg-raised", "--bg-inset", "--bg-active", "--bg-select",
       "--on-base-text",
       "--border-l1", "--border-l2", "--border-on-base",
@@ -103,7 +95,7 @@ describe("双主题 token", () => {
   });
 
   it("蓝底白卡锚点值锁死：外围 #9cbce3 / 卡片 #ffffff / 粉 #e1dbe9 / 黄 #f5c386（用户给的色板，不许漂）", () => {
-    const css = readFileSync(join(SRC, "index.css"), "utf8");
+    const css = rawAbs(join(SRC, "index.css"));
     expect(css).toMatch(/--bg-base:\s*#9cbce3/);
     expect(css).toMatch(/--bg-panel:\s*#ffffff/);
     expect(css).toMatch(/--bg-inset:\s*#e1dbe9/);
@@ -112,9 +104,9 @@ describe("双主题 token", () => {
 
   it("暗色残留禁令：tsx 里不许再出现 x-950/x-900 洗底与 300 档浅字（白底上看不见）", () => {
     const violations: string[] = [];
-    for (const file of tsxFiles(SRC)) {
-      const rel = file.slice(SRC.length + 1).replace(/\\/g, "/");
-      const text = readFileSync(file, "utf-8");
+    for (const file of tsxFiles()) {
+      const rel = relPath(file);
+      const text = rawAbs(file);
       const hits = text.match(/(?:bg|text|border)-(?:red|sky|emerald|amber|fuchsia)-\d+\b/g);
       if (hits) violations.push(`${rel}: ${[...new Set(hits)].join(", ")}`);
     }
@@ -122,7 +114,7 @@ describe("双主题 token", () => {
   });
 
   it("单主题：不再有 light/sakura 调色板（用户拍板先只做一套微调）", () => {
-    const css = readFileSync(join(SRC, "index.css"), "utf8");
+    const css = rawAbs(join(SRC, "index.css"));
     expect(css).not.toContain('html[data-theme="light"]');
     expect(css).not.toContain('html[data-theme="sakura"]');
   });
@@ -130,7 +122,7 @@ describe("双主题 token", () => {
   it("CSS 注释里不许出现 */ 序列以外的注释自杀写法（2026-08-22 事故锁）", () => {
     // 事故：注释里写了「--bg-*/--text-*」—— */ 提前闭合注释，@utility 整段被判非法，
     // 产物丢掉全部语义类 = 「全站越来越白、边框消失」。同类写法永远禁止。
-    const css = readFileSync(join(SRC, "index.css"), "utf8");
+    const css = rawAbs(join(SRC, "index.css"));
     for (const m of css.matchAll(/\/\*[\s\S]*?\*\//g)) {
       const body = m[0].slice(2, -2);
       expect(body.includes("*/"), "注释体内出现 */（会提前闭合）：" + m[0].slice(0, 60)).toBe(false);

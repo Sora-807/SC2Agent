@@ -275,7 +275,8 @@ class FlowEngine:
         self._prev_hp = current
 
     def on_session_event(self, event) -> None:
-        pass
+        """显式 no-op：会话事件目录（D7）未定 → 不猜字段（与 view/recorder 同一拍板，
+        不静默造数据）。wire 待事件源落地（世界推导路线，ISSUES 开放清单 #9）。"""
 
     # ---- 读模型（B1）----
     def snapshot(self) -> dict:

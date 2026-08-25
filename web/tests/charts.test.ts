@@ -9,11 +9,7 @@ import { describe, expect, it } from "vitest";
 import { parseEnvelopeLine, type ProjectionFrame } from "../src/contract";
 import { fmtMMSS, isAssignId, toMarkers, toSeries } from "../src/charts/projection-data";
 import { packBars } from "../src/charts/gantt-data";
-
-function code(rel: string): string {
-  const src = readFileSync(new URL("../src/" + rel, import.meta.url), "utf-8");
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-}
+import { code, raw } from "./source-scan";
 
 const FIX_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public", "fixtures");
 
@@ -135,7 +131,7 @@ describe("投影交互重定义（2026-08-22 二十轮）", () => {
   it("uPlot 框选缩放全时禁用（蓝色选框下线）", () => {
     const chart = code("charts/ProjectionChart.tsx");
     expect(chart).toContain("drag: { x: false, y: false }");
-    const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf-8");
+    const css = raw("index.css");
     expect(css).not.toContain("u-select");
   });
 
@@ -247,7 +243,7 @@ describe("assign 瞬时动作的展示（2026-08-22 二十一轮）", () => {
   });
 
   it("思考图标旋转中心居中（svg 是 13px，8px 原点偏心会晃）", () => {
-    const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf-8");
+    const css = raw("index.css");
     expect(css).toContain(".think-running svg { animation: think-orbit 2.4s linear infinite; transform-origin: center; }");
   });
 });

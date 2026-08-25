@@ -11,9 +11,8 @@
  *
  * 锁死：红线 G1（外壳固定一屏）、G2（视口不因 resize 重置）、G3（native wheel）。
  */
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { allSources, code, rel, stripComments } from "./source-scan";
+import { allSources, code, codeAbs, rel, stripComments } from "./source-scan";
 
 describe("扫描工具自身", () => {
   it("剥注释但不动字符串", () => {
@@ -61,7 +60,7 @@ describe("外壳固定一屏（G1 / 根因 B）", () => {
 
   it("全仓库没有任何地方再引入 min-h-screen", () => {
     const bad = allSources()
-      .filter((p) => stripComments(readFileSync(p, "utf8")).includes("min-h-screen"))
+      .filter((p) => codeAbs(p).includes("min-h-screen"))
       .map(rel);
     expect(bad).toEqual([]);
   });
@@ -130,7 +129,7 @@ describe("滚轮走 native 非 passive 监听（G3 / 根因 A）", () => {
     // 写在它们里面的 preventDefault 是空操作（facebook/react#22794）。
     // 禁的是 JSX 属性，不是标识符 —— 局部 handler 叫 handleWheel 是正常的。
     const offenders = allSources()
-      .filter((p) => /\bon(Wheel|TouchStart|TouchMove)\s*=/.test(stripComments(readFileSync(p, "utf8"))))
+      .filter((p) => /\bon(Wheel|TouchStart|TouchMove)\s*=/.test(codeAbs(p)))
       .map(rel);
     expect(offenders).toEqual([]);
     expect(canvas).not.toMatch(/onWheel\s*=/);
