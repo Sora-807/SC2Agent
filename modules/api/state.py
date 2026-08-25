@@ -50,17 +50,33 @@ def ensure_pump(state) -> None:
 
 def resolve(state, source_id: str):
     """帧源解析：`live` = 当前会话（**无会话时如实返回 None**，不惰性建假世界 ——
-    那个假世界曾在前端被误读成「SC2 已连上但地图数据是空的」）；其余 = 目录里的 JSONL。"""
+    那个假世界曾在前端被误读成「SC2 已连上但地图数据是空的」）；其余先查夹具
+    目录（frame_dir registry），再回落**对局记录**目录（I39：录像回看——recordings
+    与夹具同信封 JSONL 格式，JsonlSource 直接吃）。"""
     if source_id == "live":
         return state.session
-    return state.registry.get(source_id)
+    src = state.registry.get(source_id)
+    if src is None:
+        rec_registry = getattr(state, "recording_registry", None)
+        if rec_registry is not None:
+            src = rec_registry.get(source_id)
+    return src
 
 
 def require_source(state, source_id: str):
     src = resolve(state, source_id)
     if src is None:
-        detail = ("没有活跃会话（先 POST /api/session/start）" if source_id == "live"
-                  else f"没有帧源 {source_id!r}")
+        if source_id == "live":
+            detail = "没有活跃会话（先 POST /api/session/start）"
+        elif source_id.startswith("rec-"):
+            # I39：录像 id 说清「没有录像」并列可用（此前统一的「没有帧源」让
+            # agent 误判成会话问题）
+            ids = (state.recording_registry.ids()
+                   if getattr(state, "recording_registry", None) is not None else [])
+            detail = (f"没有录像 {source_id!r}（可用：{', '.join(ids[:8]) or '无'}；"
+                      "GET /api/recordings 看清单）")
+        else:
+            detail = f"没有帧源 {source_id!r}"
         raise HTTPException(status_code=404, detail=detail)
     return src
 

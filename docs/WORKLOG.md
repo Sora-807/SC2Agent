@@ -165,6 +165,31 @@
   （与 recorder 同拍板：不猜字段不造数据，wire 待 ISSUES #9 世界推导）。
 - **回填**：PLAN-NEXT N5 出队（工程批清空，只剩 N6 UI 后置）。
 
+## 0.71 I39 批 A：agent 观测与工具面四件套（agent 自提需求，用户拍板开跑，2026-08-25）
+
+> 来源是 agent 在复盘中自提的四条缺口（用户转述原文）。梳理时发现录像回看的
+> 根因比 agent 说的深一层：tools 层 observe 的 **args.source 没接管道**——
+> 传录像 id 也被闭包默认 live 吞掉，才报出误导性的「没有活跃会话」。
+> 两个默认拍板：swap **放开**（与免审方向一致、端点约束+swap 事件可审计）；
+> 录像+bbox 网格后置。
+
+- **离散度**：clusters.cluster_units 加 spread（到簇心平均距离，1 单位=0），
+  observe 部队表加「散布 X.X格」+段首口径注。测试教训：**手算期望值两次算错**
+  （方阵角距心是 √2 不是 1；三人堆是 16/9 不是 8/3）——实现是对的，测试错，
+  期望值要现推不要凭直觉。
+- **录像回看**：state.resolve 回落 recording_registry（create_app 装配，与夹具
+  registry 同款懒加载）；observation 端点 time 超界 400 带时长；rec- 前缀 404
+  列可用录像；tools 层 source 管道接上 + 描述改三值。
+- **open**：workspace.open_chip 三区白名单 → ChangeRecord(action="open") →
+  前端 chip（↗ 图标，ChatChange 联合类型扩 action/area）；target 走 change_target
+  单点。顺手发现：prompt.md 引用的 system/surface.md **不存在**（悬空引用），
+  改写段落时一并摘除。
+- **swap_strategy**：client.session_swap + 工具薄壳；提示词双份同步
+  （agent/seeds 源 + workspace 工作副本——只改工作副本会被新工作空间的播种绕过）；
+  边界锁 EXPECTED_TOOLS +2（测试红得其所：授权边界变化就该红一次）。
+- 基线 1092→**1108**+4skip / 前端 396 + typecheck。
+
+
 
 
 

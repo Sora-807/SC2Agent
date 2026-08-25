@@ -63,6 +63,11 @@ class ApiClient:
     def session(self) -> dict:
         return self._get("/api/session")
 
+    def session_swap(self, strategy: str) -> dict:
+        """对局中热切策略（I39：agent 工具面的动作；约束校验在端点）。"""
+        from urllib.parse import quote
+        return self._call(f"/api/session/swap?strategy={quote(strategy)}", None, "POST")
+
     def latest_frame(self, topic: str, *, source: str = "live") -> dict | None:
         """某 topic 的最新一帧 payload（游标拉满取尾）。F 批体检用（frame/production）。"""
         frames = self._get(f"/api/sources/{source}/frames?game_time=999999")

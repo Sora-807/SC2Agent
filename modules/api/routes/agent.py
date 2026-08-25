@@ -33,6 +33,12 @@ def observation(request: Request, source: str = Query("live"),
     state = request.app.state
     src = require_source(state, source)
     info = src.info()
+    if time is not None and time > info.to_time + 1e-9:
+        # I39：源存在但时间越界要区分开（agent 拿「没有活跃会话」会去排查会话，
+        # 拿「超出时长」才知道是 time 给大了）
+        raise HTTPException(status_code=400,
+                            detail=f"时间 {time:g}s 超出该源时长 {info.to_time:g}s"
+                                   f"（source={source!r}）")
     frames = frames_by_topic(src.latest_at(time if time is not None else info.to_time))
     packet = observation_packet(frames, catalog=load_all(), supersedes=state.last_observation_seq)
     state.last_observation_seq = packet.seq

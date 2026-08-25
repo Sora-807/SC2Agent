@@ -72,6 +72,21 @@ def change_target(area: str, ref: str) -> str:
     return "#/production"
 
 
+def open_chip(path: str) -> ChangeRecord | None:
+    """虚拟路径 → 「打开」芯片（I39 批 A，open 工具的语义单点）。
+
+    只认 plan / map / strategy 三区（ChangeRecord.area 词表 + change_target
+    都覆盖得到）；区外（绝对路径/别的目录/裸 id）返回 None，调用方如实拒绝。
+    target 由 to_json → change_target 统一算 —— 不信模型拼链接。
+    """
+    area, ref = _split(path)
+    rec_area = {"plan": "plan", "map": "map_plan", "strategy": "strategy"}.get(area)
+    if rec_area is None:
+        return None
+    zh = {"plan": "生产规划", "map": "地图规划", "strategy": "策略"}[area]
+    return ChangeRecord(area=rec_area, action="open", ref=ref, label=f"打开{zh} {ref}")
+
+
 class ChangeLog:
     """轮内改动的临时收集器。引擎工具与 AgentTalk 同属对话线程，无需锁。"""
 

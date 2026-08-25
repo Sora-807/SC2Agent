@@ -260,9 +260,12 @@ def _areas_text(world, catalog: Catalog, zh) -> str:
             for c in _cluster_payload(items):
                 kinds = "，".join(f"{zh(k)}×{v}" for k, v in sorted(c["by_stable_id"].items()))
                 hp_pct = f"{c['hp_pct']:.0f}%" if c.get("hp_pct") is not None else "?"
+                spread = c.get("spread")
+                spread_txt = f"｜散布 {spread:.1f}格" if spread is not None else ""
                 rows.append(f"- {prefix}{kinds}｜集群 {c['count']} 单位 @({c['center'][0]:.0f},"
-                            f"{c['center'][1]:.0f})｜血量 {hp_pct}（{c['hp_total']:.0f}）")
-        head.append("部队：" + ("\n".join(rows) if rows else "无"))
+                            f"{c['center'][1]:.0f})｜血量 {hp_pct}（{c['hp_total']:.0f}）{spread_txt}")
+        spread_note = "（散布格数=到组心平均距离：转 attack 前看聚齐没有——小=成团，大=拖线还在路上）"
+        head.append("部队：" + ("\n".join(rows) if rows else "无") + (spread_note if rows else ""))
         out.append("\n".join(head))
     n_out = sum(1 for u in leftovers
                 if u.get("owner") in ("self", "enemy") and not (u.get("stable_id") or "").endswith("/scv"))

@@ -88,7 +88,9 @@ EXPECTED_TOOLS = {
     # write/append/edit/insert 是 lint 版 —— 行为不变，memory 写入附软提示）
     "ls", "read", "glob", "grep", "write", "append", "edit", "insert", "delete", "stat",
     # 对局域（提案制，提交即自动应用）。写面清单不是工具：只读文件 system/surface.md
-    "observe", "propose",
+    # I39（2026-08-25 用户拍板）：+swap_strategy（「怎么打」热切，与 propose 的
+    # 「造什么」并列；约束校验在端点）+open（前端「打开」芯片，通知类非命令类）
+    "observe", "propose", "swap_strategy", "open",
     # 语义动作（文件表达不了的：干跑/会话/战术素材）。
     # 2026-08-23 工具审视 19→17：write_surface/read_current_strategy 退役；
     # 2026-08-24 +stop_session（对称：能开游戏也要能关，防孤儿 SC2）
@@ -104,8 +106,10 @@ def test_agent_has_no_direct_command_tools():
 
     §6 P1 靠"不给那个工具"保证，不靠提示词自觉。这条测试就是那道锁。
     文件工作区改造（2026-08-22）把边界收窄为「对局状态」：离线规划文件经
-    文件契约直改（写时校验）；但 queue_op / set_worker_quota 这类对局内命令
-    **仍然不存在** —— live 改动依旧只有 propose 一条路。
+    文件契约直改（写时校验）；queue_op / set_worker_quota 这类对局内命令
+    **仍然不存在**。I39 后对局域是两条路：propose（生产「造什么」，自动应用）
+    + swap_strategy（策略「怎么打」热切——2026-08-25 用户拍板放开，约束校验
+    在端点、swap 事件进转移历史可审计）；微观命令（attack/move 级）仍然没有。
     """
     names = AdvisorSpec(ApiClient()).tools().names()
     assert set(names) == EXPECTED_TOOLS

@@ -99,6 +99,10 @@ def create_app(frame_dir: Path | str | None = None,
         Path(initial_states_dir) if initial_states_dir else None)
     #: 对局记录目录（二十六轮）：None = 不录（测试默认；录了测试之间会互相污染）。
     app.state.recordings_dir = Path(recordings_dir) if recordings_dir else None
+    #: 录像帧源 registry（I39 录像回看）：observation/source 解析回落到这里
+    #:（recordings 与夹具同信封 JSONL 格式；懒加载与夹具 registry 同款）。
+    app.state.recording_registry = (SourceRegistry(app.state.recordings_dir)
+                                    if app.state.recordings_dir else None)
     #: 策略文件存储（二十七轮「开放写策略，免审」）：default 从内置常量播种（锁定）。
     from api.session import DEFAULT_ASSEMBLY, DEFAULT_STRATEGY
     from view.strategies import StrategyStore

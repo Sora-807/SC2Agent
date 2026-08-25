@@ -54,12 +54,17 @@ def cluster_units(items: list[dict]) -> list[dict]:
             by_sid[m["stable_id"]] = by_sid.get(m["stable_id"], 0) + 1
         hp_pct = (sum(m["hp"] / m["hp_max"] for m in members if m["hp_max"]) / len(members)
                   if any(m["hp_max"] for m in members) else None)
+        # 离散度（I39）：成员到簇心的平均欧氏距离（格）。组心+数量看不出
+        # 「聚齐成团」还是「拖线行军」——转 attack 前要不要等聚齐就靠它判。
+        spread = sum(((m["x"] - cx) ** 2 + (m["y"] - cy) ** 2) ** 0.5
+                     for m in members) / len(members)
         out.append({
             "center": (round(cx, 1), round(cy, 1)),
             "count": len(members),
             "by_stable_id": by_sid,
             "hp_pct": round(hp_pct * 100, 1) if hp_pct is not None else None,
             "hp_total": round(sum(m["hp"] for m in members), 1),
+            "spread": round(spread, 1),
         })
     out.sort(key=lambda c: (-c["count"], c["center"]))
     return out

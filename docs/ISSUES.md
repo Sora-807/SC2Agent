@@ -531,6 +531,33 @@ agent 天然更信结构化 JSON 做算术，模板没点这层口径，于是�
 
 ---
 
+## I39 agent 观测与工具面批 A：离散度/录像回看/open/swap 四件套（agent 提四项需求，用户 2026-08-25 拍板开跑，当日落地）
+
+来源：agent 在对局/复盘中自提的四条能力缺口（原文由用户转述），梳理核实后四条全部
+「可做且该做」——其中录像回看的根因比 agent 说的深一层（**tools 层 observe 的
+args.source 根本没接管道**，传什么都被闭包默认 live 吞掉，才出了误导性的
+「没有活跃会话」404）。
+
+1. **离散度**：`view/clusters.cluster_units` 加 `spread`（成员到簇心平均欧氏距离，
+   单位格；1 单位=0），observe 部队表行加 `｜散布 X.X格` + 段首口径说明。给数字
+   不给布尔——阈值随场景（驻扎<3、进攻可<8）。**后置批 B**：`group_spread` 策略谓词
+   （flow 词表契约面）。
+2. **录像回看**：`api/state.resolve` 回落 `recording_registry`（app 装配，recordings
+   与夹具同信封格式）；tools 层 source 管道补上；错误语义拆开（rec- 前缀 404 列可用、
+   time 超界 400 带时长）。**后置**：录像+bbox 网格、trace↔recording 互链。
+3. **open 工具**：`workspace.open_chip(path)` 三区白名单（plan/map/strategy）→
+   ChangeRecord(action="open") → 前端 ChangeChip 渲染 ↗ 图标可点击；target 由
+   change_target 单点算（不信模型拼链接）；不自动跳转，用户自己决定。
+4. **swap_strategy 工具**：client.session_swap 薄壳打 POST /api/session/swap；
+   **权限拍板：放开**（与策略写免审/提案自动应用同向；约束校验在端点=编译红 400/
+   group_slots 不一致 409/同名 step 续位；swap 事件进转移历史可审计）。提示词
+   （seeds+工作副本）「你没有这个工具」段落同步改写；边界锁 EXPECTED_TOOLS
+   +2 并注明决策。微观命令（attack/move）仍无工具。
+
+测试：test_clusters（spread 参数化）/ test_observation（录像源四件：回看/时间回放/
+未知 id 列可用/超时长）/ test_tools_i39（source 管道正反、open 白名单、swap 成功与
+拒因透传）。基线 1108+4skip / 396 + typecheck。
+
 ## I32 泳道图每帧整体后移、与实际完全对不上：整条历史队列被每帧重仿真（用户 2026-08-25 报，当日已修）
 
 > **已修复（2026-08-25，录像 `rec-20260825-104557` 逐帧实锤 + 测试锁定；待真机复验）**：
@@ -716,47 +743,56 @@ region_layer 的 regions/pos_marks/build_slots），无效直接校验失败给�
 
 6. **I27「大概率被摧毁」误报——已修复（2026-08-25 待真机复验）**`_ever_ready` 只增不减 + hint 不与 block reason
    对账 → 兵营活着也报被毁，误导重建；详见 I27 节。与 I17 同轮收。
-7. **I23 策略面缺口**——术语 flow→策略清扫 + 装配可视化 + 编写向导（原#3「策略
+7. **I39 agent 观测与工具面批 A——已落地（2026-08-25，四件套）**：①observe 集群
+   **离散度**（spread=到组心平均距离，聚齐 vs 拖线一眼可判——转 attack 前的依据）；
+   ②observe **source=录像 id** 回看（tools 层 source 参数此前没接管道+registry 不认
+   recordings——双层缺口；错误语义拆开：没录像列可用/超时长报时长，不再误导成
+   「没有活跃会话」）；③**open** 工具（三区白名单→前端「打开」芯片，复用
+   ChangeChip 通道，target 后端算不信模型拼链接）；④**swap_strategy** 工具
+   （对局中热切「怎么打」，用户拍板放开——约束校验在端点、swap 事件可审计；
+   边界锁 EXPECTED_TOOLS 同步）。**批 B 后置**：group_spread 策略谓词、录像+bbox
+   网格、trace↔recording 互链。WORKLOG §0.71。
+8. **I23 策略面缺口**——术语 flow→策略清扫 + 装配可视化 + 编写向导（原#3「策略
    编辑 UI（人用）」已并入 C 项）；详见 I23 节。
-8. **I21 用户视窗上下文自动注入**——发消息时带 ui_context：页面/规划/地图/视窗/
+9. **I21 用户视窗上下文自动注入**——发消息时带 ui_context：页面/规划/地图/视窗/
    悬停（用户不想重复交代正在看什么）；详见 I21 节。
-9. **event_occurred / has_ready_base / user_cancel 谓词（I12-B1 剩余）（原#2）**——
+10. **event_occurred / has_ready_base / user_cancel 谓词（I12-B1 剩余）（原#2）**——
    **事件源已拍板（2026-08-25）：世界推导**——从帧差/现有警报派生结构化事件（建筑被毁/
    单位伤亡/敌方接触/用户取消队列项），不走 driver 原始 events（driver 无关、sim/live/
    回放同源）；has_ready_base 从 catalog 三族 town hall 判 built≥1 落地。
    （2026-08-25 核对：`predicates.py:68-72` 仍 3 条未实现；timer/locals 写侧已全通。）
-10. **对局可观测性深度（I17 剩余）（原#12）**——警报加 `remediation_zh`（"怎么修"）+
+11. **对局可观测性深度（I17 剩余）（原#12）**——警报加 `remediation_zh`（"怎么修"）+
    采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）+
    装配缺口时序化/live 化。子项 5（observe 在建项映射）已落地关闭。1/2 低难可插队先做。
-11. **modules/ 代码债剩余（I15）（原#11）——REFACTOR §1-§5 全部清偿（2026-08-25
+12. **modules/ 代码债剩余（I15）（原#11）——REFACTOR §1-§5 全部清偿（2026-08-25
    PLAN-NEXT N1-N5 工程批收官）**：P0 bug 批/G1-G3 god files/B6 三族化/B7 命令
    shape/§3 死代码/§4 去重/§5 stub/瘦身（runtime 482·live 538·路由 178 内）全闭，
    执行史 WORKLOG §0.66-0.70；§6 长函数表仍是低优先随手项（见
    [`REFACTOR.md`](REFACTOR.md) §6）。
-12. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
+13. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
     improvement-notes + agent/seeds + 提示词整改）；剩余：几局后校验 agent 是否真读真写、
     `system-capabilities` 派生是否对账——不行再上机制（开局自动 seed 检查）。
     附带待拍板：孤儿 `notes.jsonl` 去留（后端 note_save 端点在、Agent 无工具，链路仍断）。
-13. **观察包"零收入检测"（原#18，用户拍板随后做）**——观察包经济段加资源产出速率
+14. **观察包"零收入检测"（原#18，用户拍板随后做）**——观察包经济段加资源产出速率
     （近 N 秒 Δ矿/Δ气）+ 采矿工人距目标矿脉的距离分布；结构化警报「收入为 0 且有采矿
     分配 → 疑似采错矿/路途过远」（I17 家族）。2026-08-25 核对：未做（observe 经济段
     仍只有分配数口径）。
 
 **P2**
 
-14. **开局工人口径：真机 8 工 vs 种子 12 工（原#17）**——真机录像首帧 8 工/13 cap，
+15. **开局工人口径：真机 8 工 vs 种子 12 工（原#17）**——真机录像首帧 8 工/13 cap，
     种子（planner.opening / worldsim.bootstrap / session 默认）仍全 12 工（2026-08-25
     核对确认）。供给值已单源修正为 13；工人数是另一处 sim/真机偏差：干跑经济曲线比真机
     乐观。**已拍板（2026-08-25）：先查 8 工根因**——12 工是标准 melee 口径，先确认那局
     用的地图/模式是否非标准开局，再决定改种子还是改测试环境（直接改种子会波及全部干跑
     数字与夹具，且可能把干跑永久校到一张非标准图上）。
-15. **槽位 placeable 后端校验收口（原#6）**——terrain.placeable 栅格进摆放校验面
+16. **槽位 placeable 后端校验收口（原#6）**——terrain.placeable 栅格进摆放校验面
     （2026-08-25 核对：仍只查不压己方建筑/在途预留，不查地形栅格）。
-16. **模块模板参数化 UI（B3 增量，原#7）**——from-module 端点已支持 params，前端
+17. **模块模板参数化 UI（B3 增量，原#7）**——from-module 端点已支持 params，前端
     「从模板落地」不带参数（marine_target/tank_count 调不了）。
-17. **组/槽位形状颜色标记（I4 候选 3，原#8）**——地图 chip 与策略图同词的视觉语言
+18. **组/槽位形状颜色标记（I4 候选 3，原#8）**——地图 chip 与策略图同词的视觉语言
     （现为纯文字同词，无按 group 的颜色/形状）。
-18. **live 投影窗口语义（原#10）——已拍板（2026-08-25）：until_complete + 封顶**——
+19. **live 投影窗口语义（原#10）——已拍板（2026-08-25）：until_complete + 封顶**——
     与试算同口径（`COMPLETION_CAP` 钳制）；live 队列有界，预期 horizon 不会失控，落地时
     实测帧大小，超预期再回调。
 19. **复盘（回放源）切换加载慢（原#19，用户拍板可后排）**——换源/拖时间轴前端卡顿：

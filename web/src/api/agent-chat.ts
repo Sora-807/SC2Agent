@@ -36,8 +36,9 @@ export type ChatSegment =
 
 /** 一条成功落盘的改动 —— 聊天里渲染成可点击的跳转 chip */
 export interface ChatChange {
-  area: "plan" | "map_plan" | "live";
-  action: "add" | "edit";
+  area: "plan" | "map_plan" | "live" | "strategy";
+  /** I39 起 open 工具也会出芯片（让用户去看某个文件，不是 agent 改了它） */
+  action: "add" | "edit" | "open";
   ref: string;
   label: string;
   /** hash 路由目标（含查询参数），点击 = window.location.hash 赋值 */

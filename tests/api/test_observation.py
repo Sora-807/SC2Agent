@@ -1,4 +1,6 @@
 """agent 读面与写面清单（B10）的 api 层。"""
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -107,3 +109,55 @@ def test_observation_of_a_replay_source_also_works(tmp_path):
     body = c.get("/api/observation", params={"source": "opening", "text": "true"}).json()
     assert body["seq"] > 0
     assert "全局状态" in body["sections"] and "区域信息" in body["sections"]
+
+
+# ---------------- I39 批 A：录像源回看（source=对局记录 id） ----------------
+
+@pytest.fixture()
+def rec_client(tmp_path) -> TestClient:
+    """把 opening 夹具伪装成一份对局记录（同信封 JSONL 格式），挂在 recordings 目录。"""
+    import shutil
+    fixtures = Path("web/public/fixtures")
+    if not (fixtures / "opening.jsonl").is_file():
+        pytest.skip("夹具未生成")
+    rec_dir = tmp_path / "recordings"
+    rec_dir.mkdir()
+    shutil.copy(fixtures / "opening.jsonl", rec_dir / "rec-i39-sc2.jsonl")
+    return TestClient(create_app(tmp_path / "frames", tmp_path / "p.jsonl",
+                                 recordings_dir=rec_dir))
+
+
+def test_observation_from_recording_source(rec_client: TestClient):
+    """source=录像 id：对局结束后仍能读完整观察包（全局状态+区域信息）。"""
+    body = rec_client.get("/api/observation",
+                          params={"source": "rec-i39-sc2", "text": "true"}).json()
+    assert body["seq"] > 0
+    assert "全局状态" in body["sections"] and "区域信息" in body["sections"]
+
+
+def test_observation_recording_time_replay(rec_client: TestClient):
+    """time=回看该游戏秒（早段 vs 末段给不同 game_time —— latest_at 语义）。"""
+    end = rec_client.get("/api/observation",
+                         params={"source": "rec-i39-sc2"}).json()
+    early = rec_client.get("/api/observation",
+                           params={"source": "rec-i39-sc2", "time": 1.0}).json()
+    assert early["game_time"] <= 1.0 + 1e-6
+    assert early["game_time"] < end["game_time"]
+
+
+def test_observation_unknown_recording_names_available(rec_client: TestClient):
+    """未知录像 id：404 说清「没有录像」并列可用（别再报误导性的「没有活跃会话」）。"""
+    r = rec_client.get("/api/observation", params={"source": "rec-nope"})
+    assert r.status_code == 404
+    assert "没有录像" in r.json()["detail"]
+    assert "rec-i39-sc2" in r.json()["detail"]
+
+
+def test_observation_time_beyond_duration_says_so(rec_client: TestClient):
+    """time 超出录像时长：400 带时长（agent 要能区分「源不存在」与「时间越界」）。"""
+    end = rec_client.get("/api/observation",
+                         params={"source": "rec-i39-sc2"}).json()
+    r = rec_client.get("/api/observation",
+                       params={"source": "rec-i39-sc2", "time": end["game_time"] + 500})
+    assert r.status_code == 400
+    assert "超出" in r.json()["detail"] and "时长" in r.json()["detail"]

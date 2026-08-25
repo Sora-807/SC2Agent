@@ -281,10 +281,10 @@ function ChangeChip({ c }: { c: ChatChange }) {
         }
         window.location.hash = c.target.replace(/^#/, "");
       }}
-      title={"跳到" + c.target + "（agent 本轮改的东西）"}
+      title={"跳到" + c.target + "（agent 本轮" + (c.action === "open" ? "让你看" : "改") + "的东西）"}
       className="w-full rounded-lg border-[1.5px] border-accent-blue bg-transparent px-2 py-1 text-left text-note font-medium text-strong hover:bg-blue-soft"
     >
-      {c.action === "add" ? "＋" : "✎"} {c.label}
+      {c.action === "add" ? "＋" : c.action === "open" ? "↗" : "✎"} {c.label}
     </button>
   );
 }

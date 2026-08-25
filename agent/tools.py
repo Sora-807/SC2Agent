@@ -89,7 +89,7 @@ def make_tools(client: ApiClient, *, source: str = "live",
             return _region_grid(args)
         try:
             obs = client.observation(
-                source=source,
+                source=str(args.get("source") or source),
                 time=float(args["time"]) if args.get("time") is not None else None)
         except ApiError as exc:
             return f"取观察失败：{exc}"
@@ -98,6 +98,34 @@ def make_tools(client: ApiClient, *, source: str = "live",
         return (text[:OBSERVATION_CHARS]
                 + f"\n\n[机器可读] {facts}\n"
                 + f"[提醒] 提案/命令里的 based_on_seq 用 {obs.get('seq')}")
+
+    async def open_file(args: dict) -> str:
+        """I39：让前端出现「打开」芯片 —— 用户自己决定何时点（不自动跳转）。"""
+        from agent.workspace import open_chip
+        if changes is None:
+            return "error: 通知通道未接（不在对话上下文里）"
+        rec = open_chip(str(args.get("path") or ""))
+        if rec is None:
+            return ("拒绝：open 只支持三区文件 —— plans/<id>.yaml / map-plans/<id>.yaml / "
+                    f"strategies/<id>.yaml（当前 {str(args.get('path'))!r}）")
+        changes.add(rec)
+        return f"已通知用户打开 {rec.label}（前端出现可点击入口，用户自行决定何时看）"
+
+    async def swap_strategy(args: dict) -> str:
+        """I39：对局中热切策略（怎么打）。约束校验在端点：编译红/group_slots 不一致
+        会带原因回来 —— 改编组结构就重开会话，热切不碰装配。"""
+        sid = str(args.get("strategy") or "").strip()
+        if not sid:
+            return "拒绝：要给策略 id（strategies/<id>.yaml 的 <id>）"
+        try:
+            out = client.session_swap(sid)
+        except ApiError as exc:
+            return f"热切被拒：{exc}"
+        swap = out.get("swap") if isinstance(out, dict) else None
+        state_txt = out.get("state", "?") if isinstance(out, dict) else "?"
+        return (f"已热切到 {sid}（会话状态 {state_txt}）。"
+                f"swap 结果：{json.dumps(swap, ensure_ascii=False) if swap else '见会话'}；"
+                "同名 step 续位（locals/timers 保留），转移历史记了 swap 事件")
 
     async def propose(args: dict) -> str:
         body = {
@@ -140,18 +168,47 @@ def make_tools(client: ApiClient, *, source: str = "live",
                          "先调它再做判断；它给的 seq 就是提案要回填的 based_on_seq。"
                          "带 bbox 时改读**格点网格**（布局结构：槽位/预设点/地形；建造状态仍走无参 observe）"
                          "—— bbox=[x1,y1,x2,y2]（左下+右上闭区间，全图 176×160），step 自动：≤14×14 全量、"
-                         "超出自动降密度并在尾部标注实际 step。source=live（默认，当前会话图层）或地图规划 id；"
-                         "time=回看该游戏秒的帧（配录像源复盘）。超范围**如实报错**（说清哪个坐标超了），别瞎试。"),
+                         "超出自动降密度并在尾部标注实际 step。"
+                         "source 三值：live（默认，当前会话）/ 地图规划 id（静态布局）/ "
+                         "录像 id（rec-…，配 time 回看该秒的**完整状态包**；GET /api/recordings 看有哪些）。"
+                         "time=回看该游戏秒的帧（配录像源；超时长会如实报）。"
+                         "超范围**如实报错**（说清哪个坐标超了），别瞎试。"),
             parameters={"type": "object", "properties": {
                 "bbox": {"type": "array", "items": {"type": "integer"},
                          "minItems": 4, "maxItems": 4,
                          "description": "[x1,y1,x2,y2] 左下 + 右上（闭区间）"},
                 "source": {"type": "string",
-                           "description": "帧源/地图源 id：live（默认）或地图规划 id"},
+                           "description": "帧源/地图源 id：live（默认）/ 地图规划 id / 录像 id（rec-…）"},
                 "time": {"type": "number",
-                         "description": "回看该游戏秒的帧（录像复盘；省略=最新帧）"},
+                         "description": "回看该游戏秒的帧（配录像源复盘；省略=最新帧）"},
             }, "additionalProperties": False},
             function=observe,
+        ),
+        Tool(
+            name="open",
+            description=("让前端出现一个「打开」芯片，用户点它就跳到对应文件的页面"
+                         "（改了地图规划/策略/生产规划后让用户去看改了什么；不自动跳转，"
+                         "用户自己决定何时点）。path 只认三区：plans/<id>.yaml / "
+                         "map-plans/<id>.yaml / strategies/<id>.yaml。"),
+            parameters={"type": "object", "properties": {
+                "path": {"type": "string",
+                         "description": "虚拟路径，如 map-plans/barracks-stack-test.yaml"},
+            }, "required": ["path"], "additionalProperties": False},
+            function=open_file,
+        ),
+        Tool(
+            name="swap_strategy",
+            description=("对局中热切策略（改「怎么打」；「造什么」仍走 propose，两者独立）。"
+                         "约束自动校验：新策略必须编译通过、group_slots 与当前装配一致"
+                         "（要换编组结构就重开会话）；同名 step 续位（locals/timers 保留），"
+                         "转移历史记 swap 事件（observe 可见）。"
+                         "驻扎点/攻击条件/patrol 坐标这类**同结构调参**是它的主场 —— "
+                         "改完文件直接切，不用等下一局。"),
+            parameters={"type": "object", "properties": {
+                "strategy": {"type": "string",
+                             "description": "策略文件 id（strategies/<id>.yaml 的 <id>）"},
+            }, "required": ["strategy"], "additionalProperties": False},
+            function=swap_strategy,
         ),
         Tool(
             name="propose",
