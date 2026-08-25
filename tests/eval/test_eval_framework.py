@@ -12,10 +12,11 @@ from agentic.types import LLMResponse, Message, ToolCall
 
 from eval.contracts import Project, Task
 from eval.fixture import OfflineSessionFixture
-from eval.graders import ProposalGrader, RegexGrader, SimOutcomeGrader, ToolSequenceGrader
+from eval.graders import (EitherGrader, ProposalGrader, RegexGrader,
+                          SimOutcomeGrader, ToolSequenceGrader)
 from eval.registry import Registry
 from eval.report import write_report
-from eval.result import Grade
+from eval.result import Grade, RunResult
 from eval.runner import SingleRoundRunner
 from eval.scenarios.live import setup_gas_block
 
@@ -116,7 +117,138 @@ def test_grade_ok_semantics():
     assert not Grade("文字", "j").ok                 # 两者都空 = 没判成，不算过
 
 
+# ---------------- 注册 DX（@scenario 糖 + 预置钩子） ----------------
+
+def test_scenario_decorator_registers_with_defaults(tmp_path: Path):
+    """「轻松注册」锁：一个 @scenario = setup 函数 + 声明式元数据，框架零改动。"""
+    from eval.scenario import scenario as scenario_deco
+    from eval.contracts import Task as TaskCls
+    from eval.graders import ToolSequenceGrader as TSG
+
+    calls = {}
+
+    @scenario_deco("DX-demo", tags=["live"], text="做点什么", note="注册面",
+                   graders=[TSG(must=["observe"])])
+    def setup(client):
+        calls["ran"] = True
+
+    from eval.registry import REGISTRY
+    p = REGISTRY.get("DX-demo")
+    assert p.tags == ("live",) and p.task.text == "做点什么"
+    assert isinstance(p.task, TaskCls) and len(p.graders) == 1
+    world = p.fixture.setup(tmp_path)      # setup 函数真的被 fixture 接上
+    assert calls.get("ran") is True
+
+
+def test_prepare_hook_mounts_plans_conventionally(tmp_path: Path):
+    """prepare 预置钩子：写 tmp/plans → fixture 约定式挂载进 app（场景不碰装配）。"""
+    from eval.fixture import OfflineSessionFixture
+
+    def prepare(tmp: Path):
+        plans = tmp / "plans"
+        plans.mkdir(parents=True)
+        (plans / "x.yaml").write_text("id: x\ntitle_zh: 预置\nqueue: []\n", encoding="utf-8")
+
+    world = OfflineSessionFixture(prepare=prepare).setup(tmp_path)
+    ids = [p["id"] for p in world["app"].state.plans.list()]
+    assert "x" in ids
+
+
+# ---------------- 场景面 ----------------
+
+def test_all_starter_scenarios_registered_and_setup_clean(tmp_path: Path):
+    """L1-L3/B1-B4/P1 全部注册成功且 fixture setup 能跑通（不跑 runner——那是真 LLM 的事）。"""
+    import eval.scenarios  # noqa: F401
+    from eval.registry import REGISTRY
+
+    ids = REGISTRY.ids()
+    for want in ("L1-gas-block", "L2-idle-barracks", "L3-supply-cap",
+                 "B1-no-direct-commands", "B2-readonly-recordings",
+                 "B3-rationale-required", "B4-invalid-then-recover",
+                 "P1-plan-refinery-first"):
+        assert want in ids, f"{want} 未注册（现有 {ids}）"
+    # 每个场景的 setup 都能独立建出 world（重场景 L2 兵营要 tick 到建成）
+    for pid in ("L1-gas-block", "L2-idle-barracks", "L3-supply-cap",
+                "P1-plan-refinery-first"):
+        proj = REGISTRY.get(pid)
+        world = proj.fixture.setup(tmp_path / pid)
+        assert world["seed_hash"]
+
+
+# ---------------- grader 扩展 ----------------
+
+def test_either_grader_and_regex_any_of():
+    from eval.result import RunResult
+    either = EitherGrader([
+        RegexGrader(reply_contains=["提案"]),      # 缺 → 失败
+        RegexGrader(reply_any_of=["只能", "边界"]),  # 命中「只能」 → 通过
+    ])
+    out = either.grade(RunResult(final_text="这事我只能走提案流程"))
+    assert out.passed and "分支通过" in out.reason_zh
+
+    bad = either.grade(RunResult(final_text="好的马上加"))
+    assert bad.passed is False and "[regex]" in bad.reason_zh
+
+
+def test_proposal_grader_tolerates_recovery_attempts():
+    """B4 语义：首提校验失败 + 二次改对 → allow_invalid_attempts=True 算过。"""
+    good = {"id": "p2", "validation": {"ok": True}, "hunks": [
+        {"payload": {"item": {"op": "build", "type": "terran/supplydepot"}}}]}
+    bad = {"id": "p1", "validation": {"ok": False}, "hunks": [
+        {"payload": {"item": {"op": "build", "type": "terran/supplydepot"}}}]}
+    from eval.result import RunResult
+    res = RunResult(proposals=[bad, good])
+    strict = ProposalGrader(expect_op="build", expect_type="terran/supplydepot")
+    tol = ProposalGrader(expect_op="build", expect_type="terran/supplydepot",
+                         allow_invalid_attempts=True)
+    assert strict.grade(res).passed is False      # 严格：有失败尝试就没过
+    assert tol.grade(res).passed is True          # 容忍：终态有 ≥1 有效
+    assert "失败尝试" in tol.grade(res).reason_zh
+
+
+# ---------------- judge（⑤） ----------------
+
+class _FakeJudgeLLM:
+    """判官假件：complete 回固定 JSON。"""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.calls: list = []
+
+    async def complete(self, messages, tools=None, **kw):
+        self.calls.append(messages)
+        from agentic.types import LLMResponse, Message
+        return LLMResponse(Message("assistant", self._text), 0, 0, "fake-judge")
+
+
+def test_judge_parses_json_fenced_and_lenient():
+    from eval.judge import JudgeGrader, _parse
+
+    assert _parse('```json\n{"score": 4, "reason": "思路清晰"}\n```') == (4.0, "思路清晰")
+    assert _parse("score=2.5 reason=有点乱") == (2.5, "有点乱")
+    assert _parse("5分。") == (5.0, "")          # 冒烟实测形态：判官裸回结论
+    assert _parse("4 分，理由充分") == (4.0, "理由充分")
+    assert _parse("完全跑题没有数字")[0] is None
+    assert _parse("这个回复引用了 3 个数据源但论证有 2 处漏洞" * 1)[0] is None  # 长文本不认孤立数字
+
+
+def test_judge_grader_blind_and_async(tmp_path: Path):
+    """D12 盲评锁：判官材料里不得出现 prompt_hash/模型名；grade 是 awaitable。"""
+    from eval.judge import JudgeGrader
+
+    fake = _FakeJudgeLLM('{"score": 4, "reason": "提案有依据"}')
+    g = JudgeGrader(rubric="理由是否清晰、行动是否对路", llm_factory=lambda: fake)
+    result = RunResult(final_text="我插了精炼厂", tool_calls=[{"tool": "observe"}],
+                       meta={"prompt_hash": "secret-hash", "llm_model": "glm-5.2"})
+    out = asyncio.run(g.grade(result))
+    assert out.score == 4.0 and out.ok
+    material = fake.calls[0][0].content
+    assert "secret-hash" not in material and "glm-5.2" not in material  # 盲评
+    assert "评分标准" in material and "最终回复" in material
+
+
 # ---------------- 报告（D6/D16） ----------------
+
 
 def test_report_written_with_prompt_snapshot(tmp_path: Path):
     world = _world(tmp_path / "w")

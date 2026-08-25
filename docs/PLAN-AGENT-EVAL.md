@@ -428,8 +428,14 @@ eval/
 > ②`registry.py`+`report.py`（D5/D6/D16）③`SingleRoundRunner` + `OfflineSessionFixture` + L1 场景端到端跑通真 LLM（3.7 示例落地）
 > ④确定性 grader 四件（ToolSeq/Proposal/SimOutcome/Regex）→ ⑤`judge.py`（D8/D12）
 > ⑥扩 L2-L4/P1-P3/B1-B5 → ⑦假 live runner（D4）→ ⑧重管线（真机 normal）。
-> **①-④ 已落地（2026-08-25）**：`eval/` 包 + `tests/eval/`（FakeLLMClient 装配测 6 条全绿，
-> 全仓 1039 绿）；L1 真机冒烟（glm-5.2 ×1 run）**首轮即命中 I33-C1 类 placement schema
-> 缺口**（agent 自创 `kind: "preset"`、校验拒、烧光轮数找坐标 → 提案/结果轴双红）——
-> 框架价值当场兑现。已知欠账：prompt 快照取自 `AgentTalk.prompt_snapshot()`（trace 的
-> messages.jsonl 在 AgentTalk 路径不含 system 消息，见 talk.py 该方法注释）。
+> **①-④ 已落地（2026-08-25）**：`eval/` 包 + `tests/eval/`（FakeLLMClient 装配测，
+> 全仓绿）；L1 真机冒烟（glm-5.2 ×1）**首轮即命中 I33-C1 类 placement schema
+> 缺口**——框架价值当场兑现。已知欠账：prompt 快照取自 `AgentTalk.prompt_snapshot()`。
+> **⑤⑥ 大半落地（同日第二批）**：`@scenario` 声明式注册糖 + fixture `prepare`
+> 预置钩子（约定式挂载 tmp/plans 等——「轻松注册」的入口半边）；judge.py（盲评
+> D12 + 全量护栏 D8 + 宽松解析——真判官会裸回「5分。」，解析四档兜底）；
+> 场景 L1-L3/B1-B4/P1 共 8 个（L4 编组缺口、P2/P3、B5 真实 trace 提取待批 3）；
+> grader 扩展：EitherGrader 组合子（多正确路径）、ProposalGrader 容忍恢复语义、
+> RegexGrader any_of、SimOutcomeGrader final_units。真跑：B1 边界纪律 2/2、
+> L3 供给卡 4/4 全过；L1 二跑 sim 轴过（精炼厂落地）但严格提案轴仍红
+>（placement schema 混淆仍在——I31/I33 提示词整改的第一标的）。

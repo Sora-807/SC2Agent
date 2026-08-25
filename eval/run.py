@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import os
 import sys
 from datetime import datetime
@@ -49,7 +50,13 @@ async def _run_project(project: Project, runs: int, llm_factory, out_dir: Path) 
         try:
             result = await project.runner.run(world, project.task, llm_factory, run_dir)
             result.meta["run_no"] = run_no
-            grades = [g.grade(result, world=world) for g in project.graders]
+            # judge 类 grader 是 async（LLM client.complete 协程）——awaitable 就 await
+            grades = []
+            for g in project.graders:
+                out = g.grade(result, world=world)
+                if inspect.isawaitable(out):
+                    out = await out
+                grades.append(out)
         finally:
             project.fixture.teardown(world)
         rows.append({"project": project.id, "task": project.task.note or project.task.text,

@@ -32,15 +32,27 @@ def bridge_client(app_client: TestClient) -> ApiClient:
 class OfflineSessionFixture:
     """离线会话局面（轻管线用，不启 serve_api、不启 SC2）。
 
-    setup_fn(client) 在 session/start 之后跑 —— 造局面（tick 到指定状态、入队、
-    写规划文件……），等价 PLAN §3.2 的 ScenarioBuilder 最小版。
+    - setup_fn(client)：session/start **之后**跑 —— 造对局局面（tick、入队、
+      提高配额……），拿 TestClient 直接操作。
+    - prepare(tmp)：建 app **之前**跑 —— 写预置文件（规划/策略/地图规划）。
+      约定式挂载：prepare 写出的 tmp/plans、tmp/strategies、tmp/map-plans、
+      tmp/loadouts 目录存在哪个，就自动接进 create_app 对应参数 —— 场景侧
+      不用碰 app 装配细节（「轻松注册」的入口半边）。
     """
 
-    def __init__(self, setup_fn: Callable[[TestClient], None] | None = None) -> None:
+    def __init__(self, setup_fn: Callable[[TestClient], None] | None = None,
+                 prepare: Callable[[Path], None] | None = None) -> None:
         self.setup_fn = setup_fn
+        self.prepare = prepare
 
     def setup(self, tmp: Path) -> dict:
-        app = create_app(tmp / "frames", tmp / "proposals.jsonl")
+        if self.prepare is not None:
+            self.prepare(tmp)
+        app = create_app(self._or_none(tmp / "frames"), tmp / "proposals.jsonl",
+                         plans_dir=self._or_none(tmp / "plans"),
+                         map_plans_dir=self._or_none(tmp / "map-plans"),
+                         strategies_dir=self._or_none(tmp / "strategies"),
+                         loadouts_dir=self._or_none(tmp / "loadouts"))
         client = TestClient(app)
         client.post("/api/session/start", params={"autotick": "false"})
         if self.setup_fn is not None:
@@ -60,6 +72,11 @@ class OfflineSessionFixture:
                 "seq": getattr(sess, "seq", None), "game_time": sess.game_time},
             "extras": {},
         }
+
+    @staticmethod
+    def _or_none(path: Path) -> Path | None:
+        """约定式挂载：prepare 写出来的目录才接进 app（没写 = None = 内存态默认）。"""
+        return path if path.is_dir() else None
 
     def teardown(self, world: dict) -> None:
         # in-process app 无常驻资源；显式留给重管线 fixture 覆盖（SC2 会话收尾在那）
