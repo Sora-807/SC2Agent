@@ -4,10 +4,12 @@ from game.catalog import load_all
 from planner.sim_state import derive_from
 
 
-def _unit(tag, type_name, owner=Owner.SELF, build_progress=1.0, orders=()):
+def _unit(tag, type_name, owner=Owner.SELF, build_progress=1.0, orders=(), carrying=None):
     return Unit(tag=tag, type_name=type_name, position=Point2(0, 0), owner=owner,
                 hp=100.0, hp_max=100.0, shield=0.0, energy=0.0, build_progress=build_progress,
-                orders=list(orders))
+                orders=list(orders),
+                is_carrying_minerals=carrying == "minerals",
+                is_carrying_vespene=carrying == "vespene")
 
 
 def _gather(target_tag):
@@ -56,6 +58,34 @@ def test_derive_from_gas_targets_refinery_not_geyser():
     st = derive_from(gs, cat)
     assert st.gas_workers == 1
     assert st.total_workers == 2
+
+
+def test_derive_from_returning_workers_count_as_income():
+    """送矿途中（Return 单目标=基地，target_tag 查不到矿脉）仍是产收入工——
+    漏了会系统性低估收入，live 投影完工时刻逐帧后移（economy harvest_mem 同类坑）。"""
+    cat = load_all()
+    cc = _unit(1, "COMMANDCENTER")
+    ret_min = _unit(101, "SCV", orders=[Order(ability="Return", target_tag=1)],
+                    carrying="minerals")
+    ret_gas = _unit(102, "SCV", orders=[Order(ability="Return", target_tag=1)],
+                    carrying="vespene")
+    gs = _gs([cc, ret_min, ret_gas])
+    st = derive_from(gs, cat)
+    assert st.mineral_workers == 1
+    assert st.gas_workers == 1
+    assert st.idle_workers == 0
+    assert st.total_workers == 2
+
+
+def test_derive_from_carrying_worker_with_foreign_order_not_income():
+    """扛货但被外来能力征走（SCV 扛着矿被派去 build）→ 只计 total，不算产收入。"""
+    cat = load_all()
+    scv_build = _unit(103, "SCV", orders=[Order(ability="Build", target_pos=Point2(1, 1))],
+                      carrying="minerals")
+    gs = _gs([_unit(1, "COMMANDCENTER"), scv_build])
+    st = derive_from(gs, cat)
+    assert st.mineral_workers == 0
+    assert st.total_workers == 1
 
 
 def test_derive_from_buildings_units_inflight_stable_ids():

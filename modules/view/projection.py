@@ -61,7 +61,21 @@ def queue_to_ops(items: list[QueueItem], catalog: Catalog | None = None,
 
     for it in items:
         op = it.op if isinstance(it.op, QueueOp) else QueueOp(str(it.op))
-        count = max(1, int(it.count))
+        # ADR-0032 账本化回归修（2026-08-25 用户报「泳道图每帧整体后移、完全
+        # 对不上」）：完成项永久留队后这里不过滤 = **整条历史每帧重仿真一遍**
+        # ——已建成的 SCV/depot/兵营全变成从红线起新建的幻影条 + 幻影开销把
+        # 后续项越推越晚（录像 rec-20260825-104557 实锤：q01-q07 全 completed，
+        # 投影每帧仍画 9 条 started@T 的条，T 每帧 +3s 整体右移）。
+        # - completed/skipped：终态历史不进仿真（skipped 是执行期失败，重建归
+        #   agent 重提，不是投影的活）；
+        # - in_progress 且 count<=0：全部已发射 —— 在途实体由 derive_from 按真实
+        #   build_progress 建模（前端另有世界部分条），重仿真=双份。
+        status = getattr(it, "status", "pending")
+        if status in ("completed", "skipped"):
+            continue
+        count = max(0, int(it.count))
+        if count <= 0:
+            continue
         if op is QueueOp.BUILD:
             if not it.type:
                 out.skipped.append(("build", "缺 type"))

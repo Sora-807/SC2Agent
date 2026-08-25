@@ -105,6 +105,16 @@ hold → Agent 一直「等兵」但等不到。observe 段的 `refill_state` �
 ## I26 补给站反复建造：build flight 假失败重发不查既有实体，吃光矿饿死机枪兵（用户 2026-08-25 立项）
 > **已修复（2026-08-25，方案 1+2 合一落地；待真机复验）**：flight 记 `emitted_pos`（历次发射位），新增 `_claim_new_entity`——「新于基线 + 无主 + 落在本 flight 发过的位置」三判据收编晚到实体（confirm 与三条 retry 路径共用）；drain 对已锁定实体的 flight 走确认不走重试。full_flow「不认没发过位置上的实体」教训保留为判据 3（测试锁死）。方案 3（flight 事件流）归 I17 家族仍开放。
 
+> **残留缺口已修（2026-08-25 二次，`_sweep_completions` 对账落地，测试锁定；待真机复验）**：
+> BUILD 完成扫账改 **uid 匹配**（对象 id 在重提往返时会换对象；与 TRAIN 分支同形态、
+> per-queue 作用域防跨队列撞号）+ **实体对账**——flight 缺席时场上有完工同型实体才标
+> COMPLETED，否则保留 in_progress（在建=等盖完，期间项仍在 queued_types、下游走 pending
+> 不误 skip；命令真丢=stall 警报+agent 重提收口，skip 是终态不拿猜测冒险）。
+> **根因更正**：flight 不是被 90 帧超时丢弃，而是 **agent 重提队列（submit_queue）经
+> `_cancel_flights` 取消了在途 flight**，而往返项（带 uid/count=0/in_progress 的账本回灌）
+> 以新对象回队 → 旧 sweep 假设「flight 移除 = 实体完工」直接假完成。复现：q02 depot
+> 重提取消时实体 p≈0.4，旧代码当场标 COMPLETED → depot 三处全无 → 兵营级联 skip。
+
 
 > 2026-08-25 代码核对：**未动工**；下述点位与当前代码一致（`_retry_build` 无 pre-emit
 > 查实体 guard；`_confirm_build` 90 帧判据原样）。
@@ -369,6 +379,13 @@ agent 发消息时就该自动知道上下文：正在哪个页面（规划地�
 
 ## I28 建造完工的 SCV 不回采矿：维持器目标已满不派空闲工，建造工被 SC2 清单后不 auto-gather（用户 2026-08-25 立项）
 
+> **已修复（2026-08-25，方案 1 落地，测试锁定；待真机复验）**：`_plan` 加 2.5 步——矿的
+> 绝对目标当**地板**不是硬上限：目标已满但仍有真空闲工且矿脉未饱和（容量按现状在岗对账，
+> kept 之外的超额矿工也占位）时继续补满；`reserve_idle` 留够再派；气仍是精确配额不走地板。
+> 测试锁「目标 8 已满 + 空闲建造工 + 矿脉空位 → 必派」。方案 2（`_release_flight` 主动回矿）
+> **未做、刻意**：维持器单路由即可（征用释放后下一帧即接管，新工人无冷却），双路由反而要
+> 错峰/标位防顶单。方案 3（目标自适应）仍归 planner/策略面。
+
 > **2026-08-25 已定位（trace `2026-08-25T093323` + 录像 `rec-20260825-093336`，未动工）**：
 > 录像逐帧坐实——barracks 建造工（tag 4339269633）完工（gt=191, bp=1.0）后，SC2 在
 > 191→195 之间把 build 单清成 `order=None`，但该 SCV **不会 auto-gather**（不像从 CC
@@ -471,6 +488,186 @@ I28 修维持器不派空闲工。
 
 ---
 
+## I31 agent 拿 buildings JSON 当建筑总数、漏掉在建项→误判补给站数量（**提示词整改为主**，用户 2026-08-25 立项）
+
+> **2026-08-25 已定位（trace `2026-08-25T093323` + 录像 `rec-20260825-093336`，未动工）**：
+> 这局 agent 以为只造了 1 个补给站，实际造了 2 个（t=118/t=141 落成，队列 q02+q06 两个 depot 项）。
+> 用户定性：**这是 agent 提示词整改任务，不是系统数据缺失 bug**——总数一直在 observe 文字表里。
+
+**现象**（02:08–02:24，第 2 个 depot 在建期间）：
+- observe 文字「建筑汇总」表：`补给站 总数=2 在建=1`（含在建，正确）。
+- observe JSON facts `buildings`：`{"terran/supplydepot": 1}`（只数 `build_progress>=1.0` 的完工建筑；
+  `_count_buildings` `observe.py:342-343` 主动排除在建）。
+- agent 拿 JSON 做算术 → 漏掉在建那个 → 以为只 1 个。文字那行明明写着 2。
+
+**根因（提示词口径缺口，非系统缺数据）**：
+`runtime/agent-talk/workspace/templates/observe-output.md` 的「建筑汇总（全局）」表（`:28-30`，列含
+**总数/挂件/在建**）和字段说明（`:146`）描述了文字表有总数；但**没告诉 agent**：
+1. JSON facts 的 `buildings` 字段**只数已完工**（`build_progress>=1.0`），**不是建筑总数**；
+2. 建筑总数（含在建）看「建筑汇总」表的「总数」列（或 = buildings + 在建）；
+3. 判"数量够不够"（补给站够不够人口、兵营够不够产线）要用总数+在建对照供给/产线，**别拿 buildings JSON 当总数**。
+agent 天然更信结构化 JSON 做算术，模板没点这层口径，于是栽在建窗口。这不是数据缺失（总数一直在文字表），
+是 agent 读 observe 的口径认知没被提示词讲清。
+
+**主修（提示词，本 issue 核心）**——改 `observe-output.md`（`buildings` facts 字段说明）+ `system/prompt.md`：
+- `buildings`（JSON facts）= **已完工**建筑计数；用途 = 判"能不能用 / 前置是否就绪 / 产线是否在线"，**不是总数**。
+- 建筑总数（含在建）= 「建筑汇总」表的「总数」列；要做数量算术用这个。
+- 数量合不合适的判断（如供给是否够、要不要再造补给站/兵营）= 总数 + 在建 + 队列未执行项，对照供给/产线/人口，由 agent 自己算。
+
+**辅修（可选便利项，非必需、非核心）**——给 JSON facts 加一个 `buildings_total`（含在建）字段，
+让结构化字段直接给总数、agent 不必从文字表抠。`_count_buildings` 全仓只在 `observe.py:109` 调一次
+（session_export/plans/planner 种子各自独立来源，不受影响），加字段完全隔离。但这是"少犯错"的便利项，
+**核心仍是提示词让 agent 知道两字段口径**——即使加了 total，提示词仍要点明 `buildings`=完工、`buildings_total`=含在建各干嘛。
+
+**定位文件**：`runtime/agent-talk/workspace/templates/observe-output.md`（`:28-30,146` 加 facts 字段口径）、
+`runtime/agent-talk/workspace/system/prompt.md`（读 observe 做算术的守则）。
+属 [[sc2-agent-self-diagnosis-rationalizes]] 同类（agent 读错字段口径→误判），提示词层堵。
+
+---
+
+## I32 泳道图每帧整体后移、与实际完全对不上：整条历史队列被每帧重仿真（用户 2026-08-25 报，当日已修）
+
+> **已修复（2026-08-25，录像 `rec-20260825-104557` 逐帧实锤 + 测试锁定；待真机复验）**：
+> 两处根因同批修——①`queue_to_ops` 加状态过滤（completed/skipped 终态与 count=0
+> 全发射在途项不进仿真；plans 路由的状态表按运行时账本真值回填，报告面不缺行）；
+> ②`derive_from` 把送矿/运气途中的工人（Return 单目标=基地）计回产收入池
+>（扛货+外来能力征走的仍不算）。残留：经济速率常数校准（P5）与 3s 重锚定的
+> 固有小抖动（见文末「修不掉的部分」）。
+
+**现象**（用户 2026-08-25 实机）：对局中泳道图（ProjectionBoard）「几乎一帧都对
+不上，每过一帧里面的条都往后移动一下」。
+
+**根因①（主因，ADR-0032 账本化连带回归）**：`view/projection.queue_to_ops` 是在
+「完成项出队」年代写的（04f1182），**没有 status 过滤**；ADR-0032（2026-08-24）让
+完成项永久留队后，live 投影每 3 秒把**整条历史**重仿真一遍——已建成的 SCV/depot/
+兵营全变成从红线（T）起新建的幻影条 + 幻影矿开销把后续真条目越推越晚。录像实锤
+（T=179.4/182.4/185.4 三帧投影）：main 队列 q01-q07 全 completed、q08 剩 2 机枪兵，
+投影却每帧画 **9 条 started@T** 的条，模式逐帧整体右移恰好 +3s——正是用户看到的
+「每过一帧往后移」。
+
+**根因②（次因，收入系统性低估）**：`planner.sim_state.derive_from` 按
+`orders.target_tag` 分类工人——送矿途中的 SCV（Return 单目标=基地，查不到矿脉）
+被归进「不产收入」，而真实采矿 SCV 有约 1/3 时间在送矿路上 → 投影收入偏低 →
+完工时刻逐帧后移。与 `economy._current_assignment` 的 harvest_mem 同类坑（那边
+2026-08-24 修过，derive_from 漏了同款）。
+
+**修法**：
+1. `queue_to_ops`（正解）：`status in (completed, skipped)` 跳过；`count<=0`（全发射
+   在途）跳过——在途实体由 `derive_from` 按真实 build_progress 建模（前端另有世界
+   部分条），重仿真=双份。试算路由（plans.py）同路径修：状态表回填终态项真值、
+   horizon=0 静态体检不再对终态项报「将来会卡」。
+2. `derive_from`（并行）：扛矿/扛气且订单是采矿族（Gather/Harvest/Return）→ 计回
+   对应收入池；扛货但被外来能力征走（build/move）仍只计 total。
+
+**修不掉的部分（如实）**：重锚定式投影每 3s 从当前世界态重算一次，条有小幅移动
+是这套机制的固有行为（现实推进 vs 模型速率的差会逐帧收敛到当前真值）；剩余漂移
+幅度取决于经济速率常数校准（P5，与清单开局工人口径一条同族）——修完①②后再实测，
+若仍明显再立校准项。
+
+**同场观察（不立项，I24 附注）**：用户报新入组的兵偶发「半路停一下最后能跟上」——
+符合 F1 去重机制的特性：新兵 lease 进组 → 组 tag 集变化 → move/attack_move 对**全组**
+重发（含已在移动的兵，SC2 重寻路造成一次停顿）。自愈、无功能影响；若真机观感差
+再评估「只对新兵发令」的增量发送。
+
+---
+
+## I33 agent 提示词整改批：placement schema / enemy_contact 指向 / pos_marks 引用（用户 2026-08-25 立项，先挂账不改）
+
+> 2026-08-25 定位（trace `2026-08-25T110728` 对话 + 代码核验，未动工）。归 I31 同族（agent 读错字段/不懂
+> schema→误判），提示词层堵。三处缺口均**非系统数据缺失**，是 agent 读 observe/工具的口径认知没被提示词讲清。
+
+1. **placement schema（C1/C2，最紧急，阻塞开局）**：agent 把**槽位名 D1 当 `in_region.region`** →
+   `barracks-stack-test/D1`、`D1`、`barracks-stack-test/D2` 三种写法全"未登记"。实际：
+   `in_region.region` 只认区域名（map-plan 建出的 region_layer 只有一个区域 `"home"`，
+   `tactical_map/base.py:217-225`），resolver 在该区内**按 kind/size 自动挑槽位**（`placement.py:64-67`：
+   depot→supply 类、rax→production 类）；要**指定**槽位用 `kind: exact, mark: "D1"`（`placement.py:39-48`）。
+   提示词的"槽位/点位名用「规划id/名」限定"措辞误导 agent 把槽位名塞进 region。
+   - 改：`observe-output.md`/`prompt.md` 写清——`in_region`（region=区域名如"home"，自动找位）vs
+     `exact`（mark=槽位/点位名，点名）的区分与各自用法。
+
+2. **enemy_contact 指向（A2′）**：agent 误判"observe 无敌方信息"。实际 `enemy_contact` 警报是实时 observe
+   一部分（`alerts.py:105-143`，在「## 风险」段 + facts `alert_kinds`），只在敌人进视野时报。agent 在
+   没敌人的早帧没看到就下结论"系统不给"（[[sc2-agent-self-diagnosis-rationalizes]] 同款）。
+   - 改：提示词点明——敌方信息看 `风险/alerts` 段的 `enemy_contact`（仅视野内有敌时报）；没报≠系统不给。
+
+3. **pos_marks 引用（A4）**：agent 靠格点网格猜"斜坡口"坐标 → 偏到二矿。格点网格能看 `✗/·` 但不标 ramp。
+   应引用 map-plans 的 `pos_marks`（如 `ramp_bl`/`ramp_tr`）点名，不编坐标。
+   - 改：提示词点明——固定点位（ramp/集结点）用 `pos_marks` 名引用，别从网格猜坐标；配套**用户在
+     map-plans 标好 ramp pos_mark**（数据/用户任务，非系统 bug）。
+
+**定位**：`runtime/agent-talk/workspace/templates/observe-output.md`（placement 段 + alerts 段）、
+`runtime/agent-talk/workspace/system/prompt.md`。与 I31 同批做（提示词整改族）。
+
+---
+
+## I34 observe 部队缺离散度：只给 count+组心，无法判断是否聚集成群（用户 2026-08-25 立项）
+
+> 现状（trace `2026-08-25T110728` 对话）：observe 编组 facts 只给 `G_MAIN: count=8, center=[54,37]`，
+> **无 spread/展开半径**。agent 无法判断兵是挤一起（半径2格）还是散半图（半径30格）→ hold step 以为
+> 聚齐实则拖成线、先到先走送死（**进攻失败直接原因之一**）。用户倾向给**数字**（不同场景不同阈值、
+> 可写策略 `when` 谓词如 `group_spread < 5`）；agent 也倾向数字。
+
+**方案**（系统增强）：编组 facts 加 `spread`——到组心的平均距离 / 标准差 / max-radius 之一（取哪个看可读性，
+标准差最稳）。落 view 的编组 facts 构造（`modules/view/observe.py` 编组段 + facts）。关联 I17（可观测性深度）。
+低-中难，纯加字段不破坏现有契约。
+
+---
+
+## I35 enemy_contact 警报增强：1s 批次累积窗 + 点位带矿区名（用户 2026-08-25 立项）
+
+> 现状（`modules/view/alerts.py:105-143` `_contact_alerts`）：10s 滚动窗，**每帧重报**"见过 N 个不同/
+> 峰值 M/最后出现 <兵种> @ (x,y)"。问题：①每帧重报噪音大、早期少算（4 兵 0.5s 涌入时第一帧只报 1）；
+> ②点位只给裸 (x,y)，**无"哪方哪个矿区"**。
+
+**用户设计**：
+1. **1s 静默累积→报**：首次接触静默 1s 累积这 1s 内出现的敌军→报一次批次计数→该批次静默到下次新接触。
+   少噪音、批次计数稳、防早期少算。
+2. **点位带矿区名**：(x,y) + 最近矿区名（如"红方二矿"）。系统有矿区名（observe「区域信息」段：
+   蓝方主矿/红方二矿…），(x,y)→最近矿区名可映射（region_layer/mine_areas 锚点）。
+
+**方案**：落 `alerts.py:_contact_alerts`——把"每帧滚动窗重报"改成"批次 debounce（首次接触+1s 窗→报一次）"，
+payload/text 加 `mine_region`（最近矿区名）。属系统增强（非 bug，现有 alert 能用但要更实用）。关联 I17。
+
+---
+
+## I36 录像回看未接通：observe source 不认录像 id（用户 2026-08-25 立项）
+
+> 现状（trace `2026-08-25T110728`）：observe `source` 参数只认 `live` 和地图规划 id，**不接受录像 id
+> （rec-xxx）**；`time` 参数描述写了"录像复盘"但 source 不支持 → 404"没有活跃会话"。预留未接通。
+> agent 想局中复盘上一局、或离线分析录像帧都做不到。敌方信息也只能靠录像摘要（实时 observe 视野外盲区，
+> 见 I33-A2′ + I35）。
+
+**方案**（系统功能）：observe source 接受录像 id 作帧源——从 `runtime/recordings/<id>.jsonl` 读对应
+`game_time` 的帧返回。落 observe 路由 + 录像帧定位（录像 28MB 逐行扫慢，可能要建轻量 game_time→行号索引）。
+关联我之前盘 trace 时报的"agent trace↔录像无 id 互链、只有快照没事件流"——这条是把录像从"事后看"
+变成"agent 局中能复盘"的关键一环。
+
+---
+
+## I37 propose 校验不查 placement region、执行才丢（次要系统粗糙点，用户 2026-08-25 立项）
+
+> 现状（trace `2026-08-25T110728`）：propose"校验通过并自动应用"，执行时才"被丢弃（作者错误）：区域
+> 'xxx' 未登记"。校验和执行断层——agent 以为提案生效了，实际静默丢弃，得靠 observe 看 dropped 才发现。
+
+**方案**（系统小改）：propose/queue-op 校验时对 `placement.region`/`mark` 做有效性预检（对照当前
+region_layer 的 regions/pos_marks/build_slots），无效直接校验失败给原因，不留到执行才丢。
+难点：离线无会话时 region_layer 未建，校验需区分 live（有 layer，可查）vs 离线（无 layer，跳过或软警告）。
+落 `view/proposals.py` 校验面 + `production/placement.py` 暴露 region 查询函数。低难，但要处理好离线降级。
+
+---
+
+## I38 无 open 工具：agent 无法让前端跳到某地图规划/策略编辑界面（用户 2026-08-25 立项）
+
+> 现状（trace `2026-08-25T110728` 对话）：agent 改地图规划时只能 `read` 文件，没法让前端直接打开对应
+> 编辑界面；用户做地图规划时也不知该打开哪个。用户想要：agent 调一个 `open` 工具→前端收快捷链接→
+> 点一下进对应地图规划/策略去操作。
+
+**方案**（系统新工具）：加 `open(target_kind, target_id)` 工具，agent 调用→后端推一个深链给前端
+（复用 chat 改动 chip 跳 `?plan=/?map=` 的深链机制）。落工具层（`modules/api/routes/` 新端点或 agent 工具
+注册）+ 前端深链接收。关联 I21（用户视窗感知，反向：agent 告诉用户看哪）+ I29（规划页 UI）。
+
+---
+
 ## 开放任务清单（2026-08-25 核对版；处理一条关一条）
 
 > 2026-08-25 对代码与 WORKLOG 全面核对后重排（原清单 24 条 → 现 18 条开放；关闭/失效条目
@@ -485,55 +682,62 @@ I28 修维持器不派空闲工。
    neutral/ 排除 → 岩石算敌方、warn 叫醒 sleep，困 Agent 于 sleep-observe 空转整局；
    详见 I25 节。
 3. **I26 补给站反复建造——已修复（2026-08-25 待真机复验）**`_confirm_build` 假失败 → `_retry_build` 重发不查既有
-   实体，q02 把 9 个槽位各发一座真补给站，吃光矿饿死机枪兵；详见 I26 节。
+   实体，q02 把 9 个槽位各发一座真补给站，吃光矿饿死机枪兵；残留缺口（重提取消 flight 后
+   `_sweep_completions` 假完成）同日二次修复（uid 匹配+实体对账）；详见 I26 节。
+4. **I28 建造完工的 SCV 不回矿——已修复（2026-08-25 待真机复验）**维持器把矿的绝对目标当
+   硬上限：目标 8 已满不再派工，建造完工的 SCV 又不 auto-gather → 每造完一座建筑永久少一个
+   采矿工；`_plan` 加地板填充（空闲工+矿脉未饱和→必派）；详见 I28 节。
+5. **I32 泳道图每帧整体后移——已修复（2026-08-25 待真机复验）**投影把整条已完成历史每帧
+   重仿真成幻影条（ADR-0032 账本化连带回归）+ 送矿途中的工人被当零收入 → 条逐帧后移；
+   `queue_to_ops` 状态过滤 + `derive_from` 扛货分类；详见 I32 节。
 
 **P1**
 
-4. **I27「大概率被摧毁」误报——已修复（2026-08-25 待真机复验）**`_ever_ready` 只增不减 + hint 不与 block reason
+6. **I27「大概率被摧毁」误报——已修复（2026-08-25 待真机复验）**`_ever_ready` 只增不减 + hint 不与 block reason
    对账 → 兵营活着也报被毁，误导重建；详见 I27 节。与 I17 同轮收。
-5. **I23 策略面缺口**——术语 flow→策略清扫 + 装配可视化 + 编写向导（原#3「策略
+7. **I23 策略面缺口**——术语 flow→策略清扫 + 装配可视化 + 编写向导（原#3「策略
    编辑 UI（人用）」已并入 C 项）；详见 I23 节。
-6. **I21 用户视窗上下文自动注入**——发消息时带 ui_context：页面/规划/地图/视窗/
+8. **I21 用户视窗上下文自动注入**——发消息时带 ui_context：页面/规划/地图/视窗/
    悬停（用户不想重复交代正在看什么）；详见 I21 节。
-7. **event_occurred / has_ready_base / user_cancel 谓词（I12-B1 剩余）（原#2）**——
+9. **event_occurred / has_ready_base / user_cancel 谓词（I12-B1 剩余）（原#2）**——
    **事件源已拍板（2026-08-25）：世界推导**——从帧差/现有警报派生结构化事件（建筑被毁/
    单位伤亡/敌方接触/用户取消队列项），不走 driver 原始 events（driver 无关、sim/live/
    回放同源）；has_ready_base 从 catalog 三族 town hall 判 built≥1 落地。
    （2026-08-25 核对：`predicates.py:68-72` 仍 3 条未实现；timer/locals 写侧已全通。）
-8. **对局可观测性深度（I17 剩余）（原#12）**——警报加 `remediation_zh`（"怎么修"）+
+10. **对局可观测性深度（I17 剩余）（原#12）**——警报加 `remediation_zh`（"怎么修"）+
    采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）+
    装配缺口时序化/live 化。子项 5（observe 在建项映射）已落地关闭。1/2 低难可插队先做。
-9. **modules/ 代码债剩余（I15）（原#11）**——P0 bug 批与 god files（G1-G3）已清，B7
+11. **modules/ 代码债剩余（I15）（原#11）**——P0 bug 批与 god files（G1-G3）已清，B7
    （命令 shape）§0.41 已修；剩：B6（planner 仍 Terran-only，**路线已拍板 2026-08-25：
    catalog capabilities 推导**，投影真支持三族）+ 死代码清理 + 去重
    （详见 [`REFACTOR.md`](REFACTOR.md)）。
-10. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
+12. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
     improvement-notes + agent/seeds + 提示词整改）；剩余：几局后校验 agent 是否真读真写、
     `system-capabilities` 派生是否对账——不行再上机制（开局自动 seed 检查）。
     附带待拍板：孤儿 `notes.jsonl` 去留（后端 note_save 端点在、Agent 无工具，链路仍断）。
-11. **观察包"零收入检测"（原#18，用户拍板随后做）**——观察包经济段加资源产出速率
+13. **观察包"零收入检测"（原#18，用户拍板随后做）**——观察包经济段加资源产出速率
     （近 N 秒 Δ矿/Δ气）+ 采矿工人距目标矿脉的距离分布；结构化警报「收入为 0 且有采矿
     分配 → 疑似采错矿/路途过远」（I17 家族）。2026-08-25 核对：未做（observe 经济段
     仍只有分配数口径）。
 
 **P2**
 
-12. **开局工人口径：真机 8 工 vs 种子 12 工（原#17）**——真机录像首帧 8 工/13 cap，
+14. **开局工人口径：真机 8 工 vs 种子 12 工（原#17）**——真机录像首帧 8 工/13 cap，
     种子（planner.opening / worldsim.bootstrap / session 默认）仍全 12 工（2026-08-25
     核对确认）。供给值已单源修正为 13；工人数是另一处 sim/真机偏差：干跑经济曲线比真机
     乐观。**已拍板（2026-08-25）：先查 8 工根因**——12 工是标准 melee 口径，先确认那局
     用的地图/模式是否非标准开局，再决定改种子还是改测试环境（直接改种子会波及全部干跑
     数字与夹具，且可能把干跑永久校到一张非标准图上）。
-13. **槽位 placeable 后端校验收口（原#6）**——terrain.placeable 栅格进摆放校验面
+15. **槽位 placeable 后端校验收口（原#6）**——terrain.placeable 栅格进摆放校验面
     （2026-08-25 核对：仍只查不压己方建筑/在途预留，不查地形栅格）。
-14. **模块模板参数化 UI（B3 增量，原#7）**——from-module 端点已支持 params，前端
+16. **模块模板参数化 UI（B3 增量，原#7）**——from-module 端点已支持 params，前端
     「从模板落地」不带参数（marine_target/tank_count 调不了）。
-15. **组/槽位形状颜色标记（I4 候选 3，原#8）**——地图 chip 与策略图同词的视觉语言
+17. **组/槽位形状颜色标记（I4 候选 3，原#8）**——地图 chip 与策略图同词的视觉语言
     （现为纯文字同词，无按 group 的颜色/形状）。
-16. **live 投影窗口语义（原#10）——已拍板（2026-08-25）：until_complete + 封顶**——
+18. **live 投影窗口语义（原#10）——已拍板（2026-08-25）：until_complete + 封顶**——
     与试算同口径（`COMPLETION_CAP` 钳制）；live 队列有界，预期 horizon 不会失控，落地时
     实测帧大小，超预期再回调。
-17. **复盘（回放源）切换加载慢（原#19，用户拍板可后排）**——换源/拖时间轴前端卡顿：
+19. **复盘（回放源）切换加载慢（原#19，用户拍板可后排）**——换源/拖时间轴前端卡顿：
     整份 JSONL 拉取+逐行解析+全量重建。候选：分窗解析/增量渲染/录制索引。
-18. **repair / set_rally 操作（原尾注，D3 立项批 6 后排期）**——repair 不在 OP_CATALOG
+20. **repair / set_rally 操作（原尾注，D3 立项批 6 后排期）**——repair 不在 OP_CATALOG
     （SCV 修理目标/跟随大部队）；set_rally（集结点）为 I24 方案 3 的兜底项，可同批。

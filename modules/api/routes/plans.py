@@ -170,10 +170,14 @@ def plans_simulate(body: dict, request: Request) -> dict:
         from planner.initial_state import static_check
         buildings = dict(initial_st.buildings) if initial_st is not None else {}
         cap = initial_st.supply_cap if initial_st is not None else 0
-        alerts = static_check(items, catalog, buildings, cap)
+        # 终态历史项（会话队列带来的 completed/skipped）不进体检——已发生的事
+        # 不再报「将来会卡」；状态表仍按真值列出（与跑投影路径的回填口径一致）
+        live_items = [it for it in items
+                      if getattr(it, "status", "pending") not in ("completed", "skipped")]
+        alerts = static_check(live_items, catalog, buildings, cap)
         if slot_pool is not None:
             from game.production import PlacementExact
-            for i, it in enumerate(items):
+            for i, it in enumerate(live_items):
                 p_ = getattr(it, "placement", None)
                 if not isinstance(p_, PlacementExact):
                     continue
@@ -193,8 +197,9 @@ def plans_simulate(body: dict, request: Request) -> dict:
                         "uid": getattr(it, "uid", None)})
         rows = [{"uid": getattr(it, "uid", None) or f"#{i}",
                  "item": f"{it.op.value} {it.type or ''}" + (f" ×{it.count}" if it.count > 1 else ""),
-                 "status": "pending", "started_at": None, "completed_at": None,
-                 "reason": None}
+                 "status": getattr(it, "status", None) or "pending",
+                 "started_at": it.started_at, "completed_at": it.completed_at,
+                 "reason": getattr(it, "reason", None)}
                 for i, it in enumerate(items)]
         return {"static": True, "queue_source": source_note, "alerts": alerts,
                 "queue_status": rows,
@@ -205,6 +210,21 @@ def plans_simulate(body: dict, request: Request) -> dict:
     curve = planner.project(
         opening_game_state(catalog), list(translated.ops), horizon,
         until_complete=True, tail=30.0, initial=initial_st, slot_pool=slot_pool)
+    # 账本化回归修的另一半（2026-08-25）：终态历史项不进仿真（泳道幻影条根因，
+    # 见 view/projection.queue_to_ops），但状态表报告仍要覆盖整条会话队列 ——
+    # completed/skipped 与全发射的 in_progress 项按运行时账本真值原样回填，
+    # 不靠仿真重推（时间/reason 就是 runtime 记的原值）。
+    ledger_rows = [
+        {"uid": getattr(it, "uid", None) or f"#{i}",
+         "item": f"{it.op.value} {it.type or ''}" + (f" ×{it.count}" if it.count > 1 else ""),
+         "status": it.status,
+         "started_at": it.started_at, "completed_at": it.completed_at,
+         "reason": getattr(it, "reason", None), "detail": None}
+        for i, it in enumerate(items)
+        if getattr(it, "status", "pending") in ("completed", "skipped")
+        or (getattr(it, "status", "pending") == "in_progress"
+            and max(0, int(it.count)) <= 0)
+    ] + list(curve.queue_status)
     sim_end = curve.points[-1].t if curve.points else horizon
     frame = projection_frame(
         curve, based_on_seq=0, based_on_game_time=0.0, horizon=sim_end,
@@ -259,7 +279,7 @@ def plans_simulate(body: dict, request: Request) -> dict:
 
     assembly = parse_assembly(DEFAULT_ASSEMBLY)
     alerts = list(svc.from_curve(curve)) + list(svc.assembly_gaps(curve, assembly))
-    for row in curve.queue_status:
+    for row in ledger_rows:
         if row["status"] != "skipped":
             continue
         advice = ("扩图层槽位（map-plans）或减少该类建筑数量"
@@ -277,7 +297,7 @@ def plans_simulate(body: dict, request: Request) -> dict:
             payload={"uid": row["uid"], "reason": row["reason"]}))
     # 附加键不覆盖 frame 自带键（source/skipped 已在 frame 里）；queue_source 是来源说明
     return {**to_json(frame), "alerts": to_json(alerts),
-            "queue_status": curve.queue_status, "samples": samples,
+            "queue_status": ledger_rows, "samples": samples,
             "final": final, "queue_source": source_note,
             "placement_source": placement_src}
 

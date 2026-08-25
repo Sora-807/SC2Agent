@@ -113,6 +113,48 @@ def test_research_is_projectable_even_though_runtime_rejects_it():
     assert out.ops == [Research("terran/marine")]
 
 
+def test_ledger_history_not_resimulated():
+    """ADR-0032 账本化回归修（2026-08-25 用户报「泳道图每帧整体后移、完全对不上」）：
+    completed/skipped 历史项与 count=0 的全发射在途项**不进仿真**。完成项永久留队后
+    不过滤 = 整条历史每帧重仿真成幻影条 + 幻影开销（录像 rec-20260825-104557 实锤：
+    q01-q07 全 completed，投影每帧仍画 9 条 started@T 的条，T 每帧 +3s 整体右移）。
+    在途实体由 derive_from 按真实 build_progress 建模，不需要 op 再造一份。"""
+    items = [
+        QueueItem(op=QueueOp.TRAIN, type="terran/scv", uid="q01",
+                  status="completed", count=0),
+        QueueItem(op=QueueOp.BUILD, type="terran/supplydepot", uid="q02",
+                  status="completed", count=0),
+        QueueItem(op=QueueOp.BUILD, type="terran/refinery", uid="q03",
+                  status="skipped", count=0, reason="placement_collision"),
+        QueueItem(op=QueueOp.TRAIN, type="terran/marine", uid="q04",
+                  status="in_progress", count=0),   # 原始 8 条全在途（世界带进度）
+        QueueItem(op=QueueOp.TRAIN, type="terran/marine", uid="q05", count=2),
+        QueueItem(op=QueueOp.BUILD, type="terran/barracks", uid="q06"),
+    ]
+    out = queue_to_ops(items, CAT)
+    assert out.ops == [
+        Train("terran/marine", uid="q05"), Train("terran/marine", uid="q05"),
+        Build("terran/barracks", uid="q06"),
+    ]
+    # 历史项是「不重仿真」不是「不可投影」——不进 skipped（否则每帧刷一屏噪音）
+    assert out.skipped == []
+
+
+def test_project_queue_curve_has_no_phantom_rebuilds():
+    """端到端锁：已完成 depot 不再出现在投影事件里（旧代码每帧从 T 重画它一遍）。"""
+    gs = _gs()   # 世界里只有 CC + 12 SCV（depot 已建成会在 buildings 里）
+    gs.units.append(_unit(2, "SUPPLYDEPOT"))
+    items = [
+        QueueItem(op=QueueOp.BUILD, type="terran/supplydepot", uid="q01",
+                  status="completed", count=0),
+        QueueItem(op=QueueOp.BUILD, type="terran/barracks", uid="q02"),
+    ]
+    curve, tr = project_queue(Planner(CAT), gs, items, until=60.0, catalog=CAT)
+    started = [e.type for e in curve.events if e.kind == "started"]
+    assert "terran/supplydepot" not in started   # 不再重画已建成的 depot
+    assert "terran/barracks" in started
+
+
 # ---------------- 端到端：真投影 ----------------
 
 def test_project_queue_produces_a_real_curve():

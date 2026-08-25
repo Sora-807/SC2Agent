@@ -63,8 +63,10 @@ class SimState:
 def derive_from(gs: GameState, catalog: Catalog) -> SimState:
     """从 live GameState 快照派生 SimState（planner 投影的起始态）。
 
-    - 工人按 orders.target_tag 分类：矿脉→mineral、精炼厂→gas、无命令→idle
-      （采气 order 目标是精炼厂 tag 不是气井——修正 live 检测里"气工=0"的同类坑）。
+    - 工人按 orders.target_tag 分类：矿脉→mineral、精炼厂→gas、无命令→idle；
+      扛着矿/气且订单是采矿族（Gather/Harvest/Return）→ 按扛的货归池（送矿途中
+      不是零收入，Return 单目标=基地查不到 target）；
+      扛货但订单是外来能力（build/move…）→ 只计 total（不产收入，等它回来）。
     - 建筑/单位按 catalog.role + build_progress：complete→buildings/units；<1→in_flight。
     - 索引一律稳定 ID（catalog.stable_id_for；未知型回退 burnysc2 名）。
     """
@@ -89,6 +91,20 @@ def derive_from(gs: GameState, catalog: Catalog) -> SimState:
                 gas += 1
             elif not u.orders:
                 idle += 1
+            elif (getattr(u, "is_carrying_minerals", False)
+                    or getattr(u, "is_carrying_vespene", False)):
+                # 送矿/运气途中（Return 单目标=基地，不在上面两个集合里）——仍是
+                # 产收入工，漏了会系统性低估收入、投影完工时刻逐帧后移（与
+                # economy._current_assignment 的 harvest_mem 同一类坑）。扛货但被
+                # 外来能力征走（build/move…）的不算 —— 按 mining 族能力名区分。
+                mining_family = any(
+                    k in (o.ability or "").lower() for o in u.orders
+                    for k in ("gather", "harvest", "return"))
+                if mining_family:
+                    if getattr(u, "is_carrying_vespene", False):
+                        gas += 1
+                    else:
+                        mineral += 1
             # else: build/repair/移动等——计入 total 但不进 mineral/gas/idle（不产收入）
         elif role == Role.BUILDING:
             if u.build_progress >= 1.0:
