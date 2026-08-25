@@ -12,7 +12,7 @@ dependencies = [
     # uvicorn 不自带 WS 实现：缺了它 WS 升级会被拒（"No supported WebSocket library"）。
     # 真机验过：pytest 的 TestClient 走 ASGI 直连不需要它，但真起服必须有。
     "websockets>=14",
-    # agent 层（vendor/agentic 用；见 vendor/agentic/NOTICE.md）
+    # agent 层（vendor/agentic 用）
     "openai>=2.0",
     "python-dotenv>=1.0",
 ]

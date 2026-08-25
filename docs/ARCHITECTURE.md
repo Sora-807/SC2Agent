@@ -215,7 +215,7 @@ check_build/check_train/check_gas/...：矿/气/供给/前置/放置/重叠 → 
   **没有**直接命令工具，P1/Q1 靠"不给工具"保证）、spec.py（系统提示词：三条做不到+提案要具体）、
   run.py（单回合，--dry 用 FakeLLM 不打网络）。
 - vendor/agentic/：BaseAgent 框架（vendored）。DiskWorkspace 物理隔离（R5 机制保证）、
-  FakeLLMClient（测试不打网络）、trace 可视化。见 vendor/agentic/NOTICE.md。
+  FakeLLMClient（测试不打网络）、trace 可视化。
 
 ---
 
