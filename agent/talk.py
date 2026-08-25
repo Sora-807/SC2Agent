@@ -17,6 +17,10 @@
 
 LLM 惰性构造：没配密钥时 `OpenAIClient.from_env` 会抛 KeyError —— 不在启动时炸，
 第一条消息时才显形（G7：禁用必须带理由，而不是服务起不来）。
+
+2026-08-25 批6c 拆分：LLM 流式层在 `agent/llm_stream.py`、trace 轮内簿记在
+`agent/segments.py`（本模块 re-export 流式层的名字 —— app.py/eval/测试的
+import 路径是形状面，不变）。
 """
 from __future__ import annotations
 
@@ -29,163 +33,22 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agentic import Engine, Tracer
-from agentic.llm import OpenAIClient
 from agentic.types import StreamEvent
 
 from agent.client import ApiClient
-from agent.spec import AdvisorSpec
+from agent.llm_stream import (  # noqa: F401 —— re-export：app.py lazy import / eval / 测试从 talk 拿这些名字
+    ReasoningTolerantClient,
+    _event_dict,
+    openai_from_env,
+)
 from agent.readonly import default_areas
+from agent.segments import clip_text, round_segments, round_steps
+from agent.spec import AdvisorSpec
 from agent.tools import InterjectionQueue
 from agent.workspace import ApiWorkspace, ChangeLog
 
 #: LLM 工厂默认实现（惰性；测试注入 FakeLLM 脚本）
 DefaultLLMFactory = Callable[[], object]
-
-
-class ReasoningTolerantClient(OpenAIClient):
-    """OpenAIClient 的思考流容错版（2026-08-24「token 流很慢」排查）：
-
-    父类只认 delta.reasoning_content（百炼/Qwen 系）；端点若用 **reasoning**
-    （OpenAI o 系/部分代理），思考期间一个分片都不发 —— 表现为"卡住很久，
-    思考完才收到内容"。vendor 不改，子类把两种字段名都认。
-    """
-
-    #: 轮输出 token 预算（AgentTalk 每轮 reset_round_budget 复位；None = 不设限）
-    output_budget: int | None = None
-    round_output_tokens: int = 0
-
-    async def _stream_call(self, kwargs: dict, on_delta=None) -> LLMResponse:
-        """一次流式调用 + **零分片重试**（2026-08-24 用户报「断流无下文」）：
-        连接类瞬断在**一个分片都没发**时重试一次 —— 已发过分片就不重试
-        （重发会让前端正文重复），异常照抛给引擎记 run_end error（trace 可见）。
-
-        另带**轮输出 token 预算**（§0.57 用户拍板）：AgentTalk 每轮 reset_round_budget；
-        累计到上限 → 不再调 API，返回空响应（无工具调用 → runner 自然收轮，
-        talk 侧检测计数落「预算用尽」说明 —— 不走异常路径，SSE 不炸）。"""
-        budget = getattr(self, "output_budget", None)
-        used = getattr(self, "round_output_tokens", 0)
-        if budget is not None and budget > 0 and used >= budget:
-            from agentic.types import LLMResponse as _R, Message as _M
-
-            return _R(_M("assistant", None), 0, 0, "budget-stop")
-        emitted = False
-
-        def _guarding(delta) -> None:
-            nonlocal emitted
-            emitted = True
-            if on_delta is not None:
-                on_delta(delta)
-
-        last_exc: Exception | None = None
-        for attempt in (1, 2):
-            try:
-                resp = await self._stream_call_once(kwargs, _guarding if on_delta else None)
-                self.round_output_tokens = used + int(resp.output_tokens or 0)
-                return resp
-            except Exception as exc:  # noqa: BLE001 —— 重试策略在这里定，透传给引擎的语义不变
-                last_exc = exc
-                if attempt == 1 and not emitted:
-                    await asyncio.sleep(1.0)
-                    continue
-                raise
-        raise last_exc  # 不可达（循环要么 return 要么 raise），保静态检查通过
-
-    def reset_round_budget(self, budget: int | None) -> None:
-        """每轮预算复位（AgentTalk 轮首调）：budget=None/0 = 不设限（测试替身语义）。"""
-        self.output_budget = budget
-        self.round_output_tokens = 0
-
-    async def _stream_call_once(self, kwargs: dict, on_delta=None) -> LLMResponse:
-        import json as _json
-
-        from agentic.types import LLMDelta, LLMResponse, Message, ToolCall
-
-        stream = await self._client.chat.completions.create(**kwargs)
-        reasoning_parts: list[str] = []
-        content_parts: list[str] = []
-        tool_calls: dict[int, dict] = {}
-        usage = None
-        async for chunk in stream:
-            if chunk.usage:
-                usage = chunk.usage
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            # 两种思考流字段都认：reasoning_content（百炼/Qwen/DeepSeek）与 reasoning（o 系）
-            rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-            if rc:
-                reasoning_parts.append(rc)
-                if on_delta:
-                    on_delta(LLMDelta("reasoning", rc))
-            if delta.content:
-                content_parts.append(delta.content)
-                if on_delta:
-                    on_delta(LLMDelta("content", delta.content))
-            if delta.tool_calls:
-                for tool_call_delta in delta.tool_calls:
-                    index = tool_call_delta.index if tool_call_delta.index is not None else 0
-                    slot = tool_calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
-                    if tool_call_delta.id:
-                        slot["id"] = tool_call_delta.id
-                    if tool_call_delta.function and tool_call_delta.function.name:
-                        slot["name"] = tool_call_delta.function.name
-                    if tool_call_delta.function and tool_call_delta.function.arguments:
-                        slot["arguments"] += tool_call_delta.function.arguments
-                        if on_delta:
-                            on_delta(LLMDelta("tool_call", tool_call_delta.function.arguments, index=index))
-        content = "".join(content_parts)
-        parsed_tcs: list[ToolCall] = []
-        for idx in sorted(tool_calls):
-            slot = tool_calls[idx]
-            try:
-                args = _json.loads(slot["arguments"] or "{}")
-            except _json.JSONDecodeError:
-                args = {"_raw": slot["arguments"]}
-            parsed_tcs.append(ToolCall(id=slot["id"], name=slot["name"], args=args))
-        return LLMResponse(
-            message=Message("assistant", content or None, tool_calls=parsed_tcs or None),
-            input_tokens=usage.prompt_tokens if usage else 0,
-            output_tokens=usage.completion_tokens if usage else 0,
-            model=kwargs["model"],
-            reasoning="".join(reasoning_parts) or None,
-            cached_tokens=(
-                getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", None)
-                if usage else None
-            ),
-        )
-
-
-def openai_from_env() -> object:
-    return ReasoningTolerantClient.from_env()
-
-
-def _clip_text(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[:limit] + "…"
-
-
-def _event_dict(ev: StreamEvent) -> dict:
-    """StreamEvent → 前端友好 dict（None 字段剔除，SSE 载荷只带有的东西）。"""
-    out: dict = {"type": ev.type}
-    if ev.turn_no is not None:
-        out["turn_no"] = ev.turn_no
-    if ev.type == "delta" and ev.delta is not None:
-        out["kind"] = ev.delta.kind
-        out["text"] = ev.delta.text
-        if ev.delta.index is not None:
-            out["index"] = ev.delta.index
-    if ev.tool is not None:
-        out["tool"] = ev.tool
-    if ev.args is not None:
-        out["args"] = ev.args
-    if ev.result_preview is not None:
-        out["result_preview"] = ev.result_preview
-    if ev.outcome is not None:
-        out["outcome"] = ev.outcome
-    if ev.result is not None:
-        out["result"] = ev.result
-    if ev.summary is not None:
-        out["summary"] = ev.summary
-    return out
 
 
 #: 一轮对话的看门狗上限（秒）。**无论卡在哪**（LLM 停滞 / 工具死等 / 未知 await
@@ -577,11 +440,11 @@ class AgentTalk:
                 self._round_mark = None
                 self.running_steps = []
                 self._round_active = False
-            steps = self._round_steps(tracer, events_before)
+            steps = round_steps(tracer, self._target, events_before)
             # 交错时间线（A 批，2026-08-24）：正文/思考/工具/插话按真实顺序全序列化 ——
             # 旧 {steps,text} 两段式渲染时工具间正文被吞（用户实测「轮完成瞬间清空正文」）
-            segments = self._round_segments(
-                tracer, events_before, messages_before, agent,
+            segments = round_segments(
+                tracer, self._target, events_before, messages_before, agent,
                 self.interjections.take_drained())
             tracer.finalize_summary()
             if not reply:
@@ -728,7 +591,7 @@ class AgentTalk:
             steps.append({
                 "kind": "tool",
                 "tool": pending_tool.get("tool", "?"),
-                "args": _clip_text(json.dumps(pending_tool.get("args", {}), ensure_ascii=False), 200),
+                "args": clip_text(json.dumps(pending_tool.get("args", {}), ensure_ascii=False), 200),
                 "preview": "", "duration_ms": 0,
             })
         elif last_reasoning_ref is not None:
@@ -737,96 +600,8 @@ class AgentTalk:
             except OSError:
                 text = ""
             if text.strip():
-                steps.append({"kind": "reasoning", "text": _clip_text(text.strip(), 2000)})
+                steps.append({"kind": "reasoning", "text": clip_text(text.strip(), 2000)})
         self.running_steps = steps
-
-    def _round_segments(self, tracer: Tracer, events_before: int,
-                        messages_before: int, agent,             # noqa: ANN001 —— 避免引 vendor 内部类型
-                        interjections: list[tuple[str, float]]) -> list[dict]:
-        """本轮的**交错时间线**（A 批，2026-08-24）：正文/思考/工具/用户插话按真实
-        顺序序列化进 history（segments 字段）。
-
-        配对规则：trace 的每个 `llm_call` 事件对应本轮新增的一条 assistant 消息 ——
-        先落该轮思考（reasoning_ref blob）再落正文（msg.content）；其后的 `tool_call`
-        事件顺次落工具段。插话按排空时刻插到「正在跑的那个工具」之前（用户说话时
-        该工具还在运行，工具完成事件的 ts ≥ 排空时刻）。独立插话条目（喂 LLM 用）
-        仍照旧写入 history；前端渲染以 segments 为准。
-        """
-        from datetime import datetime
-
-        assistant = [m for m in agent.state.messages[messages_before:]
-                     if m.role == "assistant"]
-        pending_user = list(interjections)
-        segs: list[dict] = []
-        ai = 0
-        for ev in tracer.read_events(self._target)[events_before:]:
-            et = ev.get("type")
-            if et == "llm_call":
-                ref = ev.get("reasoning_ref")
-                if ref:
-                    try:
-                        text = (tracer.trace_dir / str(ref)).read_text(encoding="utf-8").strip()
-                    except OSError:
-                        text = ""
-                    if text:
-                        segs.append({"kind": "reasoning", "text": _clip_text(text, 2000)})
-                msg = assistant[ai] if ai < len(assistant) else None
-                ai += 1
-                if msg is not None and (msg.content or "").strip():
-                    segs.append({"kind": "text", "text": msg.content.strip()})
-            elif et == "tool_call":
-                ts = ev.get("ts")
-                ts_epoch = None
-                if isinstance(ts, str):
-                    try:
-                        ts_epoch = datetime.fromisoformat(ts).timestamp()
-                    except ValueError:
-                        ts_epoch = None
-                while pending_user and ts_epoch is not None and pending_user[0][1] <= ts_epoch:
-                    segs.append({"kind": "user", "text": pending_user.pop(0)[0]})
-                segs.append({
-                    "kind": "tool",
-                    "tool": ev.get("tool", "?"),
-                    "args": _clip_text(json.dumps(ev.get("args", {}), ensure_ascii=False), 200),
-                    "preview": _clip_text(str(ev.get("result_preview") or ""), 300),
-                    "duration_ms": ev.get("duration_ms", 0),
-                })
-        # 没对上工具的插话（轮末才排空 / ts 缺失）如实放末尾
-        for text, _ in pending_user:
-            segs.append({"kind": "user", "text": text})
-        return segs
-
-    def _round_steps(self, tracer: Tracer, events_before: int) -> list[dict]:
-        """本轮的可见过程：工具调用（名称/参数摘要/结果摘要/耗时）+ 思考全文。
-
-        事件按追加序切片（turn_no 被我们每轮归零，不能当过滤键）。reasoning_ref
-        指向 trace 目录里的 blob 文件，读出来给前端折叠展示 —— 思考过程不该
-        只存在于 trace.html 里，商量时就要看得见。
-        """
-        steps: list[dict] = []
-        for ev in tracer.read_events(self._target)[events_before:]:
-            et = ev.get("type")
-            if et == "tool_call":
-                steps.append({
-                    "kind": "tool",
-                    "tool": ev.get("tool", "?"),
-                    "args": _clip_text(json.dumps(ev.get("args", {}), ensure_ascii=False), 200),
-                    "preview": _clip_text(str(ev.get("result_preview") or ""), 300),
-                    "duration_ms": ev.get("duration_ms", 0),
-                })
-            elif et == "llm_call":
-                ref = ev.get("reasoning_ref")
-                if not ref:
-                    continue
-                blob = tracer.trace_dir / str(ref)
-                try:
-                    reasoning = blob.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-                if reasoning.strip():
-                    steps.append({"kind": "reasoning",
-                                  "text": _clip_text(reasoning.strip(), 2000)})
-        return steps
 
     async def _ensure_engine(self) -> tuple[Engine | None, Tracer | None]:
         if self._engine is not None:

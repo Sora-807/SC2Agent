@@ -297,7 +297,7 @@ def test_round_segments_interleave_text_between_tools(tmp_path: Path):
     （用户实测「轮完成瞬间清空正文」）。配对：llm_call ↔ 本轮新增 assistant 消息。"""
     from types import SimpleNamespace
 
-    from agent.talk import AgentTalk
+    from agent.segments import round_segments
 
     class _StubTracer:
         def __init__(self, events):
@@ -318,9 +318,7 @@ def test_round_segments_interleave_text_between_tools(tmp_path: Path):
          "duration_ms": 5, "ts": "2026-08-24T12:00:02.000+08:00"},
         {"type": "llm_call", "reasoning_ref": None},
     ]
-    talk = object.__new__(AgentTalk)   # 纯方法单测：不走重装配
-    talk._target = "advisor#1"
-    segs = talk._round_segments(_StubTracer(events), 0, 1, agent, [])
+    segs = round_segments(_StubTracer(events), "advisor#1", 0, 1, agent, [])
     assert [s["kind"] for s in segs] == ["text", "tool", "text"]
     assert segs[0]["text"] == "先看一眼"
     assert segs[1]["tool"] == "observe"
@@ -331,7 +329,7 @@ def test_round_segments_place_interjection_before_the_running_tool(tmp_path: Pat
     """插话按排空时刻插到正在跑的工具之前（用户说话时该工具还在运行）。"""
     from types import SimpleNamespace
 
-    from agent.talk import AgentTalk
+    from agent.segments import round_segments
 
     class _StubTracer:
         def __init__(self, events):
@@ -355,9 +353,7 @@ def test_round_segments_place_interjection_before_the_running_tool(tmp_path: Pat
     ]
     from datetime import datetime
     drained_at = datetime.fromisoformat(tool_ts).timestamp() - 1.0   # 工具跑着的时候说的
-    talk = object.__new__(AgentTalk)
-    talk._target = "advisor#1"
-    segs = talk._round_segments(_StubTracer(events), 0, 1, agent,
-                                [("等等，先别动气矿", drained_at)])
+    segs = round_segments(_StubTracer(events), "advisor#1", 0, 1, agent,
+                          [("等等，先别动气矿", drained_at)])
     assert [s["kind"] for s in segs] == ["text", "user", "tool", "text"]
     assert segs[1]["text"] == "等等，先别动气矿"
