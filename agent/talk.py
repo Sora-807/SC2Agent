@@ -630,6 +630,19 @@ class AgentTalk:
                 **({"output_tokens": round_tokens} if round_tokens else {}),
             }
 
+    async def prompt_snapshot(self) -> str:
+        """评测用（PLAN-AGENT-EVAL D16）：组装后的完整系统提示词 —— LLM 真看到的。
+
+        trace 的 messages.jsonl 在本路径不含 system 消息（vendor 只在自组提示词的
+        路径才落盘，而 AgentTalk 每轮预种、自组路径永不触发）——所以快照从这里取：
+        取回同一 agent 实例（create_or_get 公开 API）重新组装，与轮内种下的同源。
+        """
+        engine, _ = await self._ensure_engine()
+        if engine is None:
+            return ""
+        agent = await engine.create_or_get("advisor", self._target, "")
+        return _system_prompt(agent)
+
     def _seed_history(self, agent) -> None:  # noqa: ANN001 —— AgentInstance，避免引 vendor 内部类型
         """把历史喂回 state.messages —— LLM 侧也「记得」聊过什么；首轮（历史空）也种。
 
