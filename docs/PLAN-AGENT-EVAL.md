@@ -245,14 +245,30 @@ CLI：`uv run python -m eval.run L1-gas-block` / `--tags live` / `--all` / `--la
 Project(..., overrides=Overrides(runs=1, judge_model="..."))  # 项目级盖框架级
 ```
 
-### 3.9 报告与 diff
+### 3.9 报告、归档与索引
 
+**报告**（每次评测）：
 - 每场景 × 轴 × run → pass/fail（确定性轴）或 分数（LLM judge 轴）
 - 汇总 pass 率（N 轮里几轮过）
 - 落 `runtime/eval/<ts>.md`（含本版提示词 hash + 全文快照）
 - 可 diff 前后两版报告（改提示词前 vs 后）
 
-`[待定]`：报告格式——纯 markdown 表 vs JSON+渲染？倾向 markdown（人读 + 可 diff）。
+**归档**（用户拍板 2026-08-25：每次评测的基础数据**全保留**，`eval/archive.py`）：
+
+```
+runtime/eval/
+  index.jsonl                     # append-only 索引：一行一个 (报告,项目,run)——前端入口
+  <ts>-<label>/
+    report.md / results.jsonl / prompts/<hash>.md
+    <project>/run<N>/
+      result.json                 # 完整 RunResult（messages 不截断；提示词全文按 hash 引用）
+      grades.json                 # 判定明细
+      traces/… history.json world/…   # Tracer 原始 + 对话历史 + 游戏轨迹（评测轨迹）
+```
+
+`python -m eval.run --list` 读索引浏览历史。**未来前端**（用户预告要单独做展示界面）：
+读 `index.jsonl` 做列表/趋势，`<run>/result.json` 做详情（工具序列/思考/提案/判定），
+`prompts/<hash>.md` 做版本对照——路径与 schema 以本节为准，保持稳定。
 
 ### 3.10 提示词/工作区处理（prep，调优前先做）
 

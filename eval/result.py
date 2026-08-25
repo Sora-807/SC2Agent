@@ -58,13 +58,15 @@ class RunResult:
     workspace: dict = field(default_factory=dict)         # scratch 终态快照（相对路径→字节数）
     session: dict | None = None                           # 游戏终态 {state, game_time, alive}
 
-    def to_dict(self) -> dict:
+    def to_dict(self, full: bool = False) -> dict:
+        """full=True 归档用（messages 不截断）；默认报告用（system 全文在
+        meta.prompt_full_text/prompts/<hash>.md 单列，messages 只留摘要）。"""
         return {"meta": self.meta, "tool_calls": self.tool_calls,
                 "final_text": self.final_text, "reasoning": self.reasoning,
                 "segments": self.segments, "proposals": self.proposals,
                 "changes": self.changes, "workspace": self.workspace,
                 "session": self.session,
-                "messages": _clip_messages(self.messages)}
+                "messages": self.messages if full else _clip_messages(self.messages)}
 
 
 def _clip_messages(messages: list[dict]) -> list[dict]:

@@ -321,6 +321,51 @@ def _task_t(text):
     return Task(text=text)
 
 
+# ---------------- 归档（基础数据全保留 + 索引） ----------------
+
+def test_archive_saves_full_run_and_index(tmp_path: Path):
+    """用户拍板：每次评测基础数据全保留 —— result.json 全量（含 messages 不截断）、
+    grades.json、append-only index.jsonl（未来前端入口）。"""
+    import json
+    from eval.archive import append_index, load_index, save_run
+
+    run_dir = tmp_path / "eval" / "ts-x" / "L1-gas-block" / "run1"
+    run_dir.mkdir(parents=True)
+    result = RunResult(
+        meta={"run_no": 1, "prompt_hash": "h1", "prompt_full_text": "全文…",
+              "outcome": "done"},
+        tool_calls=[{"tool": "observe"}],
+        messages=[{"role": "system", "content": "x" * 1000}],
+        final_text="回复", reasoning=["思考"], proposals=[{"id": "p1"}],
+        session={"alive": False})
+    grades = [Grade("工具序列", "tool_sequence", passed=True, reason_zh="ok"),
+              Grade("文字", "judge", score=2.0, reason_zh="弱")]
+
+    row = save_run(run_dir, result, grades)
+    data = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert data["tool_calls"] == [{"tool": "observe"}]
+    assert data["messages"][0]["content"] == "x" * 1000      # 归档不截断
+    assert data["reasoning"] == ["思考"] and data["session"] == {"alive": False}
+    assert "prompt_full_text" not in data["meta"]            # 全文在 prompts/<hash>.md
+    g = json.loads((run_dir / "grades.json").read_text(encoding="utf-8"))
+    assert g[0]["passed"] is True and g[1]["score"] == 2.0
+
+    row.update({"project": "L1-gas-block", "run_dir": "ts-x/L1-gas-block/run1"})
+    append_index(tmp_path / "eval", [row], "ts-x", tmp_path / "eval" / "ts-x" / "report.md")
+    idx = load_index(tmp_path / "eval")
+    assert len(idx) == 1
+    assert idx[0]["passed"] == 1 and idx[0]["axes"] == 2
+    assert idx[0]["failed_graders"] == ["judge"]
+    assert idx[0]["report"] == "ts-x/report.md"
+
+
+def test_result_to_dict_full_flag():
+    long = [{"role": "user", "content": "y" * 900}]
+    r = RunResult(messages=long)
+    assert len(r.to_dict()["messages"][0]["content"]) <= 400   # 报告口径截断
+    assert r.to_dict(full=True)["messages"][0]["content"] == "y" * 900
+
+
 # ---------------- 报告（D6/D16） ----------------
 
 def test_report_written_with_prompt_snapshot(tmp_path: Path):
