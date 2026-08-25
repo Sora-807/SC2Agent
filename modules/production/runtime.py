@@ -21,10 +21,12 @@ uid（q01… per-queue 递增、重排不变）是 before_uid 引用的稳定锚
 STALL_WARN_SECS 记 self.stalls 告警（供 UI/agent 看"卡在哪"）。
 assign_workers 立即发（无资源门控）：WorkerAllocator 展开成 gather/stop。
 
-**分文件（REFACTOR G2）**：在途建造确认/挂件/气矿在 `production/flights.py`（Mixin），
-placement 解析在 `production/placement.py`（纯函数），执行语义在
-`constraint/semantics.py`（纯函数，单点权威——planner/健康检查共享）；本文件留编排
-（队列 CRUD / 帧账本 / 阻塞记录 / snapshot / drain / 选择器 / 输出与征用）。
+**分文件（REFACTOR G2 + N3 回吐）**：建造路径全套（在途确认/挂件/气矿/常规建造/
+工兵选择与征用/取消）在 `production/flights.py`（Mixin），队列项生命周期账本/
+阻塞记录/snapshot 读模型在 `production/ledger.py`（Mixin），placement 解析在
+`production/placement.py`（纯函数），执行语义在 `constraint/semantics.py`
+（纯函数，单点权威——planner/健康检查共享）；本文件留编排（队列 CRUD /
+每帧 tick / drain / 训练执行 / 选择器 / 输出）。
 """
 from __future__ import annotations
 
@@ -32,34 +34,26 @@ from game import (
     GameState,
     Operation,
     Owner,
-    Point2,
     Queue,
     QueueItem,
     QueueOp,
     WorkerTask,
 )
 from game.catalog import Catalog
-from game.production import PlacementExact, PlacementInRegion
-from constraint.checks import check_build, check_train
+from constraint.checks import check_train
 
 from production.flights import BuildFlightsMixin
-from production.placement import resolve_placement
+from production.ledger import LedgerMixin
 from constraint.semantics import (
-    SKIP_PLACEMENT_COLLISION,
     STATUS_COMPLETED,
     STATUS_IN_PROGRESS,
     STATUS_PENDING,
     STATUS_SKIPPED,
     ExecView,
-    Verdict,
     VerdictKind,
     classify,
 )
 from production.worker import Emission, WorkerAllocator
-
-# 队首阻塞多久算失速 → 记一条 stalls 告警（游戏秒）。
-# 纯诊断阈值：只影响是否报告，不影响任何执行决策（攒 150 矿约 15-20s，故取 30s 不误报）。
-STALL_WARN_SECS = 30.0
 
 # V1 不支持的生产队列项 → 原因（drain 时出队并记入 dropped，R7 降级告警）
 UNSUPPORTED_QUEUE_OPS: dict[QueueOp, str] = {
@@ -68,18 +62,7 @@ UNSUPPORTED_QUEUE_OPS: dict[QueueOp, str] = {
 }
 
 
-def _placement_dict(p) -> dict | None:
-    """PlacementSpec → 帧里的判别联合（前端按 kind 分支渲染）。"""
-    if p is None:
-        return None
-    if isinstance(p, PlacementExact):
-        return {"kind": "exact", "mark": p.mark}
-    if isinstance(p, PlacementInRegion):
-        return {"kind": "in_region", "region": p.region, "index": p.index}
-    raise TypeError(f"未知 PlacementSpec {type(p).__name__}（不静默：新增放置形态要同步契约）")
-
-
-class ProductionRuntime(BuildFlightsMixin):
+class ProductionRuntime(LedgerMixin, BuildFlightsMixin):
     """生产运行时：命名队列集合 + 语义门控 drain + 工具操作（P0 生产模块安排）。"""
 
     def __init__(self, catalog: Catalog, port, region_layer=None,
@@ -226,20 +209,6 @@ class ProductionRuntime(BuildFlightsMixin):
             return None
         return next((it for it in q.items if it.uid == uid), None)
 
-    def _cancel_flights(self, name: str, reason: str, only_item: QueueItem | None = None) -> None:
-        """取消某队列的在途建造：停止重试 + 释放建造工 + 记 dropped（不静默）。"""
-        flights = self._build_flights.get(name)
-        if not flights:
-            return
-        keep = []
-        for flight in flights:
-            if only_item is not None and flight.get("item") is not only_item:
-                keep.append(flight)
-                continue
-            self._release_flight(flight)
-            self.dropped.append((flight.get("item"), reason))
-        self._build_flights[name] = keep
-
     def reorder(self, name: str, refs: list[QueueItem]) -> None:
         """按目标顺序重排（refs = 目标顺序的 QueueItem 对象列表；uid 随对象走，不变）。"""
         q = self._queues.get(name)
@@ -248,216 +217,6 @@ class ProductionRuntime(BuildFlightsMixin):
 
     def queue(self, name: str) -> Queue | None:
         return self._queues.get(name)
-
-    # ---- 帧资源账本（P3：跨队列共享，所有 emit 点入账）----
-
-    def _charge(self, stable_id: str | None) -> None:
-        """在每个真正发出命令的点入账（build / train / 挂件 / 气矿 / 重试重发）。"""
-        entry = self._catalog.by_stable_id(stable_id) if stable_id else None
-        if entry is None:
-            return
-        self._frame_min += entry.cost.minerals
-        self._frame_gas += entry.cost.vespene
-        self._frame_supply += entry.cost.supply
-
-    # ---- 阻塞记录（不静默：门控失败必须留下原因）----
-
-    def _block(self, reason: str) -> str:
-        """记下本次门控失败原因并返回 "blocked"（原因由 _note_block 落到 self.blocked）。"""
-        self._block_reason = reason
-        return "blocked"
-
-    @staticmethod
-    def _why(res, fallback: str) -> str:
-        """ConstraintResult.reasons → 单行原因文本。"""
-        return "；".join(res.reasons) if getattr(res, "reasons", ()) else fallback
-
-    def _note_block(self, q_name: str, head: QueueItem, gs: GameState) -> None:
-        """记录/更新队首阻塞；同一队首持续阻塞超 STALL_WARN_SECS 记一条 stalls 告警。"""
-        rec = self.blocked.get(q_name)
-        if rec is None or rec["item"] is not head:
-            self.blocked[q_name] = {
-                "item": head, "reason": self._block_reason,
-                "since": gs.game_time, "frames": 1, "warned": False,
-            }
-            return
-        rec["reason"] = self._block_reason  # 原因会变（先缺矿、后缺工兵）：留最新
-        rec["frames"] += 1
-        waited = gs.game_time - rec["since"]
-        if not rec["warned"] and waited >= STALL_WARN_SECS:
-            rec["warned"] = True
-            self.stalls.append((
-                head,
-                f"队列 {q_name!r} uid={head.uid} 队首阻塞 {waited:.0f}s"
-                f"（{rec['frames']} 帧）：{rec['reason']}",
-            ))
-
-    # ---- 状态迁移（ADR-0032 账本）----
-
-    def _mark_skip(self, item: QueueItem, verdict: Verdict, gs: GameState) -> None:
-        """执行期失败：留在队列里标 skipped + 闭集 reason（继续下一项，不级联）。"""
-        item.status = STATUS_SKIPPED
-        item.reason = verdict.reason
-        if item.completed_at is None:
-            item.completed_at = gs.game_time
-
-    def _finish_item(self, item: QueueItem, gs: GameState) -> None:
-        item.status = STATUS_COMPLETED
-        if item.completed_at is None:
-            item.completed_at = gs.game_time
-
-    def _mark_started(self, item: QueueItem, gs: GameState) -> None:
-        if item.status == STATUS_PENDING:
-            item.status = STATUS_IN_PROGRESS
-            item.started_at = gs.game_time
-
-    def _sweep_completions(self, q: Queue, gs: GameState) -> None:
-        """完成扫账：count 归零的 in_progress 项，flight/训练账本里都没它的份 → completed。
-
-        BUILD 看 `_build_flights` 的 **uid**（与 TRAIN 同形态；对象 id 在队列重提
-        往返时会换对象）、TRAIN 看 `_trainings`（uid）——两个账本的淘汰逻辑
-        （实体完工 / 订单结束超时）就是完成信号。
-
-        I26 残留（真机 rec-20260825-093336）：flight 缺席 ≠ 实体完工 —— 重提队列
-        （submit_queue）会取消在途 flight，而往返项带着 in_progress 回队；假完成
-        把在建前置从 ExecView 三处（ready/inflight/queued）抹掉，下游级联 skip
-        （q02 depot → q04 兵营连锁整局不出兵）。BUILD 项收尾前与场上实体对账：
-        有完工同型 → completed；没有 → 保留 in_progress（在建中 = 等盖完，期间
-        项仍在 queued_types、下游走 pending 不误 skip；命令真丢 = stall 警报 +
-        agent 重提收口 —— skip 是终态，不拿猜测冒险）。
-        """
-        live_train_uids = {t.get("uid") for t in self._trainings}
-        flight_uids = {f.get("uid") for f in self._build_flights.get(q.name, ())}
-        for it in q.items:
-            if it.status != STATUS_IN_PROGRESS or it.count > 0:
-                continue
-            if it.op is QueueOp.TRAIN:
-                if it.uid is None or it.uid in live_train_uids:
-                    continue
-                self._finish_item(it, gs)
-            elif it.op is QueueOp.BUILD and it.uid not in flight_uids:
-                if it.type in self._frame_ready_types:
-                    self._finish_item(it, gs)
-                # else：场上无完工同型实体（本 type 级对账，flight 已不在无法按
-                # 位置归属）—— 不假完成，见 docstring
-
-    # ---- 读模型（B1）----
-
-    def _producer_ever_ready(self, rec: dict) -> bool | None:
-        """阻塞项的产出建筑「曾建成过吗」。只对 train 类阻塞有意义（E 批）。"""
-        return self._item_ever_ready(rec.get("item"))
-
-    def _item_ever_ready(self, item: QueueItem | None) -> bool | None:
-        """skipped/阻塞项相关建筑「曾建成过吗」（累计语义，**不含**当前是否在场——
-        I27：当前在场由警报层与帧对账，这里只回答历史）。
-
-        train 看产出建筑；build 看前置里有没有曾建成的（科技建筑被打掉的情形③）。
-        无关类型（两者都没有）→ None。payload 键名 `producer_ever_ready` 是契约，不改。
-        """
-        if item is None or item.type is None:
-            return None
-        entry = self._catalog.by_stable_id(item.type)
-        if entry is None:
-            return None
-        ever: set[str] = set()
-        if item.op is QueueOp.TRAIN and entry.produced_by:
-            ever.add(entry.produced_by)
-        elif item.op is QueueOp.BUILD:
-            ever.update(entry.prerequisites)
-        if not ever:
-            return None
-        return any(sid in self._ever_built for sid in ever)
-
-    def snapshot(self) -> dict:
-        """生产运行时的显式只读快照（供 view / agent / 复盘录制）。
-
-        账本语义（ADR-0032）：items 含全部历史（pending/in_progress/completed/skipped），
-        uid 随项走；blocked 指向本帧 pending 等待的那一项。返回**普通 dict**
-        （production 不认识 view，架构测试锁死方向）；键名由 view.adapt 显式映射。
-        """
-        queues: list[dict] = []
-        for q in self._queues.values():
-            rec = self.blocked.get(q.name)
-            blocked_item = rec["item"] if rec else None
-            items: list[dict] = []
-            n_pending = 0
-            for index, it in enumerate(q.items):
-                is_blocked = it is blocked_item
-                if it.status == STATUS_PENDING:
-                    n_pending += 1
-                items.append({
-                    "uid": it.uid,
-                    "index": index,
-                    "op": it.op.value if isinstance(it.op, QueueOp) else str(it.op),
-                    "stable_id": it.type,
-                    "count": it.count,
-                    "placement": _placement_dict(it.placement),
-                    "task": it.task.value if isinstance(it.task, WorkerTask) else it.task,
-                    "status": it.status,
-                    "reason": it.reason,
-                    # blocked 项额外给等待原因（前端/警报高亮"卡在哪"）
-                    "block_reason": rec["reason"] if is_blocked else None,
-                    "producer_ever_ready": (self._item_ever_ready(it)
-                                            if it.status == STATUS_SKIPPED else None),
-                })
-            if n_pending == 0:
-                head_status = "空"
-            elif blocked_item is not None:
-                head_status = "阻塞"
-            else:
-                head_status = "可执行"
-            queues.append({
-                "name": q.name,
-                "head_status": head_status,
-                "blocked": None if rec is None else {
-                    "reason": rec["reason"],
-                    "since": rec["since"],
-                    "frames": rec["frames"],
-                    "warned": rec["warned"],
-                    "uid": blocked_item.uid if blocked_item is not None else None,
-                    # E 批：仅对「缺产出建筑」类阻塞有意义 —— True=曾建成（被摧毁），
-                    # False=从没建过（建造被卡/掉单）；None=其他原因
-                    "producer_ever_ready": self._producer_ever_ready(rec),
-                },
-                "items": items,
-            })
-
-        in_flight: list[dict] = []
-        for q_name, flights in self._build_flights.items():
-            for f in flights:
-                in_flight.append({
-                    "queue": q_name,
-                    "stable_id": f["type"],
-                    "uid": f.get("uid"),
-                    # 来源队列序号（B3）：emit 时该项在队列里的下标 —— 账本化后下标稳定
-                    "from_index": f.get("from_index"),
-                    "builder_tag": f.get("builder"),
-                    "expect_pos": f.get("expect_pos"),
-                    "radius": f.get("radius", 0.0),
-                    "frames_waited": f.get("frames", 0),
-                    "retries": f.get("retries", 0),
-                    # 已尝试过的槽位名：摆放调试叠加层要画"试过哪几个位置"（F5）
-                    "attempted_slots": sorted(f.get("attempted") or ()),
-                })
-
-        return {
-            "queues": queues,
-            "in_flight": in_flight,
-            # 在训条目（G3，rev 17）：开始时刻我们自己记（SC2 订单不带进度）
-            "training": [{"stable_id": t["type"], "producer_tag": t["producer_tag"],
-                          "started_at": t["started_at"], "uid": t.get("uid")}
-                         for t in self._trainings],
-            # dropped 目前不带时间戳（QueueItem 被丢时没有记 game_time）→ 帧里 at=None，
-            # UI 显示"未知"而不是编一个时间（不静默）。
-            "dropped": [
-                {"op": it.op.value if isinstance(it.op, QueueOp) else str(it.op),
-                 "stable_id": it.type, "reason": reason, "at": None}
-                for it, reason in self.dropped
-            ],
-            "stalls": [
-                {"stable_id": it.type, "text": text} for it, text in self.stalls
-            ],
-        }
 
     # ---- 每帧 tick ----
 
@@ -681,67 +440,6 @@ class ProductionRuntime(BuildFlightsMixin):
         self._charge(head.type)  # P3
         return "emitted"
 
-    def _try_build(self, head: QueueItem, q_name: str, gs: GameState,
-                   q_index: int | None = None) -> str:
-        """发出首个候选放置位并记入在途确认（不出队；完成由 flight 账本判）。
-
-        按目标类型分派：addon 挂件（母建筑自建）→ gas 气矿（SCV 建在气井）→ 常规。
-        挂件/气矿的分派实现在 `production/flights.py`（Mixin）。
-        `q_index`（B3）：emit 时该项在队列里的下标，进 flight["from_index"]。
-        """
-        if head.type is None:
-            self._drop(head, "build 缺 type")
-            return "consumed"
-        entry = self._catalog.by_stable_id(head.type)
-        if entry is None:
-            self._drop(head, f"build 未知类型 {head.type!r}")
-            return "consumed"
-        if "addon" in entry.capabilities:
-            return self._try_build_addon(head, q_name, gs, q_index=q_index)
-        if "gas" in entry.capabilities:
-            return self._try_build_gas(head, q_name, gs, q_index=q_index)
-        pos, slot_name, reason = self._resolve_placement(head, gs, attempted=frozenset())
-        if reason is not None:
-            self._drop(head, reason)  # 作者错误（标记不存在）：摘除继续，不阻塞整队
-            return "consumed"
-        if pos is None:
-            # 执行期失败：候选位全被占 —— 留账本标 skipped，继续下一项（ADR-0032）
-            self._mark_skip(head, Verdict(
-                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
-                f"{head.type} 候选放置位全被占用"), gs)
-            return "skipped"
-        res = check_build(gs, self._catalog, head.type, pos)
-        if not res.ok:
-            # classify 已判 ready 后这里只剩放置类失败（footprint 重叠等）
-            self._mark_skip(head, Verdict(
-                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
-                self._why(res, f"build {head.type} 放置校验不通过")), gs)
-            return "skipped"
-        builder = self._pick_builder(gs, near=pos)
-        if builder is None:
-            return self._block(self._no_builder_reason())
-        self._emit(
-            [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
-            gs.seq,
-        )
-        flight = {
-            "item": head,
-            "uid": head.uid,
-            "type": head.type,
-            "builder": builder.tag,
-            "frames": 0,
-            "from_index": q_index,
-            "attempted": {slot_name} if slot_name else set(),
-            "seen_tags": self._type_entity_tags(gs, head.type),
-            "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）
-            "emitted_pos": [self._expected_reported(entry, pos)],  # I26：历次发射位（晚到实体收编判据）
-            "radius": 1.5,
-        }
-        self._charge(head.type)  # P3：入账（同帧后续项/其他队列都看得见）
-        self._reserve_for_flight(flight, builder.tag)  # 建造期间这个 SCV 谁都不许动
-        self._build_flights.setdefault(q_name, []).append(flight)
-        return "emitted"
-
     # ---- 选择器（全部经 catalog，不写死单位名）----
 
     def _pick_producer(self, gs: GameState, stable_id: str):
@@ -765,54 +463,6 @@ class ProductionRuntime(BuildFlightsMixin):
                 return u
         return None
 
-    def _pick_builder(self, gs: GameState, near: Point2 | None = None):
-        """选建造工兵（2026-08-24 用户拍板：**就近抽采矿 SCV**）。
-
-        - `near`（建造点）给了 → 选离它最近的候选 —— 采矿中的 SCV 就是被抽的对象，
-          建造期间征用保护 + 维持器的外来订单规则都不动它；
-          建完（flight 确认/取消 → 征用释放 → 订单清空）维持器自动派回采矿。
-        - 没给 near（无坐标的路径）→ 退回旧规则：优先真空闲，否则任一候选。
-        - 诊断：None 时 caller 的阻塞原因带上计数（场上几个/忙几个/征用几个），
-          「缺少建造者」不再是一句猜不出原因的话。
-        """
-        names = {e.burnysc2_name for e in self._catalog.where(role="worker")}
-        reserved = self._reservations.tags() if self._reservations is not None else frozenset()
-        pool = [u for u in gs.units
-                if u.owner is Owner.SELF and u.type_name in names]
-        candidates = [u for u in pool
-                      if u.tag not in self._frame_busy  # 本帧已被命令的工兵不重复用
-                      and u.tag not in reserved]  # 已在给别的 flight 盖房子的不抢（ADR-0030 D3.3）
-        # 诊断三元组（§0.52 D 批）：总数 / 建造征用 / 本帧已令 ——「无可用 SCV」的
-        # 阻塞与告警带上它，用户/agent 才看得出是谁占着（截图事故里裸喊了整场）
-        self._builder_diag = (
-            len(pool),
-            sum(1 for u in pool if u.tag in reserved),
-            sum(1 for u in pool if u.tag in self._frame_busy),
-        )
-        if not candidates:
-            return None
-        if near is not None:
-            return min(candidates,
-                       key=lambda u: (u.position.x - near.x) ** 2 + (u.position.y - near.y) ** 2)
-        idle = [u for u in candidates if not u.orders]  # 优先空闲工兵
-        return (idle or candidates)[0]
-
-    def _no_builder_reason(self) -> str:
-        """「缺少建造者」的如实版本：带上分类计数，让 agent/用户看得出是谁占着。"""
-        total, held, busy = getattr(self, "_builder_diag", (0, 0, 0))
-        if not total:
-            return "无可用 SCV 去建造（场上工兵 0 —— 一个都没有，先造/保工兵）"
-        return (f"无可用 SCV 去建造（场上工兵 {total}：建造征用 {held}、本帧已令 {busy}"
-                "—— 等在途建造完工/下一帧再试）")
-
-    # ---- placement 解析（薄包装；实现在 production/placement.py 纯函数）----
-
-    def _resolve_placement(
-        self, head: QueueItem, gs: GameState, attempted: frozenset[str] = frozenset()
-    ) -> tuple[Point2 | None, str | None, str | None]:
-        return resolve_placement(self._region_layer, self._catalog,
-                                 self._build_flights, head, gs, attempted)
-
     # ---- 输出 ----
 
     def _emit(self, emissions: list[Emission], seq: int) -> None:
@@ -827,26 +477,6 @@ class ProductionRuntime(BuildFlightsMixin):
             ))
         if ops:
             self._port.submit_operations(ops)
-
-    # ---- 建造工征用（ADR-0030 D3.3）----
-
-    def _reserve_for_flight(self, flight: dict, tag: int) -> None:
-        """给 flight 征用建造工；同一 flight 换人时先释放旧的（owner 不变）。"""
-        if self._reservations is None:
-            return
-        owner = flight.get("owner")
-        if owner is None:
-            self._flight_seq += 1
-            owner = f"production/build#{self._flight_seq}"
-            flight["owner"] = owner
-        self._reservations.release(owner)
-        self._reservations.reserve(owner, tag)
-
-    def _release_flight(self, flight: dict) -> None:
-        """flight 结束（实体已出现 / 被丢弃 / 转重试）→ 释放建造工，让它回去采矿。"""
-        owner = flight.get("owner")
-        if owner is not None and self._reservations is not None:
-            self._reservations.release(owner)
 
     def _drop(self, item: QueueItem, reason: str) -> None:
         self.dropped.append((item, reason))

@@ -23,8 +23,18 @@ from planner.sim_state import InFlight, SimState, derive_from
 from planner.slots import is_tech_unit, reactor_map, slot_capacity, techlab_map
 
 #: SC2 人口上限（真实规则）——「缺供给」等待与死局判定的分界（D7 删供给守卫后：
-#: cap<200 时缺供给算等待——人可以插 depot；顶满 200 才是死局）
+#: cap<200 时缺供给算等待——人可以插补给；顶满 200 才是死局）
 SUPPLY_MAX = 200
+
+
+def _consumes_builder(stable_id: str) -> bool:
+    """Zerg 建筑由 drone 变成（morph）：开工吞工、供给同刻释放、落成不回矿。
+
+    B6 三族语义钩子（D4 hybrid：结构推导走 catalog，种族语义差显式分支）。
+    种族机制归 mechanics 层（ADR-0002 §4），投影层这是最小近似；lair/hive 这类
+    「变形建筑」也被当新建筑 +1（旧形态不消）—— V1 建筑计数抽象，开局投影够用。
+    """
+    return stable_id.startswith("zerg/")
 
 
 #: until_complete 的封顶（秒）：越过 until 之后最多再跑这么久 —— 队列死局时
@@ -43,6 +53,11 @@ class Planner:
         self._techlab_of = techlab_map(catalog)
         self._reactor_of = reactor_map(catalog)
         self._tech_units = {e.stable_id for e in catalog.where() if is_tech_unit(e, catalog)}
+        # B6 三族推导（D4 hybrid 的「结构」半边）：气矿建筑集合与供给增量表都从
+        # catalog 来 —— 不再写死 terran/refinery、不再用 economy 的单族字典。
+        # 气矿集合含全族（状态里实际有什么就数什么），供给表同理（含 overlord）。
+        self._gas_types = frozenset(e.stable_id for e in catalog.where(capability="gas"))
+        self._supply_of = catalog.supply_map()
 
     def project(self, gs: GameState, seq: list, until: float, *,
                 until_complete: bool = False, tail: float = 0.0,
@@ -90,10 +105,10 @@ class Planner:
                              # tail：队列跑空后再留 N 秒经济的余势（二十七轮）
                              or (done_at is not None and st.t < done_at + tail)))):
                 break
-            # 1. 收入（气收入按精炼厂数量封顶：3 工/精炼厂；无精炼厂→气工空转 0 收入）
+            # 1. 收入（气收入按气矿建筑数封顶：3 工/气矿；无气矿→气工空转 0 收入）
             st.minerals += st.mineral_workers * self._econ.mineral_per_scv_per_sec
-            refineries = st.buildings.get("terran/refinery", 0)
-            effective_gas = min(st.gas_workers, refineries * 3)
+            gas_buildings = sum(st.buildings.get(sid, 0) for sid in self._gas_types)
+            effective_gas = min(st.gas_workers, gas_buildings * 3)
             st.gas += effective_gas * self._econ.gas_per_scv_per_sec
             # 2. 推进在途 —— train 按产槽排队（I10）：同产建筑每秒最多推进
             #    normal_cap+tech_cap 条（进度最高的先走 = 正在训的先完成、排队的原地等），
@@ -307,14 +322,16 @@ class Planner:
             for f in st.in_flight)
 
     def _gas_coming(self, st: SimState) -> bool:
-        """气收入还会来吗：有气工且（已有精炼厂或精炼厂在建）。
+        """气收入还会来吗：有气工且（已有气矿建筑或气矿建筑在建）。
 
-        只建精炼厂不派工、或只派工没有厂，气都永远为 0 —— 那是规划缺一步，算死局。
+        只建气矿不派工、或只派工没有气矿，气都永远为 0 —— 那是规划缺一步，算死局。
+        气矿建筑按 catalog capability=gas 集合判断（三族：refinery/assimilator/extractor）。
         """
         if st.gas_workers <= 0:
             return False
-        return (st.buildings.get("terran/refinery", 0) > 0
-                or any(f.type == "terran/refinery" for f in st.in_flight))
+        return any(st.buildings.get(sid, 0) > 0
+                   or any(f.type == sid for f in st.in_flight)
+                   for sid in self._gas_types)
 
     # ---- 启动 op（扣资源/加在途/分配 worker）----
     def _start(self, op: Op, st: SimState) -> None:
@@ -330,6 +347,10 @@ class Planner:
                     st.idle_workers -= 1
                 else:
                     st.mineral_workers -= 1
+                if _consumes_builder(op.type):
+                    # Zerg：drone 化为建筑 —— 工人没了（供给同刻释放，落成不回矿）
+                    st.total_workers -= 1
+                    st.supply_used -= 1
             st.in_flight.append(InFlight(op.type, "build", e.build_time, 0.0, None,
                                           uid=op.uid))
         elif isinstance(op, Train):
@@ -376,6 +397,12 @@ class Planner:
     def _apply_completed(self, st: SimState, done: list[InFlight], curve: ProjectionCurve,
                          ledger: dict | None = None, queue: list | None = None) -> None:
         for f in done:
+            # 供给建筑落成涨 cap（任何形态：build 的 depot/pylon、train 的 overlord
+            # ——Zerg 的供给建筑是单位）。SC2 人口上限 200（真实规则）：顶满再建
+            # 也不涨 —— 这是「缺供给」从等待变死局的分界（用户拍板的真警报）
+            provided = self._supply_of.get(f.type, 0)
+            if provided:
+                st.supply_cap = min(SUPPLY_MAX, st.supply_cap + provided)
             if f.kind == "build":
                 e = self._catalog.by_stable_id(f.type)
                 is_addon = e is not None and "addon" in e.capabilities
@@ -386,11 +413,8 @@ class Planner:
                         st.addons[e.produced_by] = st.addons.get(e.produced_by, 0) + 1
                 else:
                     st.buildings[f.type] = st.buildings.get(f.type, 0) + 1
-                    # SC2 人口上限 200（真实规则）：顶满后再建 depot/CC 也不涨 ——
-                    # 这是「缺供给」从等待变死局的分界（用户拍板的真警报）
-                    st.supply_cap = min(
-                        SUPPLY_MAX, st.supply_cap + self._econ.supply_provided.get(f.type, 0))
-                    st.mineral_workers += 1   # builder 回矿
+                    if not _consumes_builder(f.type):
+                        st.mineral_workers += 1   # builder 回矿（Zerg：drone 已被吞）
             elif f.kind == "research":
                 st.research_completed.add(f.type)
             else:  # train

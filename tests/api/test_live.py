@@ -320,7 +320,7 @@ def test_recordings_endpoint_empty_without_dir(tmp_path):
 
 def test_races_from_frames_reads_session_then_world():
     """复盘清单的「人族 vs 神族」：优先会话帧，退 world 敌方单位前缀，都没有 = None。"""
-    from api.live import _races_from_frames
+    from api.live_io import _races_from_frames
 
     sess = {"topic": "frame/session",
             "payload": {"my_race": "terran", "enemy_race": "zerg"}}

@@ -100,13 +100,6 @@ class RegionLayer:
             return self.big_index.get(self.big_grid.data[y][x]) == name
         return False
 
-    def cells_of_big(self, big_id: str) -> frozenset[tuple[int, int]]:
-        """大区全部格点（从 big_grid 扫描；校验/规划用，非热路径）。"""
-        w, h = self.size
-        return frozenset(
-            (x, y) for y in range(h) for x in range(w)
-            if self.big_index.get(self.big_grid.data[y][x]) == big_id
-        )
 
 
 # ---------- 校验 ----------

@@ -77,7 +77,6 @@ class FrameProducer:
     #: 测试传固定 lambda 拿确定性输出。game_time 仍是唯一语义时间基准，见 Envelope。
     clock: Callable[[], float] = time.time
 
-    _seq: int = 0
     _proj_at: float = field(default=-1e18)
     _ops_at: float = field(default=-1e18)
     _grids_fp: tuple[str | None, str | None] | None = None
@@ -218,7 +217,6 @@ class FrameProducer:
         代价是同一 tick 里多个 topic 共享同一个 seq。这没问题：帧内顺序由**流的顺序**给
         （JSONL 的行序 / WS 的发送序），不靠 seq 排。
         """
-        self._seq += 1   # 仅用于内部计数与诊断，不进信封
         return envelope(topic, seq=gs.seq, game_time=gs.game_time, payload=payload,
                         wall_ms=int(self.clock() * 1000))
 

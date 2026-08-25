@@ -1,6 +1,6 @@
 """tactical_map 模块：地图空间模型（只依赖 game；ADR-0029）。
 
-- spatial：空间查询原语（distance/center/nearest/units_within）
+- spatial：空间查询原语（distance/center/units_within）
 - region：区域模型（大区全图分区 + leaf 稀疏小区，一层几何两层语义）+ 加载校验
 - placement：BuildSlot（TL+BR+size，ADR-0027）+ PosMark 点位
 - resolver：目标解析（map 名 → 坐标，ADR-0029 D1）
@@ -24,7 +24,7 @@ from tactical_map.region import (
     validate_layer,
 )
 from tactical_map.resolver import resolve_action_params, resolve_target
-from tactical_map.spatial import center_of_units, distance, nearest, units_within
+from tactical_map.spatial import center_of_units, distance, units_within
 
 __all__ = [
     "BaseTemplate",
@@ -41,7 +41,6 @@ __all__ = [
     "load_ladder_map",
     "load_palette_png",
     "load_region_layer",
-    "nearest",
     "resolve_action_params",
     "resolve_target",
     "spawn_layout_nearest",

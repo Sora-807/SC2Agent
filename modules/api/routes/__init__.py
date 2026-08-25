@@ -4,7 +4,7 @@
 辅助（帧源解析 / 命令门 / 沙盒泵）在 `api/state.py`，状态本体在 `app.state` 扁平键。
 """
 from api.routes import (agent, commands, frames_ws, initial_states, loadouts, map_plans, meta, plans,
-                        proposals, recordings, session, sources, strategies)
+                        plans_simulate, proposals, recordings, session, session_start, sources, strategies)
 
 #: 挂载顺序 = 声明顺序。路径无方法级冲突（`/api/plans/simulate` 是 POST，
 #: 不会被 GET `/api/plans/{pid}` 抢走），新增路由组时 append 即可。
@@ -12,10 +12,12 @@ ROUTERS = (
     meta.router,
     sources.router,
     session.router,
+    session_start.router,
     commands.router,
     agent.router,
     proposals.router,
     plans.router,
+    plans_simulate.router,
     recordings.router,
     strategies.router,
     initial_states.router,

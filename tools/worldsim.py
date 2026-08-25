@@ -23,7 +23,6 @@ from game.catalog import Catalog  # noqa: E402
 from game.geometry import Grid, Point2  # noqa: E402
 from game.operation import Operation  # noqa: E402
 from game.state import GameState, Order, Owner, Unit  # noqa: E402
-from planner.economy import DEFAULT_ECON  # noqa: E402
 from tactical_map.placement import BuildSlot  # noqa: E402
 
 #: 每秒每工兵的采集速率（真机量级的粗略值；夹具只需要曲线形状可信）
@@ -271,11 +270,11 @@ class WorldSim:
         return total
 
     def _supply_cap(self) -> int:
-        # 供给增量的单一真相源在 planner.economy.supply_provided
-        # （本机 game_data_dump + 真机录像校准：CC=13、Depot=8）。
-        # 此前这里写死 bases*15，与 economy 的 13 自相矛盾 —— 同一个 sim 里
+        # 供给增量的单一真相源在 catalog.supply_map()（B6 三族单源；
+        # 本机 game_data_dump + 真机录像校准：CC=13、Depot/Pylon=8、Overlord=8）。
+        # 此前这里写死 bases*15，与单源的 13 自相矛盾 —— 同一个 sim 里
         # 建第二个 CC 加的供给和 planner 投影算的不一样。
-        provided = DEFAULT_ECON.supply_provided
+        provided = self.catalog.supply_map()
         total = sum(provided.get(self._stable_of(u), 0)
                     for u in self.units.values() if u.build_progress >= 1.0)
         return min(200, total)

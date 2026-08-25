@@ -22,6 +22,103 @@
 | `e13ca82` | R1 god file 拆分：app.py 998→薄装配+state.py+routes/×11；manifest.py validate_strategy 分段（REFACTOR G1/G3）|
 | `1316232` | R2 god file 拆分收尾：runtime.py 948→564 编排+flights.py 336（Mixin）+placement.py 98（纯函数）（REFACTOR G2）|
 
+## 0.66 N1 批：planner 三族化（PLAN-NEXT 队列头，REFACTOR B6 清偿，2026-08-25）
+
+> D4 当场拍板 **hybrid**：「哪些建筑」从 catalog 推导（`where(capability="gas")` /
+> `Catalog.supply_map()`），「供给/工人语义」的种族差（overlord 单位供给、drone 化建筑）
+> 用显式钩子管——测试先行四批跑完，全量 1076 绿（+22）。
+
+- **N1a 红测试**（`tests/planner/test_planner_races.py`）：三族对称开局投影
+  parametrize（完成时刻/终态/零死局）、气矿收入三族 parametrize（refinery 对照绿、
+  assimilator/extractor 红）、Zerg 双语义（overlord train 涨 cap、drone 被吞）。
+  开工时 6 红 2 绿，收工全绿。
+- **N1b 数据层**：catalog JSON 加 `supply_provided` 字段——**从生成器进**
+  （`tools/generate_catalog.py` 读 dump food_provided），不手改 JSON；12 条三族
+  （CC/orbital/planetary=13、depot/pylon=8、hatchery/lair/hive=4、overlord 族=8）。
+  `CatalogEntry.supply_provided`（默认 0）+ `Catalog.supply_map()` + `where(race=)`。
+- **N1c 投影器**：planner.py 气矿封顶/`_gas_coming` 走 `self._gas_types`；供给涨幅
+  提升到所有落成形态（build 与 train 同涨——overlord 语义）；`_consumes_builder()`
+  Zerg 钩子（开工吞工+供给释放、落成不回矿）。`EconomyParams` 摘除 supply_provided，
+  六消费方迁 catalog 单源：planner / initial_state×2（对账顺带把 units 侧 overlord
+  计入 + static_check 给供给单位 train 记 planned_cap）/ opening（race 参数化，
+  `CC_SUPPLY`→`base_supply(catalog, race)`，Zerg 种子带 overlord 12/12）/ alerts
+  （supply_capped 集合含三族基地）/ tools/worldsim（第六消费方，方案核对时漏了
+  modules/ 外的）。
+- **N1d 模板层**：`basic_opening` 走 `params.race`（注册签名不动——plans.py 模板
+  落地面就是 `fn(params)`）；「开局长什么样」是策略知识不是结构，显式三族表
+  （zerg 分支多一条跳虫把三个 Zerg 语义都过一遍）；factory_chain/bio_tank_opening
+  明示 Terran 专用不参数化。
+- **回填**：REFACTOR B6 关闭、ISSUES #11 更新、PLAN-NEXT N1 出队（D4 已决注记）。
+- **顺带发现（不属本批）**：①catalog `protoss/gateway` 前置记 nexus（真实应为
+  pylon）——数据欠账另行核对；②`basic_opening` 默认 scv_count=12 从 12 农民种子
+  起投会 24>21 卡供给死等（模板标定问题，测试用 scv_count=3 绕开）；③Zerg 变形链
+  （lair/hive/overseer 形态替换）在 V1 建筑计数抽象下当「新建筑 +1」，注释已标。
+
+## 0.67 N2 批：去重与死代码清偿（PLAN-NEXT 队列次席，REFACTOR §3/§4 收官，2026-08-25）
+
+> 逐条核对发现审计清单 7 条里 **3 条已过期**（别的批次顺手清了）+ **2 条判保留**
+> （其中 terrain_static 审计漏了 tools/——真机地形导出 `tools/run_session.py:507`
+> 就是它，差点删成事故）。实际删除 5 件、去重 5 件、部分收敛 1 件。
+
+- **N2-a 帧源去重（D2 当场拍板：api 内独立模块）**：新建 `api/frame_source.py`
+  ——`SourceInfo`（从 sources.py 迁入）+ `FrameSource` Protocol + 四查询纯函数
+  （`info_of`/`first_statics`/`statics_only`/`latest_at`/`between`，1e-9 容差单源成
+  `EPS`）。三实现改薄壳：JsonlSource 全委派；OfflineSession 委派（statics 走
+  `statics_only`）；LiveSession 锁内委派。**刻意不给基类**——三处无共享状态，
+  基类会把「同形」做成「同壳」还得跟锁语义搏斗；backfill 参数保留各自语义
+  （录制流=frames 翻静态首条 / 会话=静态缓冲含初始 frame/session）。game.ports
+  落点否决：那是 driver↔engine 边界，帧源是 api 层概念。
+- **N2-b 死代码**：`spatial.nearest`（连 `__init__` 导出与测试删）、
+  `region.cells_of_big`、`producer._seq`（只写不读的自增计数）、
+  `load_protoss`/`load_zerg`（零调用，`game/__init__` 导出一并清）、
+  `load_terran` 归一到 `_load_race`（不再自带一份读取循环；留给
+  测试当单族视图）。**判保留**：`terrain_static`（tools 活调用+编码契约测试）、
+  curve 三 helper（stalls/time_to 测试糖、peak_minerals 探针用——「零消费者」
+  判定过期）、manifest 空 dict 两只（注册表模式，PREDICATE/SPATIAL 同族表非空活跃）。
+- **N2-c 小去重**：`view/fmt.mmss`（alerts/observe 双份合一）；
+  `production/constants.py`（饱和/半径三常量单源，worker/economy/flights 迁）；
+  `map_plans._reserved_conflict`（save 与 save_payload 的预留区重叠检查合一）；
+  `map_plan._footprint/_overlaps` 公开为 `footprint_of`/`footprints_overlap`
+  （穿透 import 的 noqa 退役）；`spatial.nearest_index`（reserved 的主矿/气井
+  归属 min 位收编；排序键与 any 比较、base.py 的 Point2 域保留内联）。
+- **教训**：给 worker.py 加 `__all__` 时凭审计记忆编了六个不存在的函数名，当场
+  核对导出面后撤掉——**写 __all__ 前必须 grep 实际定义**，审计文档的模块布局
+  是旧快照不能当现在。
+- **回填**：REFACTOR §3/§4 改处置留档（已清/已过期/保留三类）、头部进度与 §7
+  清单勾销、PLAN-NEXT N2 出队（D2 已决注记）。
+
+## 0.68 N3 批：生产运行时瘦身（PLAN-NEXT 第三席，2026-08-25）
+
+> D1 当场拍板 **Mixin 继续**（与 G2 同一结论，协作对象明确不做）。四件全部达标：
+> runtime 852→482（≤650）、live 675→538（≤550）、routes/session 374→93、
+> routes/plans 353→99（双双回到 178 天花板内）。行为零变化——账本/flight/
+> api 装配测试原样绿（293 passed）。
+
+- **N3-a runtime 回吐**：`production/ledger.py` 新建（LedgerMixin：帧资源账本
+  `_charge`、阻塞记录 `_block/_why/_note_block`、ADR-0032 状态迁移
+  `_mark_skip/_finish_item/_mark_started/_sweep_completions`、读模型
+  `_producer_ever_ready/_item_ever_ready/snapshot` + `STALL_WARN_SECS` +
+  `_placement_dict`）；flights.py 回吐补齐建造域第三条路径（常规建造
+  `_try_build`、工兵选择 `_pick_builder/_no_builder_reason`、征用
+  `_reserve/_release_flight`、取消 `_cancel_flights`、placement 薄包装）——
+  挂件/气矿/常规现在完整住一个文件。runtime 留纯编排（CRUD/tick/drain/
+  训练执行/选择器/输出）。
+- **N3-b live 瘦身**：`api/live_io.py`（RecordingMixin：录制 setup+收尾；
+  `kill_tree` 进程树清理；`_races_from_frames` 种族推断）——都围着子进程与
+  它的产物转。
+- **N3-c 路由抽层**：`routes/session_start.py`（start 装配/幂等守卫/两模式
+  校验 + swap/map-plan 两个热切 + loadout 辅助）与 `routes/plans_simulate.py`
+  （simulate v2 的 245 行服务本体）各自成路由文件，routes/×11→×13。
+- **坑（两次踩同一类）**：搬方法后凭直觉剪 imports——runtime 剪掉 `_drain`
+  还在用的 `STATUS_*`、session.py 剪掉 export 还在用的 `load_all`，各红一次；
+  更阴的是 runtime 那次让 **sim 子进程带着 NameError 崩**，api 测试假挂 8 分钟
+  （pytest 无输出、无死锁）。教训进流程：**搬完必须 AST 扫未用名 + 先跑本包
+  测试再跑 api**。另：`_StartBody` 定义在搬切点之前被复制成两份，发现后清。
+- **回填**：PLAN-NEXT N3 出队（D1 已决注记）。
+
+
+
+
 ## 0.41 三十四轮：模板化 + 生产序列补齐 + 热切 V1 三批执行（2026-08-23，未提交）
 
 > 立项与决策见 ADR-0031 与本文各节（原执行计划 PLAN-TEMPLATES-HOTSWAP.md 已执行完毕删除；

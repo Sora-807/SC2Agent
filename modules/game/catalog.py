@@ -78,6 +78,7 @@ class CatalogEntry:
     produced_by: str | None # 产出建筑 stable ID（如 marine 由 "terran/barracks" 产；起始建筑 = None）
     prerequisites: list[str]  # 前置 stable ID 列表（如 barracks 需 ["terran/supplydepot"]）
     size: int | None = None  # footprint 格边长（建筑：depot=2/兵营=3/基地=5；非建筑=None；放置 slot 按它过滤）
+    supply_provided: int = 0  # 提供的供给（基地/补给建筑/Overlord 族；0=不提供。B6 三族单源，数据=本机 dump food_provided）
     # 挂件专用（真机锁定）：实体类型是父建筑专属（BARRACKSREACTOR 等），但建造能力是通用
     # BUILD_REACTOR/BUILD_TECHLAB（burnysc2 的 per-parent 能力如 BUILD_REACTOR_BARRACKS 被接受却无实体产出；
     # Unit.build() 也因 creation_ability 为 None 静默返回 False）。driver 按 build_ability 发命令。
@@ -150,6 +151,9 @@ class Catalog:
             if siege_range < 0:
                 raise ValueError(f"{stable_id}: siege_range 不能为负数")
         variants = tuple(data.get("variants") or [])
+        supply_provided = int(data.get("supply_provided") or 0)
+        if supply_provided < 0:
+            raise ValueError(f"{stable_id}: supply_provided 不能为负数")
         e = CatalogEntry(
             stable_id=stable_id,
             burnysc2_name=burnysc2_name,
@@ -160,6 +164,7 @@ class Catalog:
             cost=cost,
             build_time=int(data["build_time"]),
             size=data.get("size"),
+            supply_provided=supply_provided,
             produced_by=data.get("produced_by"),
             prerequisites=list(data.get("prerequisites") or []),
             build_ability=build_ability,
@@ -187,20 +192,32 @@ class Catalog:
         """按 burnysc2 枚举名查条目（如 "MARINE" → CatalogEntry）。"""
         return self._by_burnysc2.get(name)
 
-    def where(self, role: Role | str | None = None, capability: str | None = None) -> list[CatalogEntry]:
-        """按结构性角色 / 能力标签过滤（如 where(role=Role.WORKER)、where(capability="train")）。"""
+    def where(self, role: Role | str | None = None, capability: str | None = None,
+              race: str | None = None) -> list[CatalogEntry]:
+        """按结构性角色 / 能力标签 / 种族过滤（如 where(role=Role.WORKER)、where(capability="train", race="zerg")）。"""
         if isinstance(role, str) and not isinstance(role, Role):
             role = Role(role)  # 字符串归一化；非法值直接 ValueError（fail fast）
         return [
             e for e in self._by_stable.values()
             if (role is None or e.role is role)
             and (capability is None or capability in e.capabilities)
+            and (race is None or e.stable_id.split("/", 1)[0] == race)
         ]
 
     def stable_id_for(self, burnysc2_name: str) -> str | None:
         """burnysc2 枚举名 → 稳定 ID（driver 抽取层用；未知名 → None）。"""
         e = self._by_burnysc2.get(burnysc2_name)
         return e.stable_id if e else None
+
+    def supply_map(self) -> dict[str, int]:
+        """stable_id → 提供的供给（只含 >0 的条目；B6 三族单源）。
+
+        planner 投影 / opening 种子 / initial-state 对账 / worldsim / alerts
+        共用这一份（本机 dump food_provided：CC/Nexus=13、Depot/Pylon=8、
+        Hatchery 族=4、Overlord 族=8）—— 谁再本地写死一份拷贝就是第二真相源。
+        """
+        return {e.stable_id: e.supply_provided for e in self._by_stable.values()
+                if e.supply_provided > 0}
 
     def burnysc2_name_for(self, stable_id: str) -> str | None:
         """稳定 ID → burnysc2 枚举名（driver 翻译层用；未知 ID → None）。"""
@@ -214,13 +231,9 @@ class Catalog:
 
 
 def load_terran() -> Catalog:
-    """从 data/terran.json 加载 Terran catalog（加载失败直接抛，不静默降级）。"""
+    """从 data/terran.json 加载 Terran catalog（测试用单族视图；加载失败直接抛，不静默降级）。"""
     cat = Catalog()
-    data_path = Path(__file__).parent / "data" / "terran.json"
-    with data_path.open(encoding="utf-8") as f:
-        data = json.load(f)
-    for stable_id, entry_data in data.items():
-        cat.register(stable_id, entry_data)
+    _load_race(cat, "terran")
     return cat
 
 
@@ -231,20 +244,6 @@ def _load_race(cat: Catalog, race: str) -> None:
         data = json.load(f)
     for stable_id, entry_data in data.items():
         cat.register(stable_id, entry_data)
-
-
-def load_protoss() -> Catalog:
-    """从 data/protoss.json 加载 Protoss catalog。"""
-    cat = Catalog()
-    _load_race(cat, "protoss")
-    return cat
-
-
-def load_zerg() -> Catalog:
-    """从 data/zerg.json 加载 Zerg catalog。"""
-    cat = Catalog()
-    _load_race(cat, "zerg")
-    return cat
 
 
 def load_all() -> Catalog:

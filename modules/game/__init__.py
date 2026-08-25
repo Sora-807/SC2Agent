@@ -17,9 +17,7 @@ from game.catalog import (
     Cost,
     Role,
     load_all,
-    load_protoss,
     load_terran,
-    load_zerg,
 )
 from game.geometry import Grid, GridPos, Point2
 from game.operation import OP_CATALOG, Operation, ParamType, is_known_action, validate_op
@@ -80,8 +78,6 @@ __all__ = [
     "WorkerTask",
     "is_known_action",
     "load_all",
-    "load_protoss",
     "load_terran",
-    "load_zerg",
     "validate_op",
 ]

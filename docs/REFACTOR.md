@@ -15,14 +15,15 @@
 藏在体量里**——优先级是 **先修 bug（§1）→ 拆 god file（§2）→ 清死代码（§3）→ 去重（§4）**。
 
 > **进度（2026-08-23）**：§1 全修 + §2 三个 god file 全拆（WORKLOG §0.32-0.34）。
-> 剩 §3 死代码清理、§4 去重、B6。B7 已关（2026-08-23 §0.41：live/offline 命令返回统一 {queue/task, items, accepted_seq}，QUEUE_OPS 三处共用一份）。
+> §3 死代码 / §4 去重已清偿（2026-08-25 N2 批：逐条核对——部分已过期、三条标保留理由，见两表处置留档）。
+> B6 已关（2026-08-25 N1 批：planner 三族化）；B7 已关（2026-08-23 §0.41：live/offline 命令返回统一 {queue/task, items, accepted_seq}，QUEUE_OPS 三处共用一份）。
 
 ---
 
 ## §1 真实 bug（P0/P1，会出错误数据——优先修）
 
 > **2026-08-23 进展（WORKLOG §0.32）：B1/B2/B3/B4/B5/B8 已修**，下表留档 + 标注修法。
-> B6（planner 只认 Terran）/ B7（命令返回 shape）仍在。
+> B6 已关（2026-08-25）/ B7 已关（§0.41）。
 
 | # | 位置 | 问题 | 级别 |
 |---|---|---|---|
@@ -31,7 +32,7 @@
 | B3 | `view/producer.py:206` | `wall_ms` 伪造：`1.7e12 + game_time*1000` 而非真实时钟。名/类型都标 wall-clock ms，任何算延迟的诊断是假的。`view/port.py:60` 已有 `clock` 注入机制，没用上。**已修**：`FrameProducer.clock`（默认 `time.time`）+ live.py 地形帧同步真墙钟。 | P1 |
 | B4 | `view/observe.py:99,101,223,232,238,242` | 提案状态字符串硬编码（`"待审批"/"已拒绝"/"已失效"`），而 `view/proposals.py:35` 有同值 `STATUS_*` 常量。改常量时 observe 过滤**静默失效**，agent 拿到错的 pending 列表——直接违反全仓"不静默"红线。**已修**：6 处全换 `STATUS_*`。 | P1 |
 | B5 | `planner/opening.py:17` vs `planner/economy.py:24` | 指挥中心供给**自相矛盾**：种子态设 `supply_cap=15`，模拟建 CC 加 13，真实 LotV 是 11。早期人口节奏前后不一致。**已修**：三份拷贝（含 worldsim `bases*15`）收敛到 `economy.supply_provided` 单源 = **13** —— 审计原文"真实 LotV 是 11"经查不适用于本机：本机 game_data_dump `food_provided=13` + 真机录像首帧 1CC/0depot → cap 13。附带发现真机起始 8 工 vs 种子 12 工（ISSUES.md 开放清单「开局工人口径」项）。 | P1 |
-| B6 | `planner/planner.py:73,131,138` + `planner/sim_state.py:71-72` + `planner/economy.py:23-26` | **三族 catalog 扩到 174 条了，planner 还是只认 Terran**。气矿写死 `terran/refinery`、人口写死 `terran/supplydepot`、检测 `type_name=="REFINERY"`、`supply_provided` 只列 Terran。I9 只解了数据层，投影器消费不了非人族。 | P1 |
+| B6 | `planner/planner.py`（气矿封顶/`_gas_coming`）+ `planner/economy.py`（supply_provided 单族） + `planner/module_defs.py` | **三族 catalog 扩到 174 条了，planner 还是只认 Terran**。气矿写死 `terran/refinery`、`supply_provided` 只列 Terran、module_defs 全 terran/*。I9 只解了数据层，投影器消费不了非人族（sim_state 的 REFINERY 检测已先期清掉）。**已修（2026-08-25 N1 批，PLAN-NEXT / WORKLOG §0.66）**：D4 拍板 hybrid —— 气矿集合 `where(capability="gas")`、供给表 `Catalog.supply_map()`（数据=本机 dump food_provided 三族 12 条）推导；Zerg 语义显式钩子（overlord train 落成涨供给、drone 开工被吞不回矿）；`supply_provided` 从 economy 迁 catalog，六消费方（planner/initial_state/opening/alerts/worldsim）收敛单源；`basic_opening` 模块 params.race 参数化。验收 = `tests/planner/test_planner_races.py` 三族开局投影 parametrize 绿。 | P1 |
 | B7 | `api/session.py:312` vs `api/live.py:340` | 命令返回 shape 不一致：`queue_op` 一个返回 `items` 一个返回 `dispatched`，`set_worker_target` 同样只在 live 多 `dispatched`。`CommandResult.detail: dict[str,Any]` 兜不住。**已修（§0.41）**：统一 `{queue/task, items, accepted_seq}`。 | P1 |
 | B8 | `view/encode.py:21-26` | 双 docstring：两个相邻 `"""`，Python 只留第一个当 `__doc__`，更长那个解释（值裁剪/uint8 截断理由）被当无效表达式吞掉。**已修**：合并成一份。 | P2 |
 
@@ -73,32 +74,33 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
 
 ---
 
-## §3 死代码清单（词法死代码——删一遍就行）
+## §3 死代码清单（2026-08-25 N2 批清偿完毕——下表改为处置留档）
 
 > 反直觉点：这套代码对**语义死路**（不可达 step、死边）抓得严，对**词法死代码**几乎没清理。
+> N2 批（WORKLOG §0.67）逐条核对后清偿：部分条目在审计后已被别的批次顺手清掉（标「已过期」）。
 
-| 位置 | 死的东西 |
+| 位置 | 处置 |
 |---|---|
-| `flow/predicates.py:351-352` | `_p_group_center` 定义了从不被调（dispatcher 直接绕过它） |
-| `tactical_map/spatial.py:27` | `nearest` 导出全仓库无人用；`region.py:103-109` `cells_of_big` 死方法（`validate_layer:158` 内联重算一遍） |
-| `constraint/checks.py:137-143` + `constraint/__init__.py:8,17` | `check_assign_workers` 自述"被测试养着的死 API"；且包 `__init__` 导出的是这个死的，**真正被 `production/runtime.py:27-32` 用的 `check_addon`/`check_gas`/`occupied_cells` 反而没导出**——公开面倒挂 |
-| `view/producer.py:75,204` | `_seq` 加了从不读；`statics.py:152` `terrain_static` 从不调；`schema.py:389-394` `EnemyClusterView` DTO 发布了但 `adapt.py:112` 永远填 `None` |
-| `game/__init__.py` | 导出 3 个单族 loader（`load_terran`/`load_protoss`/`load_zerg`）全仓无人用，只 `load_all` 被调；`catalog.py:216-224` `load_terran` 是重构前版本，另两族已改调 `_load_race`，terran 没跟着改 |
-| `planner/curve.py:45,52,56` | `time_to`/`peak_minerals`/`stalls` 三个 helper 零消费者 |
-| `flow/manifest.py:86-89` | `UNIMPLEMENTED_DO_OPS`/`UNIMPLEMENTED_STEP_KEYS` 是空 dict，注释说"留对称"——set_local 等已落地，脚手架没删 |
+| `flow/predicates.py` `_p_group_center` | **已过期**：审计后已清，仅存 `_p_group_center_in_region` 且被 dispatcher 调用 |
+| `tactical_map/spatial.py` `nearest` + `region.py` `cells_of_big` | **已清（N2）**：nearest 连 `__init__` 导出与测试一起删；cells_of_big 死方法删（validate_layer 本就内联重算） |
+| `constraint/checks.py` `check_assign_workers` + `__init__` 导出倒挂 | **已过期**：此前已清——死 API 删除，`__init__` 已导出真正被 runtime 用的 `check_addon`/`check_gas`/`occupied_cells` |
+| `view/producer.py` `_seq` / `view/statics.py` `terrain_static` / `view/schema.py` `EnemyClusterView` | **_seq 已清（N2）**；**terrain_static 保留**——审计漏了 tools/：`tools/run_session.py:507` 真机地形导出就是 `to_json(terrain_static(info))`，test_terrain.py 锁编码与 null 语义；**EnemyClusterView 已过期**（PLAN-V2 批 4 落地 clusters.py，adapt 不再恒 None） |
+| `game/__init__.py` 单族 loader | **已清（N2）**：`load_protoss`/`load_zerg` 零调用删除；`load_terran` 留作测试的单族视图并归一到 `_load_race`（不再自带一份读取循环） |
+| `planner/curve.py` `time_to`/`peak_minerals`/`stalls` | **保留**：「零消费者」判定已过期——stalls/time_to 是投影断言糖（tests/planner 多处），peak_minerals 被 `tools/probes/run_sim.py` 消费 |
+| `flow/manifest.py` `UNIMPLEMENTED_DO_OPS`/`UNIMPLEMENTED_STEP_KEYS` 空 dict | **保留**：注册表模式不是词法死代码——同族的 PREDICATE/SPATIAL 两表非空且在校验里活跃，空表 = 「当前声明的都已实现」；删掉破坏三表对称的校验框架 |
 
 ---
 
-## §4 重复 / 冗余
+## §4 重复 / 冗余（2026-08-25 N2 批清偿完毕——下表改为处置留档）
 
-| 重复 | 位置 | 修法 |
-|---|---|---|
-| **帧源接口三份复制** | `api/sources.py:47-96` + `api/session.py:242-278` + `api/live.py:275-306`：`info/statics/latest_at/between` + `1e-9` epsilon + "保持插入序别按 seq 排"注释几乎逐字相同（docstring 都写"与 JsonlSource 同形"）| 抽 `FrameSource` ABC/混入，参数化 `self.frames`/`self._statics`/`self.seq`/`self.game_time`，干掉 ~80×3 行 |
-| `_mmss` 逐字节重复 | `view/alerts.py:275` + `view/observe.py:297` | 一个共享 helper（`view/_fmt.py` 或进 `encode`） |
-| reserved-box 重叠检查写两遍 | `view/map_plans.py:233-244`（save）vs `300-329`（save_payload）| 抽 `_check_reserved_overlaps(changed_slots, reserved)` |
-| 常量重复 | `production/worker.py:15-17` + `production/economy.py:24-27`（`MINERAL_SATURATION`/`GAS_SATURATION`/`NODE_RADIUS`，economy 自注"与 worker.py 同源"）| 提 `production/constants.py` |
-| "按平方距离找最近 base" 三次 | `tactical_map/reserved.py:81,91,108` + `base.py:159-161`（`spawn_layout_nearest`）| 共享 `_nearest_index(points, target)` |
-| `view/map_plans.py` 穿透 import 私有 | `map_plans.py:34` import `map_plan._footprint`/`_overlaps`（带 `noqa: SLF001`）| 要么公开、要么挪进 `tactical_map/placement`（几何唯一真相源） |
+| 重复 | 处置 |
+|---|---|
+| **帧源接口三份复制**（sources/session/live） | **已清（N2，D2 拍板：api 内独立模块）**：`api/frame_source.py` = `SourceInfo` + `FrameSource` Protocol + 四查询纯函数（`info_of`/`first_statics`/`statics_only`/`latest_at`/`between`，EPS 单源）。三实现改薄壳（live 只包一层锁）。**刻意不给基类**：三处没有共享状态，「同形」做成「同壳」还得跟锁语义搏斗——纯函数 + 薄壳保留各自的存储形态（录制流=全量列表 / 会话=动态+静态缓冲）与并发差异 |
+| `_mmss` 逐字节重复（alerts/observe） | **已清（N2）**：`view/fmt.mmss` 单源，两处 import |
+| reserved-box 重叠检查写两遍（map_plans save vs save_payload） | **已清（N2）**：`_reserved_conflict(name, entry, reserved)` 单槽位 helper 共用 |
+| 常量重复（production worker/economy 的饱和/半径三常量） | **已清（N2）**：`production/constants.py` 单源；worker/economy 导入，flights 的 `NODE_RADIUS` 改从 constants 取 |
+| "按平方距离找最近 base"（reserved 多处 + base.py） | **部分收敛（N2）**：`spatial.nearest_index(points, target)` 收编 min 型两处（主矿归属/气井归属）；exps 排序键与 others-any 比较是「全序/比较」形态、base.py 是 Point2/SpawnLayout 域——保留内联 |
+| `map_plans.py` 穿透 import 私有（`_footprint`/`_overlaps`） | **已清（N2）**：公开为 `footprint_of`/`footprints_overlap`（map_plan 仍是几何单点；公式源头在 tactical_map.placement，docstring 标注） |
 
 ---
 
@@ -131,9 +133,12 @@ B5/B6 要么把 planner 改 race-agnostic（从 catalog capabilities 推导气�
    含 B3/B8）**：producer 网格 diff、progress=None、wall_ms 真时钟、observe 常量化、
    CC 供给单源=13。
 2. ~~**P1 god file 拆分**（§2 G1/G2/G3）~~ —— **全部完成（G1/G3 §0.33；G2 §0.34）**。
-3. **P1 三族只到 catalog 没到 planner**（§1 B6）——race-agnostic 或老实标 Terran-only。
-4. **P2 死代码清理**（§3）——一串死导出/死函数，删一遍纯减负；顺带把 `constraint/__init__` 倒挂的公开面正过来。
-5. **P2 去重**（§4）——帧源三份复制抽 `FrameSource` 性价比最高；其余小重复随手收。
+3. ~~**P1 三族只到 catalog 没到 planner**（§1 B6）~~ —— **已完成（2026-08-25 N1 批，
+   WORKLOG §0.66）**：catalog 推导 + Zerg 语义钩子（D4 hybrid），三族开局投影测试绿。
+4. ~~**P2 死代码清理**（§3）~~ —— **已完成（2026-08-25 N2 批）**：三条已过期、四条删除、
+   两条标保留理由（terrain_static 有 tools/ 活调用、curve helper 被测试/探针消费）。
+5. ~~**P2 去重**（§4）~~ —— **已完成（2026-08-25 N2 批）**：FrameSource 纯函数收敛 + 四项小去重
+   （最近 base 距离部分收敛，排序/比较形态保留内联）。
 6. **stub 收尾**（§5）——给空 stub 加 issue 引用，别让 `mechanics`/`on_session_event` 无声腐烂。
 
 ---

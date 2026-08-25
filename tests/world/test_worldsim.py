@@ -41,17 +41,18 @@ def test_train_queues_per_producer_not_parallel():
 
 
 def test_supply_cap_single_source_matches_economy():
-    """供给增量单一真相源 = planner.economy.supply_provided（本机 dump+录像：CC=13）。
+    """供给增量单一真相源 = catalog.supply_map()（本机 dump+录像：CC=13）。
 
     REFACTOR B5：worldsim 曾写死 bases*15、opening 种子写 15、economy 写 13 ——
-    三份拷贝互相矛盾。这里锁"开局 1 CC 的 cap 就是 economy 给的值"，
+    三份拷贝互相矛盾。N1c 起单源迁到 catalog 条目的 supply_provided 字段
+    （三族），这里锁"开局 1 CC 的 cap 就是 catalog 给的值"，
     谁再写死一份拷贝当场红。
     """
-    from planner.economy import DEFAULT_ECON
-    from planner.opening import CC_SUPPLY, opening_game_state
+    from planner.opening import base_supply, opening_game_state
 
-    cc = DEFAULT_ECON.supply_provided["terran/commandcenter"]
-    assert CC_SUPPLY == cc, "opening 种子必须取自 economy（不许第二份拷贝）"
+    cc = CAT.supply_map()["terran/commandcenter"]
+    assert cc == 13, "本机 dump 校准值（CC=13）漂了就是数据面出事"
+    assert base_supply(CAT) == cc, "opening 种子必须取自 catalog（不许第二份拷贝）"
     assert opening_game_state(CAT).supply_cap == cc
 
     w = WorldSim(catalog=CAT)

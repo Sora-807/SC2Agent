@@ -729,8 +729,8 @@ region_layer 的 regions/pos_marks/build_slots），无效直接校验失败给�
    采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）+
    装配缺口时序化/live 化。子项 5（observe 在建项映射）已落地关闭。1/2 低难可插队先做。
 11. **modules/ 代码债剩余（I15）（原#11）**——P0 bug 批与 god files（G1-G3）已清，B7
-   （命令 shape）§0.41 已修；剩：B6（planner 仍 Terran-only，**路线已拍板 2026-08-25：
-   catalog capabilities 推导**，投影真支持三族）+ 死代码清理 + 去重
+   （命令 shape）§0.41 已修，B6（planner 三族）已修（2026-08-25 N1 批：catalog 推导 +
+   Zerg 语义钩子，三族开局投影测试绿，WORKLOG §0.66）；剩：死代码清理 + 去重
    （详见 [`REFACTOR.md`](REFACTOR.md)）。
 12. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
     improvement-notes + agent/seeds + 提示词整改）；剩余：几局后校验 agent 是否真读真写、

@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +28,8 @@ from view.schema import REV, STATIC_TOPICS
 
 from api.commands import QUEUE_OPS
 from api.session import MAX_STALE_SEQ, StaleObservation
-from api.sources import SourceInfo
+from api.frame_source import SourceInfo, between, info_of, latest_at, statics_only
+from api.live_io import RecordingMixin, kill_tree
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "tools" / "run_session.py"
@@ -41,7 +40,7 @@ FRAME_BUFFER = 6000
 STOP_GRACE = 5.0
 
 
-class LiveSession:
+class LiveSession(RecordingMixin):
     """子进程会话。`driver="sim"` 用假世界（能在没有 SC2 的环境里验进程分离），
     `driver="sc2"` 是真机。两者在子进程里走**完全同一条**产帧与命令路径。"""
 
@@ -78,32 +77,15 @@ class LiveSession:
         # realtime=False 时 burnysc2 的 step 不等墙钟，游戏时间飞跑。
         # sim 不受影响（它本来就按 tick_seconds 睡）。
         self._realtime = (driver == "sc2") if realtime is None else realtime
-        # 对局记录（二十六轮用户反馈「对局记录没保存」）：帧流同步落 JSONL，
-        # 结束后复盘模式的下拉里出现「📹 录像」。内存 FRAME_BUFFER 会截老帧，
-        # 文件才是完整历史。record_dir=None（测试默认）= 不录。
+        # 对局录制 setup/收尾在 api.live_io（RecordingMixin，N3 抽出）；
+        # record_dir=None（测试默认）= 不录
         self._rec_fh = None
         self._rec_meta_path: Path | None = None
         self._rec_count = 0
+        self._init_recording(record_dir, driver, map_name, map_plan)
         #: 仿真模式倍速（「开启游戏」两模式，2026-08-23）：0=不限速；N>1=目标 N 倍。
         #: 只在非实时（仿真）会话有意义；set_speed 热改（快进倍数选择）。
         self.speed = float(speed)
-        if record_dir is not None:
-            try:
-                record_dir.mkdir(parents=True, exist_ok=True)
-                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-                rid = f"rec-{stamp}-{driver}"
-                rec_path = record_dir / f"{rid}.jsonl"
-                self._rec_fh = rec_path.open("w", encoding="utf-8", buffering=1)
-                self._rec_meta_path = record_dir / f"{rid}.meta.json"
-                self._rec_meta_path.write_text(json.dumps({
-                    "id": rid, "driver": driver, "map": map_name,
-                    "label": self.label, "map_plan": Path(map_plan).stem if map_plan else None,
-                    "started_at": datetime.now().isoformat(timespec="seconds"),
-                    "state": "recording",
-                }, ensure_ascii=False), encoding="utf-8")
-                self._meta["recording"] = rid
-            except OSError:
-                self._rec_fh = None   # 录不了不拦对局：帧流照跑，只是没文件
 
         # 控制文件通道（B1/C）：sc2 的 stdin 是 DEVNULL（burnysc2 继承管道会挂起），
         # 命令改经文件 —— append 写、子进程帧边界 rename→读→删（无损）。sim 不用它
@@ -270,90 +252,30 @@ class LiveSession:
                 except OSError:
                     self._rec_fh = None
 
-    def _close_recording(self, final_state: str) -> None:
-        """收尾录制：关文件 + 把 meta 标成终态（时长/帧数写进去，清单端点就不用扫文件）。
-        调用方需持有 self._lock（与 _frame 同一把，写序一致）。"""
-        fh, self._rec_fh = self._rec_fh, None
-        if fh is not None:
-            try:
-                fh.flush()
-                fh.close()
-            except OSError:
-                pass
-        meta_path, self._rec_meta_path = self._rec_meta_path, None
-        if meta_path is None:
-            return
-        # 命名是 <rid>.meta.json —— 不能用 .stem（只剥最后一个后缀，得到 "<rid>.meta"）
-        rid = meta_path.name.replace(".meta.json", "")
-        my_zh, enemy_zh = _races_from_frames(self.frames)
-        try:
-            old: dict = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            old = {"id": rid, "driver": self.driver, "label": self.label}
-        old.update({
-            "state": final_state,
-            "ended_at": datetime.now().isoformat(timespec="seconds"),
-            "envelopes": self._rec_count,
-            "to": round(self.game_time, 3),       # 清单端点统一读 to（前端时长显示）
-            "to_time": round(self.game_time, 3),
-            "my_race_zh": my_zh,                   # 复盘清单的「人族 vs 神族」（二十七轮）
-            "enemy_race_zh": enemy_zh,
-        })
-        try:
-            meta_path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            pass
-        # 衍生摘要（I20 文件契约闭环）：原始帧流几 MB，人/agent 都翻不动 ——
-        # 落盘原则 = 原始数据 + 可读视图一起保存。渲染失败不拦收尾（jsonl 仍在）。
-        try:
-            from view.recap import render_recording_summary
-
-            summary = render_recording_summary(self._statics + self.frames)
-            meta_path.with_name(f"{rid}.md").write_text(summary, encoding="utf-8")
-        except Exception:              # noqa: BLE001
-            pass
-        self._meta.pop("recording", None)
-        self._meta["recorded"] = {"id": rid, "envelopes": self._rec_count}
-
     def _note_error(self, detail: str, *, fatal: bool = False) -> None:
         self.error = detail
         if fatal:
             self.state = "崩溃"
 
-    # ---- 帧源接口（与 JsonlSource / OfflineSession 同形）----
+    # ---- 帧源接口（与 JsonlSource / OfflineSession 同形；实现共享 api.frame_source，
+    # 这里只包一层锁——读帧必须与写序一致）----
 
     def info(self) -> SourceInfo:
         with self._lock:
-            times = [f["game_time"] for f in self.frames] or [0.0]
-            return SourceInfo(
-                id=self.id, label=self.label, kind="live",
-                envelopes=len(self.frames), from_time=min(times), to_time=max(times),
-                topics=sorted({f["topic"] for f in self.frames}), snapshots=[])
+            return info_of(self.id, self.label, "live", self.frames)
 
     def statics(self) -> list[dict]:
         with self._lock:
-            return [f for f in self._statics if f["topic"] in STATIC_TOPICS]
+            return statics_only(self._statics)
 
     def latest_at(self, game_time: float, topics: set[str] | None = None) -> list[dict]:
         with self._lock:
-            chosen: dict[str, dict] = {}
-            for f in self.frames:
-                if topics is not None and f["topic"] not in topics:
-                    continue
-                if f["game_time"] <= game_time + 1e-9:
-                    chosen[f["topic"]] = f
-            for f in self._statics:
-                if topics is not None and f["topic"] not in topics:
-                    continue
-                chosen.setdefault(f["topic"], f)
-            return list(chosen.values())
+            return latest_at(self.frames, self._statics, game_time, topics)
 
     def between(self, after: float, until: float,
                 topics: set[str] | None = None) -> list[dict]:
         with self._lock:
-            return [f for f in self.frames
-                    if after + 1e-9 < f["game_time"] <= until + 1e-9
-                    and (topics is None or f["topic"] in topics)]
+            return between(self.frames, after, until, topics)
 
     # ---- 新鲜度门（R8），与 OfflineSession 同语义 ----
 
@@ -547,32 +469,6 @@ class LiveSession:
 
     # ---- 生命周期 ----
 
-    def _kill_tree(self) -> None:
-        """杀掉**整棵进程树**（run_session + 它启的 SC2）。
-
-        真机欠账 §10.3 的根修：`proc.kill()` 只杀直接子进程，SC2 是孙进程 ——
-        子进程死了它变孤儿，留在桌面上的就是那些黑屏窗口。
-        - Windows：`taskkill /T /F`（/T = 整棵树）
-        - POSIX：进程组 SIGKILL（Popen 里没设 start_new_session，退化为只杀子进程 ——
-          本项目主要跑 Windows，POSIX 路径是尽力而为）
-        进程已遇时 taskkill 会报错，静默即可（幂等）。
-        """
-        if self.proc.poll() is not None and not _pid_has_children(self.proc.pid):
-            return
-        try:
-            if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/T", "/F", "/PID", str(self.proc.pid)],
-                    capture_output=True, timeout=10, check=False,
-                )
-            else:
-                try:
-                    os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    self.proc.kill()
-        except (OSError, subprocess.SubprocessError):
-            pass
-
     def stop(self) -> None:
         try:
             self._send({"op": "stop"})
@@ -588,7 +484,7 @@ class LiveSession:
             pass
             # 注意：**不要在这里单独 kill 根**。taskkill /T 靠根进程枚举子树，
             # 根先死了 SC2 就成枚举不到的孤儿（真机实测：游戏停不掉就是这个顺序问题）。
-        self._kill_tree()
+        kill_tree(self.proc)
         # 兜底：树杀后根还活着（理论不该）再补刀
         if self.proc.poll() is None:
             self.proc.kill()
@@ -640,52 +536,3 @@ class LiveSession:
                 out.append({"id": aid, "kind": a.get("kind"), "severity": a.get("severity"),
                             "text_zh": a.get("text_zh"), "at": f.get("game_time")})
         return out
-
-
-#: 种族中文名（复盘清单「人族 vs 神族」用；C4：zh 文案来自后端）
-_RACE_ZH = {"terran": "人族", "protoss": "神族", "zerg": "虫族"}
-
-
-def _races_from_frames(frames: list[dict]) -> tuple[str | None, str | None]:
-    """从帧流推 (我方, 敌方) 族中文名。
-
-    优先读最后一帧 frame/session（run_session 从首个可见敌方单位推导后写进去）；
-    会话帧没有（比如一局没见过敌人）再退 frame/world 的敌方单位 stable id 前缀。
-    都推不出 = None（前端清单该段显示「—」）。
-    """
-    for f in reversed(frames):
-        if f.get("topic") == "frame/session":
-            p = f.get("payload") or {}
-            my = _RACE_ZH.get(p.get("my_race") or "")
-            enemy = _RACE_ZH.get(p.get("enemy_race") or "")
-            if my or enemy:
-                return (my or None, enemy or None)
-            break
-    enemy = None
-    for f in reversed(frames):
-        if f.get("topic") != "frame/world":
-            continue
-        for u in (f.get("payload") or {}).get("units") or []:
-            sid = str(u.get("stable_id") or "")
-            if sid.startswith(("terran/", "protoss/", "zerg/")) and u.get("owner") == "enemy":
-                enemy = _RACE_ZH.get(sid.split("/", 1)[0])
-                if enemy:
-                    return ("人族", enemy)
-        break
-    return ("人族" if any(f.get("topic") == "frame/world" for f in frames) else None, enemy)
-
-
-def _pid_has_children(pid: int) -> bool:
-    """该 pid 是否还有活着的子进程（决定 _kill_tree 是否还有活可干）。
-
-    Windows 上枚举父子关系要 WMI，太重；简化为：只要目标进程还活着就交给 taskkill /T
-    （它对无子进程的 pid 是无害的 no-op），已死则直接跳过。POSIX 同理只看进程本身。
-    """
-    if os.name == "nt":
-        # taskkill /T 对已退出的 pid 只是报错破锁；直接返回 True 走 taskkill 兜底
-        return True
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False

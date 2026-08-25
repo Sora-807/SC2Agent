@@ -31,7 +31,7 @@ from tactical_map.placement import is_valid_slot_name
 from view.encode import to_json
 from view.map_plan import apply_map_overrides, merge_map_state
 from view.map_plan import MapHunkLike
-from view.map_plan import _footprint, _overlaps   # noqa: SLF001 —— 同包几何单点，不重写
+from view.map_plan import footprint_of, footprints_overlap
 from view.statics import ladder_resource_nodes, ladder_terrain_view, map_static
 
 #: 手写模板源（预设从这里生成）
@@ -101,26 +101,35 @@ def _validate_branch_slots(cur_slots: dict, new_slots: dict) -> list[dict]:
         pos_a = ea.get("pos")
         if not pos_a:
             continue
-        fp_a = _footprint([float(pos_a[0]), float(pos_a[1])], int(ea.get("size") or 0))
+        fp_a = footprint_of([float(pos_a[0]), float(pos_a[1])], int(ea.get("size") or 0))
         for b, eb in sorted(new_slots.items()):
             if b == a:
                 continue
             pos_b = eb.get("pos")
             if not pos_b:
                 continue
-            fp_b = _footprint([float(pos_b[0]), float(pos_b[1])], int(eb.get("size") or 0))
-            if _overlaps(fp_a, fp_b):
+            fp_b = footprint_of([float(pos_b[0]), float(pos_b[1])], int(eb.get("size") or 0))
+            if footprints_overlap(fp_a, fp_b):
                 errors.append({"hunk_id": a, "text_zh": f"槽位 {a!r} 与 {b!r} 重叠"})
                 break
         else:
-            for rb in reserved:
-                if _overlaps(fp_a, (rb["tl"][0], rb["tl"][1], rb["br"][0], rb["br"][1])):
-                    errors.append({
-                        "hunk_id": a,
-                        "text_zh": f"槽位 {a!r} 压住{rb['label_zh']}（固定建造点，不可占用）",
-                    })
-                    break
+            if (err := _reserved_conflict(a, ea, reserved)) is not None:
+                errors.append(err)
     return errors
+
+
+def _reserved_conflict(name: str, entry: dict, reserved: list[dict]) -> dict | None:
+    """槽位 × 固定建造点预留区的重叠检查（save 与 save_payload 共用一份；
+    命中第一个就报——错误文案里带预留区中文名）。"""
+    pos = entry.get("pos")
+    if not pos:
+        return None
+    fp = footprint_of([float(pos[0]), float(pos[1])], int(entry.get("size") or 0))
+    for rb in reserved:
+        if footprints_overlap(fp, (rb["tl"][0], rb["tl"][1], rb["br"][0], rb["br"][1])):
+            return {"hunk_id": name,
+                    "text_zh": f"槽位 {name!r} 压住{rb['label_zh']}（固定建造点，不可占用）"}
+    return None
 
 
 def _reserved_boxes(catalog, mains_spec: dict[str, tuple[float, float]] | None = None) -> list[dict]:
@@ -320,17 +329,8 @@ class MapPlanStore:
             # 固定建造点预留校验：只查**本次改动**的槽位（预设存量不追溯）
             reserved = _reserved_boxes(self._catalog or _default_catalog(), None)
             for name, entry in (new_over.get("build_slots") or {}).items():
-                pos = entry.get("pos")
-                if not pos:
-                    continue
-                fp = _footprint([float(pos[0]), float(pos[1])], int(entry.get("size") or 0))
-                for rb in reserved:
-                    if _overlaps(fp, (rb["tl"][0], rb["tl"][1], rb["br"][0], rb["br"][1])):
-                        errors.append({
-                            "hunk_id": name,
-                            "text_zh": f"槽位 {name!r} 压住{rb['label_zh']}（固定建造点，不可占用）",
-                        })
-                        break
+                if (err := _reserved_conflict(name, entry, reserved)) is not None:
+                    errors.append(err)
             if errors:
                 return {"ok": False, "errors": errors}
             state = merge_map_state(t, new_over)

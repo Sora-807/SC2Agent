@@ -1,6 +1,6 @@
-"""tactical_map 空间原语：center/distance/units_within/nearest。"""
+"""tactical_map 空间原语：center/distance/units_within。"""
 from game import Owner, Point2, Unit
-from tactical_map import center_of_units, distance, nearest, units_within
+from tactical_map import center_of_units, distance, units_within
 from tests.factories import make_unit
 
 
@@ -22,8 +22,3 @@ def test_units_within():
     near = units_within(Point2(0, 0), us, 1.5)
     assert [u.tag for u in near] == [1, 2]
 
-
-def test_nearest():
-    us = [_u(1, 5, 5), _u(2, 1, 1), _u(3, 2, 2)]
-    n = nearest(Point2(0, 0), us, k=2)
-    assert [u.tag for u in n] == [2, 3]

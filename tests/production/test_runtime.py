@@ -5,7 +5,8 @@ from game import GameState, Grid, Owner, Point2, QueueItem, QueueOp, Unit, Worke
 from game.catalog import load_all
 from tests.factories import FakePort, make_gs, make_unit
 from game.production import PlacementExact, PlacementInRegion
-from production.runtime import STALL_WARN_SECS, ProductionRuntime
+from production.ledger import STALL_WARN_SECS
+from production.runtime import ProductionRuntime
 from tactical_map import load_region_layer
 
 CAT = load_all()

@@ -1,23 +1,29 @@
-"""production.flights：在途建造确认 + 挂件/气矿路径（REFACTOR G2 从 runtime 抽出）。
+"""production.flights：建造路径全套（在途确认 + 挂件/气矿/常规建造 + 工兵选择征用 + 取消）。
 
-**为什么是 Mixin 而不是独立对象**：这套状态机与 runtime 的账本/征用/阻塞记录
-深度共享（_charge/_emit/_reserve_for_flight/_block…），抽成协作对象要把这套
-共享状态设计成回调接口 —— 在行为最关键的文件上做这种手术，回归风险大于收益。
+REFACTOR G2 从 runtime 抽出（在途确认/挂件/气矿），N3 批回吐补齐（常规建造
+_try_build、工兵选择 _pick_builder、征用 _reserve/_release_flight、队列侧取消
+_cancel_flights、placement 薄包装）—— 建造域现在完整住在一个文件。
+
+**为什么是 Mixin 而不是独立对象**（G2 拍板，N3/D1 复议维持）：这套状态机与
+runtime 的账本/征用/阻塞记录深度共享，抽成协作对象要把共享状态设计成回调
+接口 —— 在行为最关键的文件上做这种手术，回归风险大于收益。
 Mixin 搬运 = 代码原样、行为零变，文件导航性拿到手；未来要再纯化，测试已经就位。
 
 宿主契约（ProductionRuntime 提供）：
-`_catalog` `_region_layer` `_build_flights` `_frame_busy` `_reservations` +
-方法 `_emit/_charge/_drop/_block/_why/_pick_builder/_base_anchor/
-_reserve_for_flight/_release_flight`。
+`_catalog` `_region_layer` `_build_flights` `_frame_busy` `_reservations`
+`_flight_seq` `_builder_diag` +
+方法 `_emit/_charge/_drop/_block/_why/_mark_skip/_base_anchor`。
 """
 from __future__ import annotations
 
 from game import GameState, Owner, Point2, QueueItem
 from constraint.checks import check_addon, check_build, check_gas, occupied_cells
 from tactical_map.placement import BuildSlot
+from production.placement import resolve_placement
 
 from constraint.semantics import SKIP_PLACEMENT_COLLISION, Verdict, VerdictKind
-from production.worker import Emission, NODE_RADIUS
+from production.constants import NODE_RADIUS
+from production.worker import Emission
 
 
 class BuildFlightsMixin:
@@ -434,3 +440,153 @@ class BuildFlightsMixin:
         self._reserve_for_flight(flight, builder.tag)  # 气矿也是 SCV 在建，一样要征用
         self._build_flights.setdefault(q_name, []).append(flight)
         return "emitted"
+
+
+    # ---- 队列工具侧的飞行取消（N3 回吐：取消语义属建造域）----
+
+    def _cancel_flights(self, name: str, reason: str, only_item: QueueItem | None = None) -> None:
+        """取消某队列的在途建造：停止重试 + 释放建造工 + 记 dropped（不静默）。"""
+        flights = self._build_flights.get(name)
+        if not flights:
+            return
+        keep = []
+        for flight in flights:
+            if only_item is not None and flight.get("item") is not only_item:
+                keep.append(flight)
+                continue
+            self._release_flight(flight)
+            self.dropped.append((flight.get("item"), reason))
+        self._build_flights[name] = keep
+
+    # ---- 常规建造路径（N3 回吐：与挂件/气矿并列为第三条建造路径）----
+
+    def _try_build(self, head: QueueItem, q_name: str, gs: GameState,
+                   q_index: int | None = None) -> str:
+        """发出首个候选放置位并记入在途确认（不出队；完成由 flight 账本判）。
+
+        按目标类型分派：addon 挂件（母建筑自建）→ gas 气矿（SCV 建在气井）→ 常规。
+        挂件/气矿的分派实现在 `production/flights.py`（Mixin）。
+        `q_index`（B3）：emit 时该项在队列里的下标，进 flight["from_index"]。
+        """
+        if head.type is None:
+            self._drop(head, "build 缺 type")
+            return "consumed"
+        entry = self._catalog.by_stable_id(head.type)
+        if entry is None:
+            self._drop(head, f"build 未知类型 {head.type!r}")
+            return "consumed"
+        if "addon" in entry.capabilities:
+            return self._try_build_addon(head, q_name, gs, q_index=q_index)
+        if "gas" in entry.capabilities:
+            return self._try_build_gas(head, q_name, gs, q_index=q_index)
+        pos, slot_name, reason = self._resolve_placement(head, gs, attempted=frozenset())
+        if reason is not None:
+            self._drop(head, reason)  # 作者错误（标记不存在）：摘除继续，不阻塞整队
+            return "consumed"
+        if pos is None:
+            # 执行期失败：候选位全被占 —— 留账本标 skipped，继续下一项（ADR-0032）
+            self._mark_skip(head, Verdict(
+                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
+                f"{head.type} 候选放置位全被占用"), gs)
+            return "skipped"
+        res = check_build(gs, self._catalog, head.type, pos)
+        if not res.ok:
+            # classify 已判 ready 后这里只剩放置类失败（footprint 重叠等）
+            self._mark_skip(head, Verdict(
+                VerdictKind.SKIP, SKIP_PLACEMENT_COLLISION,
+                self._why(res, f"build {head.type} 放置校验不通过")), gs)
+            return "skipped"
+        builder = self._pick_builder(gs, near=pos)
+        if builder is None:
+            return self._block(self._no_builder_reason())
+        self._emit(
+            [Emission("build", [builder.tag], {"type": head.type, "position": [pos.x, pos.y]})],
+            gs.seq,
+        )
+        flight = {
+            "item": head,
+            "uid": head.uid,
+            "type": head.type,
+            "builder": builder.tag,
+            "frames": 0,
+            "from_index": q_index,
+            "attempted": {slot_name} if slot_name else set(),
+            "seen_tags": self._type_entity_tags(gs, head.type),
+            "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）
+            "emitted_pos": [self._expected_reported(entry, pos)],  # I26：历次发射位（晚到实体收编判据）
+            "radius": 1.5,
+        }
+        self._charge(head.type)  # P3：入账（同帧后续项/其他队列都看得见）
+        self._reserve_for_flight(flight, builder.tag)  # 建造期间这个 SCV 谁都不许动
+        self._build_flights.setdefault(q_name, []).append(flight)
+        return "emitted"
+
+    # ---- 建造工选择与诊断 ----
+
+    def _pick_builder(self, gs: GameState, near: Point2 | None = None):
+        """选建造工兵（2026-08-24 用户拍板：**就近抽采矿 SCV**）。
+
+        - `near`（建造点）给了 → 选离它最近的候选 —— 采矿中的 SCV 就是被抽的对象，
+          建造期间征用保护 + 维持器的外来订单规则都不动它；
+          建完（flight 确认/取消 → 征用释放 → 订单清空）维持器自动派回采矿。
+        - 没给 near（无坐标的路径）→ 退回旧规则：优先真空闲，否则任一候选。
+        - 诊断：None 时 caller 的阻塞原因带上计数（场上几个/忙几个/征用几个），
+          「缺少建造者」不再是一句猜不出原因的话。
+        """
+        names = {e.burnysc2_name for e in self._catalog.where(role="worker")}
+        reserved = self._reservations.tags() if self._reservations is not None else frozenset()
+        pool = [u for u in gs.units
+                if u.owner is Owner.SELF and u.type_name in names]
+        candidates = [u for u in pool
+                      if u.tag not in self._frame_busy  # 本帧已被命令的工兵不重复用
+                      and u.tag not in reserved]  # 已在给别的 flight 盖房子的不抢（ADR-0030 D3.3）
+        # 诊断三元组（§0.52 D 批）：总数 / 建造征用 / 本帧已令 ——「无可用 SCV」的
+        # 阻塞与告警带上它，用户/agent 才看得出是谁占着（截图事故里裸喊了整场）
+        self._builder_diag = (
+            len(pool),
+            sum(1 for u in pool if u.tag in reserved),
+            sum(1 for u in pool if u.tag in self._frame_busy),
+        )
+        if not candidates:
+            return None
+        if near is not None:
+            return min(candidates,
+                       key=lambda u: (u.position.x - near.x) ** 2 + (u.position.y - near.y) ** 2)
+        idle = [u for u in candidates if not u.orders]  # 优先空闲工兵
+        return (idle or candidates)[0]
+
+    def _no_builder_reason(self) -> str:
+        """「缺少建造者」的如实版本：带上分类计数，让 agent/用户看得出是谁占着。"""
+        total, held, busy = getattr(self, "_builder_diag", (0, 0, 0))
+        if not total:
+            return "无可用 SCV 去建造（场上工兵 0 —— 一个都没有，先造/保工兵）"
+        return (f"无可用 SCV 去建造（场上工兵 {total}：建造征用 {held}、本帧已令 {busy}"
+                "—— 等在途建造完工/下一帧再试）")
+
+    # ---- placement 解析（薄包装；实现在 production/placement.py 纯函数）----
+
+    def _resolve_placement(
+        self, head: QueueItem, gs: GameState, attempted: frozenset[str] = frozenset()
+    ) -> tuple[Point2 | None, str | None, str | None]:
+        return resolve_placement(self._region_layer, self._catalog,
+                                 self._build_flights, head, gs, attempted)
+
+    # ---- 建造工征用（ADR-0030 D3.3）----
+
+    def _reserve_for_flight(self, flight: dict, tag: int) -> None:
+        """给 flight 征用建造工；同一 flight 换人时先释放旧的（owner 不变）。"""
+        if self._reservations is None:
+            return
+        owner = flight.get("owner")
+        if owner is None:
+            self._flight_seq += 1
+            owner = f"production/build#{self._flight_seq}"
+            flight["owner"] = owner
+        self._reservations.release(owner)
+        self._reservations.reserve(owner, tag)
+
+    def _release_flight(self, flight: dict) -> None:
+        """flight 结束（实体已出现 / 被丢弃 / 转重试）→ 释放建造工，让它回去采矿。"""
+        owner = flight.get("owner")
+        if owner is not None and self._reservations is not None:
+            self._reservations.release(owner)

@@ -11,10 +11,7 @@ from dataclasses import dataclass, field
 
 from game import GameState, Owner, WorkerTask
 from game.catalog import Catalog
-
-MINERAL_SATURATION = 2  # 每个矿脉的采集上限（P0）
-GAS_SATURATION = 3  # 每个气井的采集上限（P0）
-NODE_RADIUS = 20.0  # 资源节点归属半径：只取距主基锚点此距离内的矿脉/气井（真机教训：全图选节点会把农民派到敌方基地送死）
+from production.constants import GAS_SATURATION, MINERAL_SATURATION, NODE_RADIUS
 
 
 @dataclass(frozen=True, slots=True)

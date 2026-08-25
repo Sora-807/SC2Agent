@@ -14,8 +14,10 @@
 
 把 2026-08-25 全面审计后确认的全部后续工程任务收进**一份**按优先级排好的执行队列，
 让「下一步做什么」只有一个答案来源。审计清理轮（护栏/测试基建/泛化/REFINERY/归档/
-god file 拆分）已收官，这里装的是**剩下的**：三族化、去重与死代码、生产运行时瘦身、
+god file 拆分）已收官，这里装的是**剩下的**：
 前端测试形态、质量杂项、可用性后置项。
+（三族化 N1 / 去重与死代码 N2 / 生产运行时瘦身 N3 均已完结：2026-08-25，回填
+REFACTOR B6·§3·§4 / ISSUES #11，执行史 WORKLOG §0.66-0.68。）
 
 ## ② 概念与原则
 
@@ -26,43 +28,21 @@ god file 拆分）已收官，这里装的是**剩下的**：三族化、去重�
   签名、API 形状（proposals/plans/simulate/session/start）、`seed_memory_workspace`、
   `api.app.DEFAULT_MAP_PLANS_DIR`、vendor FakeLLM 系——tests/eval 装配测是裁判；
   动其它 modules 内部实现自由。
-- **基线不降**：后端 1034+4skip / 前端 396 + typecheck，每批收尾全绿才算完。
+- **基线不降**：后端 1075+4skip / 前端 396 + typecheck（2026-08-25 N3 收官口径），每批收尾全绿才算完。
 - **提交纪律**：`git mv`/暂存后尽快 commit（2026-08-25 并行互卷教训）；push 走临时代理 7890。
 
 ## ③ 任务批次（初步方案，会改）
 
-### N1 · planner 三族化（B6，第一优先）
+> N1（planner 三族化）已完结：2026-08-25 D4 拍板 hybrid（结构推导走 catalog、
+> Zerg 供给/吞工语义显式钩子），回填 REFACTOR B6 / ISSUES #11，执行史 WORKLOG §0.66。
+> N2（去重与死代码）已完结：2026-08-25 D2 拍板 api 内独立模块（api/frame_source.py，
+> 纯函数+薄壳不给基类），REFACTOR §3/§4 全表处置留档，执行史 WORKLOG §0.67。
 
-**问题**：三族 catalog（174 条）就绪，投影器仍只认 Terran——`planner.py` 写死
-`terran/refinery`/`terran/supplydepot`、`sim_state`/`economy` 的 `supply_provided` 单族、
-`module_defs.py` 新蔓延的 terran/* 写死。Z/P 对局投影不可用（REFINERY 三处硬编码已于
-2026-08-25 清掉，这是同族剩余）。
-**方案**：气矿/人口建筑从 `catalog.where(capability=...)` 推导；`supply_provided` 收敛单源；
-module_defs 参数化。**测试先行**：先补 protoss/zerg 的 planner 投影测试（现状零覆盖，
-没有它重构无驱动——见 2026-08-25 审计覆盖缺口）。
-**验收**：三族各一条完整开局投影测试绿；REFACTOR B6 条目关闭。
-**[待定] D4**：race-agnostic 深度——完全 catalog 推导 vs 显式三族表（推导更干净，
-但 supply 语义各族有差，可能要 hybrid）。
-
-### N2 · 去重与死代码（REFACTOR §3/§4 清偿）
-
-**内容**（明细见 REFACTOR.md，2026-08-25 核对后的仍开放项）：
-- 帧源接口三份复制（sources/session/live 的 info/statics/latest_at/between）→ 抽
-  `FrameSource` ABC——顺带是 live.py 瘦身的突破口；**[待定] D2**：落点 game.ports vs 独立模块；
-- 死代码：`spatial.nearest` 死导出、`region.cells_of_big` 死方法、`producer._seq` 只写不读、
-  manifest 空脚手架 dict 两只、`catalog.load_terran` 未跟 `_load_race` helper；
-- 小去重：`_mmss` 双份、production 常量双份（MINERAL_SATURATION 等）、最近 base 平方距离
-  五处、reserved-box 重叠检查两遍、map_plans 穿透 import 私有（`_footprint/_overlaps`）。
-**验收**：REFACTOR §3/§4 表格清空或逐条标注保留理由；全仓绿。
-
-### N3 · 生产运行时瘦身
-
-**问题**：runtime.py 拆后回胖 564→852（ADR-0032 逻辑加回编排文件）；live.py 690 五职责；
-routes/session(374)/plans(353) 越过拆分时 178 行天花板。
-**方案**：runtime 的 `_sweep_completions`/`_producer_ever_ready`/`_mark_skip` 等回吐
-flights/semantics；live.py 借 N2 的 FrameSource 抽离帧源职责；两个胖路由各抽辅助层。
-**[待定] D1**：回吐边界——flights 继续当 Mixin（共享状态）vs 设计协作对象（更纯、手术更大）。
-**验收**：runtime ≤650 行且行为零变化（账本/flight 测试原样绿）；live.py ≤550。
+> N3（生产运行时瘦身）已完结：2026-08-25 D1 拍板 Mixin 继续（协作对象明确不做，
+> 与 G2 同一结论）——runtime 852→482（flights 592 扩建造域 + ledger.py 250 新建）、
+> live 675→538（live_io.py 抽录制/进程树/种族推断）、routes/session 374→93 +
+> plans 353→99（session_start.py / plans_simulate.py 各自成路由文件）。
+> 执行史 WORKLOG §0.68。
 
 ### N4 · 前端测试形态治理
 
@@ -94,7 +74,9 @@ toContain 子串）——锁死 CSS 类名/JSX 文本，重构被强加「子串
 
 | # | 决策 | 关联批次 |
 |---|---|---|
-| D1 | runtime 回吐边界：Mixin 继续 vs 协作对象 | N3 |
-| D2 | FrameSource ABC 落点：game.ports vs 独立模块 | N2 |
 | D3 | 前端测试改造范围：仅源码扫描型 vs 全量梳理 | N4 |
-| D4 | 三族化深度：catalog 全推导 vs 显式三族表/hybrid | N1 |
+
+（已决：D4 三族化深度 = hybrid——catalog 推导结构、显式钩子管 Zerg 语义，2026-08-25；
+D2 FrameSource 落点 = api 内独立模块 `api/frame_source.py`——纯函数 + 薄壳不给基类，
+2026-08-25；D1 runtime 回吐边界 = Mixin 继续——flights 扩建造域 + ledger 新 Mixin，
+协作对象明确不做（与 G2 拍板一致），2026-08-25。）

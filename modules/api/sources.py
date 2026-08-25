@@ -8,28 +8,22 @@ B3 接上 live 之后再加一个 live 源 —— **前端不需要改**，因�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
+from api.frame_source import (
+    SourceInfo,
+    between,
+    first_statics,
+    info_of,
+    latest_at,
+)
 from view.jsonl import read_frames
-from view.schema import STATIC_TOPICS
 
-
-@dataclass(slots=True)
-class SourceInfo:
-    id: str
-    label: str
-    kind: str            # replay | live
-    envelopes: int
-    from_time: float
-    to_time: float
-    topics: list[str]
-    #: 快照锚点（ADR-0024 §6）：时间线上可跳的点。来自录制时的 index.json
-    snapshots: list[float]
+__all__ = ["JsonlSource", "SourceRegistry", "SourceInfo"]
 
 
 class JsonlSource:
-    """一份 JSONL 帧序列。"""
+    """一份 JSONL 帧序列（查询实现共享自 api.frame_source）。"""
 
     def __init__(self, source_id: str, path: Path, label: str | None = None,
                  snapshots: list[float] | None = None) -> None:
@@ -45,22 +39,11 @@ class JsonlSource:
     # ---- 查询 ----
 
     def info(self) -> SourceInfo:
-        times = [f["game_time"] for f in self.frames]
-        return SourceInfo(
-            id=self.id, label=self.label, kind="replay",
-            envelopes=len(self.frames), from_time=min(times), to_time=max(times),
-            topics=sorted({f["topic"] for f in self.frames}),
-            snapshots=list(self.snapshots),
-        )
+        return info_of(self.id, self.label, "replay", self.frames, self.snapshots)
 
     def statics(self) -> list[dict]:
         """三个静态面各取第一条（每局只发一次）。"""
-        out: list[dict] = []
-        for topic in STATIC_TOPICS:
-            first = next((f for f in self.frames if f["topic"] == topic), None)
-            if first is not None:
-                out.append(first)
-        return out
+        return first_statics(self.frames)
 
     def latest_at(self, game_time: float, topics: set[str] | None = None) -> list[dict]:
         """每个 topic 取 `<= game_time` 的最后一帧。
@@ -69,31 +52,11 @@ class JsonlSource:
         所以"服务端 seek"和"客户端 seek"看到的东西必然相同。
         静态面即使晚于游标也给 —— 它任何游标下都有效。
         """
-        chosen: dict[str, dict] = {}
-        for f in self.frames:
-            if topics is not None and f["topic"] not in topics:
-                continue
-            if f["game_time"] <= game_time + 1e-9:
-                chosen[f["topic"]] = f
-        for topic in STATIC_TOPICS:
-            if topic in chosen:
-                continue
-            if topics is not None and topic not in topics:
-                continue
-            first = next((f for f in self.frames if f["topic"] == topic), None)
-            if first is not None:
-                chosen[topic] = first
-        # 保持**流的顺序**（dict 记插入序）：同一 tick 里多个 topic 共享 GameState.seq，
-        # 按 seq 排会得到任意顺序，而静态面必须先到（前端要先拿到地图与目录）。
-        return list(chosen.values())
+        return latest_at(self.frames, first_statics(self.frames), game_time, topics)
 
     def between(self, after: float, until: float, topics: set[str] | None = None) -> list[dict]:
         """`(after, until]` 区间内的帧（WS 按节拍推送用）。"""
-        return [
-            f for f in self.frames
-            if after + 1e-9 < f["game_time"] <= until + 1e-9
-            and (topics is None or f["topic"] in topics)
-        ]
+        return between(self.frames, after, until, topics)
 
 
 class SourceRegistry:

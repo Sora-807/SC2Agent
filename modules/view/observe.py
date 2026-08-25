@@ -18,6 +18,7 @@ from typing import Any
 
 from game.catalog import Catalog
 
+from view.fmt import mmss
 from view.proposals import STATUS_PENDING, STATUS_REJECTED, STATUS_STALE
 
 #: 投影摘要只看未来这么久（ADR-0009 §1 的"30 秒投影"量级）。
@@ -44,7 +45,7 @@ class ObservationPacket:
 
     def render(self) -> str:
         """拼成一段可直接进 prompt 的文本。顶部声明新鲜度（ADR-0009 §5）。"""
-        head = (f"# 当前观察（seq={self.seq}，游戏时间 {_mmss(self.game_time)}）\n"
+        head = (f"# 当前观察（seq={self.seq}，游戏时间 {mmss(self.game_time)}）\n"
                 f"只以本 packet 为行动依据；下命令时 based_on_seq={self.seq}。\n")
         body = "\n".join(f"\n## {name}\n{text}" for name, text in self.sections.items() if text)
         return head + body
@@ -559,7 +560,7 @@ def _strategy_text(flow: dict | None, strategy: dict | None) -> str:
     else:
         out.append("本帧没有命中任何分支（等待型 step）")
     for t in (s.get("transitions") or [])[-RECENT_TRANSITIONS:]:
-        out.append(f"转移 {t['from']} → {t['to']}（{t['reason']}）@{_mmss(t['at'])}")
+        out.append(f"转移 {t['from']} → {t['to']}（{t['reason']}）@{mmss(t['at'])}")
     out.append(f"转移计数 {s['transition_count']}/{s['transition_limit']}")
     if s.get("exit_record"):
         out.append(f"**策略已结束**：{s['exit_record']['kind']}/{s['exit_record']['reason']}")
@@ -628,10 +629,10 @@ def _projection_text(proj: dict | None, now: float, zh) -> str:
     done = [e for e in near if e["kind"] == "completed"]
     if stalls:
         out.append("（30s 预估已移除：看曲线用 simulate_plan）未来 30s 内会卡：" + "；".join(
-            f"{_mmss(e['t'])} {zh(e['stable_id'])} {e['reason'] or ''}" for e in stalls))
+            f"{mmss(e['t'])} {zh(e['stable_id'])} {e['reason'] or ''}" for e in stalls))
     if done:
         out.append("未来 30s 内完成：" + "，".join(
-            f"{zh(e['stable_id'])}@{_mmss(e['t'])}" for e in done))
+            f"{zh(e['stable_id'])}@{mmss(e['t'])}" for e in done))
     pt = next((p for p in proj["points"] if p["t"] >= horizon), None)
     if pt:
         out.append(f"30s 后预计：矿 {pt['minerals']:.0f} / 气 {pt['gas']:.0f}"
@@ -663,10 +664,6 @@ def _zh_of(catalog: Catalog):
         return e.display_name_zh if e else stable_id
     return zh
 
-
-def _mmss(t: float) -> str:
-    s = max(0, int(round(t)))
-    return f"{s // 60:02d}:{s % 60:02d}"
 
 
 def frames_by_topic(envelopes: list[dict]) -> dict[str, dict]:

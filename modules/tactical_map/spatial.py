@@ -24,5 +24,9 @@ def units_within(target: Point2, units: list[Unit], r: float) -> list[Unit]:
     return [u for u in units if distance(target, u.position) <= r]
 
 
-def nearest(target: Point2, units: list[Unit], k: int = 1) -> list[Unit]:
-    return sorted(units, key=lambda u: distance(target, u.position))[:k]
+def nearest_index(points: list[tuple[float, float]], target: tuple[float, float]) -> int:
+    """按平方距离找最近点的下标（「归属最近基地」这类坐标元组查询；
+    Unit 域的最近查询走 units_within/自排 key，别混用）。"""
+    return min(range(len(points)),
+               key=lambda i: (points[i][0] - target[0]) ** 2 + (points[i][1] - target[1]) ** 2)
+

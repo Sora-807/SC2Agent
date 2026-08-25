@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from game.catalog import Catalog, neutral_kind
 from game.state import GameState, Owner
 
+from view.fmt import mmss
 from view.schema import AlertView
 
 #: 同一警报的冷却（游戏秒）。1Hz 求值下不冷却会每帧一条。
@@ -272,14 +273,14 @@ class AlertService:
 
     def _supply_alerts(self, gs: GameState, production: dict | None) -> list[AlertView]:
         """supply_capped（D1 live 面，替代已删除的 supply_block 前瞻）：
-        已卡人口 **且** 队列/在途没有任何供给建筑 —— 建议插 depot，带 before_uid。
+        已卡人口 **且** 队列/在途没有任何供给建筑 —— 建议插补给，带 before_uid。
         队列里已排就闭嘴（等它建成就好）。"""
-        from planner.economy import DEFAULT_ECON
         from constraint.semantics import STATUS_IN_PROGRESS, STATUS_PENDING
 
         if gs.supply_used < gs.supply_cap or gs.supply_cap >= 200:
             return []
-        supply_types = {t for t, n in DEFAULT_ECON.supply_provided.items() if n > 0}
+        # 供给建筑集合 = catalog 单源（B6 三族：depot/pylon/overlord/基地都算）
+        supply_types = set(self.catalog.supply_map())
         head_uid: str | None = None
         if production:
             for q in production.get("queues", []):
@@ -300,7 +301,7 @@ class AlertService:
             severity="warn",
             at=gs.game_time, eta=None,
             text_zh=(f"已卡人口（{gs.supply_used:g}/{gs.supply_cap:g}）且队列/在途"
-                     f"没有供给建筑 —— 建议插 build 补给站{before}"),
+                     f"没有供给建筑 —— 建议插 build 补给{before}"),
             source="production",
             payload={"supply_used": gs.supply_used, "supply_cap": gs.supply_cap,
                      "before_uid": head_uid},
@@ -369,7 +370,7 @@ class AlertService:
                 kind="plan_stalled",
                 severity="error",
                 at=now, eta=round(e.t - now, 1),
-                text_zh=f"{_mmss(e.t)} {_zh(self.catalog, e.type).strip()}走不下去：{e.reason}",
+                text_zh=f"{mmss(e.t)} {_zh(self.catalog, e.type).strip()}走不下去：{e.reason}",
                 source="projection",
                 payload={"stable_id": e.type, "reason": e.reason, "t": e.t},
             ))
@@ -483,7 +484,3 @@ def _zh(catalog: Catalog, stable_id: str | None) -> str:
     entry = catalog.by_stable_id(stable_id)
     return f"{entry.display_name_zh} " if entry else f"{stable_id} "
 
-
-def _mmss(t: float) -> str:
-    s = max(0, int(round(t)))
-    return f"{s // 60:02d}:{s % 60:02d}"

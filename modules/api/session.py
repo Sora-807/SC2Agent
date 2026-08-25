@@ -38,7 +38,7 @@ from view.port import OpRing, RecordingPort
 from view.producer import FrameProducer
 from view.schema import STATIC_TOPICS
 
-from api.sources import SourceInfo
+from api.frame_source import SourceInfo, between, info_of, latest_at, statics_only
 
 #: 命令允许的最大观察滞后（游戏秒/seq）。R8："旧观察不得作为当前行动依据"。
 #: 5 秒是个手感值：UI 点一下的往返远小于它，而"拖回历史后再下命令"会被拒。
@@ -271,15 +271,10 @@ class OfflineSession:
         if self.seq - int(based_on_seq) > MAX_STALE_SEQ:
             raise StaleObservation(int(based_on_seq), self.seq)
 
-    # ---- 帧源接口（与 JsonlSource 同形，WS 通道不用改）----
+    # ---- 帧源接口（与 JsonlSource 同形，WS 通道不用改；实现共享 api.frame_source）----
 
     def info(self) -> SourceInfo:
-        times = [f["game_time"] for f in self.frames] or [0.0]
-        return SourceInfo(
-            id=self.id, label=self.label, kind="live",
-            envelopes=len(self.frames), from_time=min(times), to_time=max(times),
-            topics=sorted({f["topic"] for f in self.frames}), snapshots=[],
-        )
+        return info_of(self.id, self.label, "live", self.frames)
 
     def statics(self) -> list[dict]:
         """只返回**静态面**，与 `JsonlSource.statics()` 一致。
@@ -287,29 +282,14 @@ class OfflineSession:
         `_statics` 里还有一条初始 `frame/session`（它是动态的：状态会变），
         那条走 `latest_at` 的兜底路径下发，不混进静态面。
         """
-        return [f for f in self._statics if f["topic"] in STATIC_TOPICS]
+        return statics_only(self._statics)
 
     def latest_at(self, game_time: float, topics: set[str] | None = None) -> list[dict]:
-        chosen: dict[str, dict] = {}
-        for f in self.frames:
-            if topics is not None and f["topic"] not in topics:
-                continue
-            if f["game_time"] <= game_time + 1e-9:
-                chosen[f["topic"]] = f
-        for f in self._statics:
-            if topics is not None and f["topic"] not in topics:
-                continue
-            chosen.setdefault(f["topic"], f)
-        # 同 `JsonlSource`：保持流的顺序，不按 seq 排（同 tick 的 seq 相同）
-        return list(chosen.values())
+        return latest_at(self.frames, self._statics, game_time, topics)
 
     def between(self, after: float, until: float,
                 topics: set[str] | None = None) -> list[dict]:
-        return [
-            f for f in self.frames
-            if after + 1e-9 < f["game_time"] <= until + 1e-9
-            and (topics is None or f["topic"] in topics)
-        ]
+        return between(self.frames, after, until, topics)
 
     # ---- 命令（与 agent 同一入口）----
 

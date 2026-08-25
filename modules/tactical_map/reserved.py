@@ -20,6 +20,7 @@ from pathlib import Path
 
 from game.geometry import Point2
 from tactical_map.placement import PosMark
+from tactical_map.spatial import nearest_index
 
 _LADDER_JSON = Path(__file__).resolve().parent / "data" / "ladder_map" / "terrain.json"
 _LADDER_SOURCE = Path(__file__).resolve().parent / "data" / "ladder_map" / "base_layout.yaml"
@@ -78,8 +79,7 @@ def reserved_boxes(catalog, mains: dict[str, tuple[float, float]] | None = None)
         mains = source_mains()
     for spawn, origin in mains.items():
         side = "蓝方" if spawn == "bl" else "红方"
-        best = min(range(len(bases)),
-                   key=lambda i: (bases[i][0] - origin[0]) ** 2 + (bases[i][1] - origin[1]) ** 2)
+        best = nearest_index(bases, origin)
         bx, by = bases[best]
         if abs(bx - origin[0]) < 3 and abs(by - origin[1]) < 3:
             mains_idx[best] = side
@@ -105,8 +105,7 @@ def reserved_boxes(catalog, mains: dict[str, tuple[float, float]] | None = None)
         if r.get("kind") != "geyser":
             continue
         gx, gy = float(r["pos"][0]), float(r["pos"][1])
-        nearest = min(range(len(bases)),
-                      key=lambda i: (bases[i][0] - gx) ** 2 + (bases[i][1] - gy) ** 2)
+        nearest = nearest_index(bases, (gx, gy))
         geyser_no[nearest] = geyser_no.get(nearest, 0) + 1
         gname = (names.get(nearest) or "矿区") + f"气井{geyser_no[nearest]}"
         boxes.append(box(gx, gy, geyser_size, "geyser", gname))

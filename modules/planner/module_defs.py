@@ -2,6 +2,11 @@
 
 V1 用 code 函数注册模块（module_ref → params → op 序列）；YAML authoring 后续。
 P6 设计 20+4 build order 时补全/调整这里（加更多模块、调参数）。
+
+三族（N1d / REFACTOR B6）：`basic_opening` 走 `params.race` 参数化 —— 补给/农民/
+首个产兵建筑的**结构数据**（成本/时长/供给）在 catalog，但「开局长什么样」是
+策略知识，用显式三族表（D4 hybrid 的 authoring 半边）。`factory_chain` 与
+`bio_tank_opening` 是 Terran 专属战略（坦克/机枪兵），不参数化。
 """
 from __future__ import annotations
 
@@ -9,23 +14,51 @@ from planner.build_order import AssignWorkers, Build, Research, Train, register_
 
 
 def _factory_chain(params: dict):
-    """工厂链：factory → factorytechlab → train siegetank×tank_count。"""
+    """工厂链：factory → factorytechlab → train siegetank×tank_count。
+
+    Terran 专用战略模块（不参数化 race）。
+    """
     tank_count = int(params.get("tank_count", 4))
     ops = [Build("terran/factory"), Build("terran/factorytechlab")]
     ops += [Train("terran/siegetank") for _ in range(tank_count)]
     return ops
 
 
+#: 三族「标准开局」要素表（N1d）：补给/农民/首个产兵建筑的 stable ID。
+#: Zerg 的补给是单位（train overlord 落成涨供给，B6 语义钩子），
+#: 产兵建筑就是孵化场本身，首个解锁建筑是孵化池。
+_BASIC_OPENING: dict[str, dict[str, str]] = {
+    "terran": {"supply": "terran/supplydepot", "worker": "terran/scv",
+               "prod": "terran/barracks"},
+    "protoss": {"supply": "protoss/pylon", "worker": "protoss/probe",
+                "prod": "protoss/gateway"},
+    "zerg": {"supply": "zerg/overlord", "worker": "zerg/drone",
+             "prod": "zerg/spawningpool"},
+}
+
+
 def _basic_opening(params: dict):
-    """简单开局（测试用）：depot → scv×N → barracks。P6 换成真实开局。"""
-    scv_count = int(params.get("scv_count", 12))
-    return [Build("terran/supplydepot"),
-            *[Train("terran/scv") for _ in range(scv_count)],
-            Build("terran/barracks")]
+    """简单开局（测试/模板用）：补给 → 农民×scv_count → 首个产兵建筑（params.race 三族）。
+
+    terran/protoss：Build 补给建筑；zerg：Train overlord + 孵化池 + 一条跳虫
+    （把 train 供给/吞 drone/孵化场产兵三个 Zerg 语义都过一遍）。
+    """
+    race = str(params.get("race", "terran"))
+    if race not in _BASIC_OPENING:
+        raise ValueError(f"race 必须是 {sorted(_BASIC_OPENING)}（当前 {race!r}）")
+    seed = _BASIC_OPENING[race]
+    worker_count = int(params.get("scv_count", 12))
+    supply_op = Train(seed["supply"]) if race == "zerg" else Build(seed["supply"])
+    ops = [supply_op, *[Train(seed["worker"]) for _ in range(worker_count)],
+           Build(seed["prod"])]
+    if race == "zerg":
+        ops.append(Train("zerg/zergling"))
+    return ops
 
 
 def _bio_tank_opening(params: dict):
-    """步坦协同开局 V3：农民优先 + 显式补给 + 科技攀升 + 二矿 + 攻防升级。
+    """步坦协同开局 V3（Terran 专用战略模块，不参数化 race）：
+    农民优先 + 显式补给 + 科技攀升 + 二矿 + 攻防升级。
 
     V3（2026-08-24）：**显式插 depot** —— V2 依赖 planner supply_guard 自动插入，
     但 supply_guard 已按 PLAN-V2 D7 删除（诊断取代掩盖），模块没跟着改导致

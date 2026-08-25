@@ -1,7 +1,7 @@
 """game catalog 测试：稳定 ID 映射 + 查询 + 加载边界校验（Role/Cost/词表）。"""
 import pytest
 
-from game.catalog import Catalog, CatalogEntry, Cost, Role, load_terran
+from game.catalog import Catalog, CatalogEntry, Cost, Role, load_all, load_terran
 
 
 def test_load_terran():
@@ -236,3 +236,46 @@ def test_terran_entries_all_have_short_name():
         assert e.short_name_zh, f"{e.stable_id} 缺 short_name_zh"
         assert len(e.short_name_zh) <= 2, f"{e.stable_id} 短名超过 2 字：{e.short_name_zh}"
 
+
+
+# ---------------- supply_provided（B6 三族单源；数值=本机 dump food_provided） ----------------
+
+#: 三族代表真值（基地/补给单位）；morph 链（orbital/planetary/lair/hive/overseer 等）同 dump 同源
+SUPPLY_PROVIDED = [
+    ("terran/commandcenter", 13),
+    ("terran/supplydepot", 8),
+    ("protoss/nexus", 13),
+    ("protoss/pylon", 8),
+    ("zerg/hatchery", 4),
+    ("zerg/overlord", 8),
+]
+
+
+@pytest.mark.parametrize(("sid", "n"), SUPPLY_PROVIDED, ids=[s for s, _ in SUPPLY_PROVIDED])
+def test_supply_provided_three_races(sid, n):
+    """供给建筑条目带 supply_provided 真值 —— planner/economy/alerts 的单一真相源。"""
+    cat = load_all()
+    e = cat.by_stable_id(sid)
+    assert e is not None and e.supply_provided == n
+
+
+def test_supply_provided_defaults_zero():
+    """不提供供给的条目省略字段 → loader 默认 0（不得 KeyError/None）。"""
+    cat = load_all()
+    for sid in ("terran/marine", "protoss/assimilator", "zerg/spawningpool"):
+        assert cat.by_stable_id(sid).supply_provided == 0
+
+
+def test_where_race_filters():
+    """where(race=...) 按稳定 ID 前缀过滤（模块模板/开局种子按族查结构入口用）。"""
+    cat = load_all()
+    assert {e.stable_id for e in cat.where(capability="gas", race="zerg")} == {"zerg/extractor"}
+    assert {e.stable_id for e in cat.where(role="worker", race="protoss")} == {"protoss/probe"}
+    assert all(e.stable_id.startswith("terran/") for e in cat.where(race="terran"))
+
+
+def test_register_rejects_negative_supply_provided():
+    data = _bad({})
+    data["supply_provided"] = -1
+    with pytest.raises(ValueError, match="supply_provided"):
+        Catalog().register("terran/test", data)

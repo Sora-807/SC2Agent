@@ -356,6 +356,7 @@
     "build_time": 71,
     "produced_by": null,
     "prerequisites": [],
+    "supply_provided": 13,
     "size": 5,
     "variants": [
       "COMMANDCENTERFLYING"
@@ -380,6 +381,7 @@
     "prerequisites": [
       "terran/barracks"
     ],
+    "supply_provided": 13,
     "variants": [
       "ORBITALCOMMANDFLYING"
     ]
@@ -402,7 +404,8 @@
     "produced_by": "terran/commandcenter",
     "prerequisites": [
       "terran/engineeringbay"
-    ]
+    ],
+    "supply_provided": 13
   },
   "terran/supplydepot": {
     "burnysc2_name": "SUPPLYDEPOT",
@@ -422,6 +425,7 @@
     "prerequisites": [
       "terran/commandcenter"
     ],
+    "supply_provided": 8,
     "size": 2,
     "variants": [
       "SUPPLYDEPOTLOWERED"

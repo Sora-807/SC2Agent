@@ -8,14 +8,14 @@
 - catalog 类型存在（buildings/units/upgrades）；
 - units 不含 SCV（工人在 workers 分项里）；
 - workers 各分项之和 = SCV 总数（分项间不允许凭空多/少）；
-- supply_cap 与建筑构成一致（econ.supply_provided 单源：CC=13/depot=8，min(200)）。
+- supply_cap 与构成一致（catalog.supply_map 单源：CC/Nexus=13、depot/pylon=8、
+  hatchery=4、overlord=8，min(200)；建筑+供给单位都计）。
 
 近似处（如实说明）：building/scouting 工人在 SimState 里并入 idle（仿真侧没有
 编组/征用账本 —— 侦查是 D3 的 Group 派生，批 5 落显示面）。
 """
 from __future__ import annotations
 
-from planner.economy import DEFAULT_ECON
 from planner.sim_state import SimState
 from planner.slots import reactor_map
 from game.catalog import Catalog, Role
@@ -48,13 +48,15 @@ def validate_state_doc(doc: dict, catalog: Catalog) -> list[str]:
         entry = catalog.by_stable_id(sid)
         if entry is not None and entry.role == Role.WORKER:
             errs.append(f"units 不含 SCV（{sid} 属于 workers 分项，别两边都写）")
-    # supply_cap 与建筑构成对账（单源 econ.supply_provided；SC2 上限 200）
+    # supply_cap 与构成对账（单源 catalog.supply_map；SC2 上限 200）。
+    # 建筑 + 供给单位都计（Zerg 的 overlord 在 units 里）
     if "supply_cap" in doc and doc.get("supply_cap") is not None:
-        computed = min(200, sum(DEFAULT_ECON.supply_provided.get(sid, 0) * n
-                                for sid, n in (doc.get("buildings") or {}).items()))
+        supply = catalog.supply_map()
+        composed = {**(doc.get("buildings") or {}), **(doc.get("units") or {})}
+        computed = min(200, sum(supply.get(sid, 0) * n for sid, n in composed.items()))
         declared = doc.get("supply_cap")
         if isinstance(declared, int) and declared != computed:
-            errs.append(f"supply_cap={declared} 与建筑构成不符（按 CC=13/depot=8 算应为 {computed}）")
+            errs.append(f"supply_cap={declared} 与构成不符（按 catalog 供给值算应为 {computed}）")
     if "supply_used" in doc and doc.get("supply_used") is not None \
             and "supply_cap" in doc:
         used, cap = doc.get("supply_used"), doc.get("supply_cap")
@@ -128,8 +130,6 @@ def static_check(items: list, catalog: Catalog, buildings: dict[str, int],
     产出建筑缺失（同族）、累计人口超可用且队列无供给建筑（supply_overspend）。
     返回 alerts 列表（severity/kind/text_zh/uid），与 audit_queue 的诊断口径对齐。
     """
-    from planner.economy import DEFAULT_ECON
-
     alerts: list[dict] = []
     queued_builds: dict[str, int] = {}
     planned_cap = 0
@@ -170,7 +170,7 @@ def static_check(items: list, catalog: Catalog, buildings: dict[str, int],
                     "uid": uid})
         if op == "build":
             queued_builds[sid] = queued_builds.get(sid, 0) + max(1, int(it.count))
-            planned_cap += DEFAULT_ECON.supply_provided.get(sid, 0) * max(1, int(it.count))
+            planned_cap += (entry.supply_provided or 0) * max(1, int(it.count))
         elif op == "train":
             pb = entry.produced_by
             if pb and buildings.get(pb, 0) + queued_builds.get(pb, 0) < 1:
@@ -181,11 +181,14 @@ def static_check(items: list, catalog: Catalog, buildings: dict[str, int],
                                 f"不在场、队列里也没排 —— 先建它（该项会被 skip）"),
                     "uid": uid})
             used += entry.cost.supply * max(1, int(it.count))
+            # 供给单位（Zerg overlord）train 落成同样涨 cap —— 静态账要计
+            planned_cap += (entry.supply_provided or 0) * max(1, int(it.count))
             cap_total = supply_cap + planned_cap
             if supply_cap and used > cap_total and cap_total < 200:
                 alerts.append({
                     "severity": "error", "kind": "supply_overspend",
                     "text_zh": (f"{uid} {zh}×{max(1, int(it.count))}：累计要人口 {used:.0f} >"
-                                f" 可用 {cap_total:.0f} —— 在 {uid} 前插补给站（一座 +8）"),
+                                f" 可用 {cap_total:.0f} —— 在 {uid} 前插补给"
+                                "（depot/pylon/overlord）"),
                     "uid": uid})
     return alerts

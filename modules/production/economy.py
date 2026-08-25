@@ -19,12 +19,7 @@ from dataclasses import dataclass, field
 
 from game import GameState, Operation, Owner
 from game.catalog import Catalog
-
-# 每矿脉/每气矿的采集上限（真机常数，与 worker.py 同源）
-MINERAL_SATURATION = 2
-GAS_SATURATION = 3
-# 资源节点归属半径：只管主基锚点附近（真机教训：全图选节点会把农民派到敌方基地送死）
-NODE_RADIUS = 20.0
+from production.constants import GAS_SATURATION, MINERAL_SATURATION, NODE_RADIUS
 # 防抖：同一工兵在这么多帧内最多改派一次（初值 ≈4 游戏秒，**待真机校准**，ADR-0030 D4.4）
 RETASK_COOLDOWN_FRAMES = 22
 # 矿脉的实体名前缀：资源节点词表还没进 catalog（issues P11），这里集中一处

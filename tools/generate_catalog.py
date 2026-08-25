@@ -459,6 +459,11 @@ def gen_unit_entry(d: dict, dump_units_upper: dict, race: str) -> dict:
         "produced_by": d["pb"],
         "prerequisites": d["pre"],
     }
+    # 提供的供给（B6 三族单源）：基地/补给建筑/Overlord 族等 food_provided > 0 才写，
+    # 其余省略（loader 默认 0）。数值与本机 dump 一致（CC/Nexus=13、Depot/Pylon=8、
+    # Hatchery 族=4、Overlord 族=8；与 planner.economy 校准值同源）。
+    if e["food_provided"]:
+        entry["supply_provided"] = e["food_provided"]
     sz = d.get("size_ov")
     if sz is None:
         sz = size_of(e)

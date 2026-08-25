@@ -59,13 +59,13 @@ def merge_map_state(template: BaseTemplate, overrides: dict) -> dict:
     return {"slots": slots, "marks": marks}
 
 
-def _footprint(pos: list[float], size: int) -> tuple[int, int, int, int]:
+def footprint_of(pos: list[float], size: int) -> tuple[int, int, int, int]:
     """锚点（格心）→ footprint 格点闭区间。公式来自 tactical_map.placement（单一真相源）。"""
     tl = BuildSlot.tl_from_pos(Point2(float(pos[0]), float(pos[1])), size)
     return int(tl.x), int(tl.y), int(tl.x + size - 1), int(tl.y + size - 1)
 
 
-def _overlaps(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+def footprints_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
     return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
 
 
@@ -156,13 +156,13 @@ def apply_map_overrides(
             elif not is_pos(pos):
                 err(h, f"add_slot {name!r} 缺合法 pos")
             else:
-                fp = _footprint([float(pos[0]), float(pos[1])], size)
+                fp = footprint_of([float(pos[0]), float(pos[1])], size)
                 for other, entry in slots.items():
                     if entry.get("pos") is None:
                         continue
-                    ofp = _footprint([float(entry["pos"][0]), float(entry["pos"][1])],
+                    ofp = footprint_of([float(entry["pos"][0]), float(entry["pos"][1])],
                                      int(entry["size"]))
-                    if _overlaps(fp, ofp):
+                    if footprints_overlap(fp, ofp):
                         err(h, f"add_slot {name!r} 与既有槽位 {other!r} 重叠")
                         break
                 else:

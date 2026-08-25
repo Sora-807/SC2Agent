@@ -435,6 +435,7 @@
     "build_time": 71,
     "produced_by": null,
     "prerequisites": [],
+    "supply_provided": 13,
     "size": 5
   },
   "protoss/pylon": {
@@ -455,6 +456,7 @@
     "prerequisites": [
       "protoss/nexus"
     ],
+    "supply_provided": 8,
     "size": 2,
     "variants": [
       "PYLONOVERCHARGED"
