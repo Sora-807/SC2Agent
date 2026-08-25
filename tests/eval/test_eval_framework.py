@@ -247,8 +247,81 @@ def test_judge_grader_blind_and_async(tmp_path: Path):
     assert "评分标准" in material and "最终回复" in material
 
 
-# ---------------- 报告（D6/D16） ----------------
+# ---------------- 批3：L4/P2/P3/B5/H0 注册面 + 假 live ----------------
 
+def test_batch3_scenarios_registered_and_setup(tmp_path: Path):
+    import eval.scenarios  # noqa: F401
+    from eval.registry import REGISTRY
+
+    for want in ("L4-group-shortfall", "P2-strategy-from-lib",
+                 "P3-mapplan-fix-overlap", "B5-named-slot-uses-exact",
+                 "H0-fake-live-follow"):
+        assert want in REGISTRY.ids(), f"{want} 未注册"
+    # L4 预置能跑通（depot→barracks 前置链）；H0 用 L1 同款 gas-block 局面
+    world = REGISTRY.get("L4-group-shortfall").fixture.setup(tmp_path / "l4")
+    gs = world["app"].state.session.world.game_state()
+    assert any(u.type_name == "BARRACKS" and u.build_progress >= 1.0 for u in gs.units)
+
+
+def test_p3_preset_carries_overlap_and_grader_catches(tmp_path: Path):
+    """P3 预置带重叠 → MapPlanGrader 判红；挪开后判绿（grader 判定面自测，走文件真相源）。"""
+    import eval.scenarios  # noqa: F401
+    from eval.registry import REGISTRY
+
+    world = REGISTRY.get("P3-mapplan-fix-overlap").fixture.setup(tmp_path / "p3")
+    grader = REGISTRY.get("P3-mapplan-fix-overlap").graders[1]
+    bad = grader.grade(None, world=world)
+    assert bad.passed is False and "重叠" in bad.reason_zh
+    # 模拟 agent 修好：把 D5 挪走（文件即真相源，grader 直读盘）
+    f = Path(world["extras"]["map_plans_dir"]) / "overlap-test.yaml"
+    f.write_text(f.read_text(encoding="utf-8").replace(
+        "D5: {pos: [54.5, 40.5]", "D5: {pos: [58.5, 40.5]"), encoding="utf-8")
+    good = grader.grade(None, world=world)
+    assert good.passed, good.reason_zh
+
+
+def test_proposal_grader_placement_expectation():
+    """B5 断言面：exact+mark 才算点名槽位；in_region.region=槽位名的旧病形态判红。"""
+    from eval.result import RunResult
+
+    def _prop(placement):
+        return RunResult(proposals=[{
+            "id": "p1", "validation": {"ok": True},
+            "hunks": [{"payload": {"item": {
+                "op": "build", "type": "terran/supplydepot",
+                "placement": placement}}}]}])
+
+    g = ProposalGrader(expect_op="build", expect_type="terran/supplydepot",
+                       expect_placement={"kind": "exact", "mark": "D3"})
+    assert g.grade(_prop({"kind": "exact", "mark": "D3"})).passed
+    # I33 旧病两形态：槽位名塞进 region / 自创 kind
+    assert g.grade(_prop({"kind": "in_region", "region": "D3"})).passed is False
+    assert g.grade(_prop({"kind": "preset", "name": "D3"})).passed is False
+
+
+def test_fake_follow_runner_end_to_end(tmp_path: Path):
+    """⑦ 假 live：后台 tick 推进 + AgentTalk 跟随回路 + 游戏结束收轮（FakeLLM）。"""
+    import eval.scenarios  # noqa: F401
+    from eval.registry import REGISTRY
+    from eval.runner import FakeFollowRunner
+
+    world = OfflineSessionFixture(setup_gas_block).setup(tmp_path / "w")
+    # 小 horizon：游戏很快结束 → 跟随循环退出（FakeLLM 立即回，不真的睡）
+    runner = FakeFollowRunner(horizon_game=8.0, tick_interval=0.01)
+    result = asyncio.run(runner.run(
+        world, _task_t("跟着这局：有问题提案修，打完总结"),
+        _fake_llm, tmp_path / "run"))
+    assert result.meta["prompt_hash"]           # 提示词快照在
+    assert result.session is not None and not result.session["alive"]  # 游戏已结束
+    assert "observe" in [t["tool"] for t in result.tool_calls]
+
+
+def _task_t(text):
+    from eval.contracts import Task
+    return Task(text=text)
+
+
+# ---------------- 报告（D6/D16） ----------------
 
 def test_report_written_with_prompt_snapshot(tmp_path: Path):
     world = _world(tmp_path / "w")

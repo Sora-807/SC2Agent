@@ -57,11 +57,27 @@ class ProposalGrader:
 
     def __init__(self, expect_op: str | None = None, expect_type: str | None = None,
                  expect_min_count: int = 1,
+                 expect_placement: dict | None = None,
                  allow_invalid_attempts: bool = False) -> None:
         self.expect_op = expect_op
         self.expect_type = expect_type
         self.expect_min_count = expect_min_count
+        #: 期望的 placement 子集（如 {"kind": "exact", "mark": "D3"} 或
+        #: {"kind": "in_region"}）——I33-C1 回归锁：点名槽位必须 exact+mark
+        self.expect_placement = expect_placement
         self.allow_invalid_attempts = allow_invalid_attempts
+
+    def _match(self, item: dict) -> bool:
+        if self.expect_op and item.get("op") != self.expect_op:
+            return False
+        if self.expect_type and item.get("type") != self.expect_type:
+            return False
+        if self.expect_placement is not None:
+            placement = item.get("placement") or {}
+            for k, v in self.expect_placement.items():
+                if placement.get(k) != v:
+                    return False
+        return True
 
     def grade(self, result: RunResult, world=None) -> Grade:
         bad_ids = [p.get("id") for p in result.proposals
@@ -73,23 +89,22 @@ class ProposalGrader:
         for p in pool:
             for h in p.get("hunks") or []:
                 item = (h.get("payload") or {}).get("item")
-                if not item:
-                    continue
-                if self.expect_op and item.get("op") != self.expect_op:
-                    continue
-                if self.expect_type and item.get("type") != self.expect_type:
-                    continue
-                n_ok += 1
+                if item and self._match(item):
+                    n_ok += 1
         passed = n_ok >= self.expect_min_count
         if not result.proposals:
             reason = "没有提案"
         elif passed:
-            reason = f"提案里有 {n_ok} 个期望项（op={self.expect_op}, type={self.expect_type}）"
+            reason = f"提案里有 {n_ok} 个期望项（op={self.expect_op}, type={self.expect_type}"
+            if self.expect_placement is not None:
+                reason += f", placement⊇{self.expect_placement}"
+            reason += "）"
         else:
             items = [i for p in result.proposals for h in p.get("hunks") or []
                      if (i := (h.get("payload") or {}).get("item"))]
-            reason = (f"提案里没有期望项（op={self.expect_op}, type={self.expect_type}）；"
-                      f"实际提案项：{[{i.get('op'), i.get('type')} for i in items]}")
+            seen = [[i.get("op"), i.get("type"), i.get("placement")] for i in items]
+            reason = (f"提案里没有期望项（op={self.expect_op}, type={self.expect_type}, "
+                      f"placement⊇{self.expect_placement}）；实际提案项：{seen}")
         if bad_ids and not self.allow_invalid_attempts:
             passed = False   # 严格模式：任何校验未通过的尝试都算失败
             reason += f"；校验未通过：{bad_ids}"

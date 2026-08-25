@@ -438,4 +438,14 @@ eval/
 > grader 扩展：EitherGrader 组合子（多正确路径）、ProposalGrader 容忍恢复语义、
 > RegexGrader any_of、SimOutcomeGrader final_units。真跑：B1 边界纪律 2/2、
 > L3 供给卡 4/4 全过；L1 二跑 sim 轴过（精炼厂落地）但严格提案轴仍红
->（placement schema 混淆仍在——I31/I33 提示词整改的第一标的）。
+> （placement schema 混淆仍在——I31/I33 提示词整改的第一标的）。
+> **批 3 落地（同日第三批）**：⑦ FakeFollowRunner 假 live（后台线程
+> `/api/session/tick` 推进 + 到 horizon `/api/session/stop` → AgentTalk 跟随回路
+> 自然收轮；**同一回路换驱动源**，talk.py 零改动，真机 ⑧ 只换驱动）；场景 +5：
+> L4 编组缺口（默认装配 G_INF 0/10）/P2 策略写流（StrategyGrader）/P3 地图规划
+> 几何校验（预置重叠 D5 压 D4，MapPlanGrader 走文件真相源）/B5 点名槽位
+> exact+mark 回归锁（I33-C1，源自真实 trace）/H0 假 live 跟随；ProposalGrader 加
+> expect_placement。**真跑结论：B5 红——agent 自创 `kind:at_slot` 和带命名空间的
+> `mark:"layout/D3"`（I33 缺口比档案更深：mark 命名空间规则也没讲清）；H0 机械链路
+> 全通（游戏推进/结束/跟随收轮/终局总结），提案轴红仍是精炼厂 placement 家族
+> ——四次独立复现，I31/I33 整改证据链齐。装配测 17 条全绿。

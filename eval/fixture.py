@@ -70,7 +70,12 @@ class OfflineSessionFixture:
             "seed_hash": _seed_fingerprint(workspace),
             "session": None if sess is None else {
                 "seq": getattr(sess, "seq", None), "game_time": sess.game_time},
-            "extras": {},
+            # 文件即真相源：预置/写盘目录给主动 grader 直读（store.list 只有摘要）
+            "extras": {
+                "plans_dir": str(tmp / "plans") if (tmp / "plans").is_dir() else None,
+                "map_plans_dir": (str(tmp / "map-plans")
+                                  if (tmp / "map-plans").is_dir() else None),
+            },
         }
 
     @staticmethod

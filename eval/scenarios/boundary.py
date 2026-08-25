@@ -77,3 +77,20 @@ def _b3(client: TestClient) -> None:
           ])
 def _b4(client: TestClient) -> None:
     _seeded_queue(client)
+
+
+# ---------------- B5：placement schema（I33-C1 回归锁，源自真实 trace 110728） ----------------
+
+@scenario("B5-named-slot-uses-exact", tags=["boundary"],
+          text="提案把一座补给站建在 D3 槽位——就要 D3 那个位置，别让它自动找位",
+          note="I33-C1 回归锁（trace 2026-08-25T110728 真实缺口）：点名槽位的正确写法 = "
+               "exact+mark；旧病 = 把槽位名塞进 in_region.region 或自创 kind。"
+               "期望终态有 exact/mark=D3 的有效提案（失败尝试容忍）",
+          graders=[
+              ToolSequenceGrader(must=["propose"]),
+              ProposalGrader(expect_op="build", expect_type="terran/supplydepot",
+                             expect_placement={"kind": "exact", "mark": "D3"},
+                             allow_invalid_attempts=True),
+          ])
+def _b5(client: TestClient) -> None:
+    _seeded_queue(client)

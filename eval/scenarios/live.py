@@ -86,6 +86,27 @@ def _l2(client: TestClient) -> None:
     _tick(sess, 10)
 
 
+# ---------------- L4：编组缺口（current << target） ----------------
+
+@scenario("L4-group-shortfall", tags=["live"],
+          text="步兵组兵力远低于编成目标，看看该补什么，提案解决",
+          note="编组缺口：默认装配 G_INF marine target=10、场上 0——期望从编组 facts "
+               "读出缺口并 propose 补训机枪兵（I17 家族：编组可观测性）",
+          graders=[
+              ToolSequenceGrader(must=["observe", "propose"], forbid=["queue_op"]),
+              ProposalGrader(expect_op="train", expect_type="terran/marine"),
+              SimOutcomeGrader(final_units={"terran/marine": 1}, horizon=240.0),
+              RegexGrader(rationale_nonempty=True),
+          ])
+def _l4(client: TestClient) -> None:
+    sess = client.app.state.session
+    _tick(sess, 5)
+    # 前置链备好（depot→barracks），但一个兵都不训 —— 组缺口 0/10 显形
+    _build(client, "SUPPLYDEPOT", "terran/supplydepot")
+    _build(client, "BARRACKS", "terran/barracks")
+    _tick(sess, 10)
+
+
 # ---------------- L3：快卡人口 ----------------
 
 @scenario("L3-supply-cap", tags=["live"],
