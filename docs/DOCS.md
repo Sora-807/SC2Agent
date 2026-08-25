@@ -8,13 +8,17 @@
 
 | 文档 | 内容 |
 |---|---|
-| `ARCHITECTURE.md` | 现行架构全景（模块分层与方向） |
-| `PLAN.md` | 现行计划（F/P 批次） |
+| `ARCHITECTURE.md` | 现行架构全景（模块分层与方向）——**REV/队列语义等局部过时，待刷新**（队列账本以 ADR-0032 为准、supply_guard 以 ADR-0034 为准） |
+| `PLAN.md` | 首批计划——已由 PLAN-V2 / PLAN-LIVE-ROUND2 接续完成（归档候选，留作 F10-F14 根因 file:line 证据） |
+| `PLAN-V2.md` | V2 六批重设计——已全部执行，真源已迁 WORKLOG/ADR（归档候选） |
+| `PLAN-LIVE-ROUND2.md` | 真机第二轮六批——已全部执行（归档候选） |
+| `PLAN-ROUND3.md` | 第三轮 A-H 批——大部分落地；H 批（supply_guard 显式开关）被 ADR-0034 推翻（归档候选） |
+| `PLAN-AGENT-EVAL.md` | 评测框架立项——D1-D16 已裁决可执行，eval/ 已落地 MVP（95c4911） |
 | `WORKLOG.md` | 执行史（§0.x 每轮：做了什么/为什么/回归数字），最新在上 |
 | `ISSUES.md` | 问题清单：开放 issue 详解 + 开放任务清单（2026-08-25 全量核对重排，18 条开放） |
 | `ISSUES-ARCHIVE.md` | 已处理留档 + 垃圾箱（被推翻/失效描述；2026-08-25 从 ISSUES.md 分出） |
 | `AGENT-LOOP.md` | Agent 数据触达闭环蓝图（I17-I20 母题；§6 新产物闭环检查清单） |
-| `REFACTOR.md` | modules/ 代码债审计与重构进度（P0 bug/G1-G3 已清；剩 B6/B7/死代码/去重） |
+| `REFACTOR.md` | modules/ 代码债审计与重构进度（P0 bug/G1-G3/B7 已清；剩 B6/死代码/去重；部分条目状态待复核） |
 
 ## contract/ —— 契约与边界（代码有活性引用，不可随手改）
 
@@ -29,7 +33,10 @@
 ## adr/ —— 决策记录（背景/决定/边界/反例/验收）
 
 现行：`0029`（地图区域与目标解析）、`0030`（经济维持器与工兵所有权）、
-`0031`（策略模板的编译期展开 —— imports/_lib.yaml，与 ADR-0028 的边界）。
+`0031`（策略模板的编译期展开 —— imports/_lib.yaml，与 ADR-0028 的边界）、
+`0032`（队列执行账本与 skip 语义——uid + 四值 status）、
+`0033`（地图规划双分支与会话图层合并）、
+`0034`（auto-supply 移除——诊断取代掩盖）。
 历史精华：`0006`（单位所有权与域仲裁 §7-9）、`0013`（实例状态与热改，I16 参考）、
 `0014`（编辑态转移矩阵）、`0024`（flow 历史事件溯源）、`0027`（放置与坐标语义——
 代码多处"ADR-0027 锁定公式"指向它）、`0028`（Flow v0.2 取代关系）。
@@ -49,11 +56,12 @@
 `game_data_dump.json`（三族 catalog 数据源，generate_catalog.py 消费）、
 `tank_marine_push.yaml`（策略 YAML 范本，run_tank_marine_push 与测试消费）。
 
-## evidence/ —— 真机证据（代码注释引用的踩坑实录，勿删）
+## evidence/ —— 真机证据（本地留档，未入库）
 
 `full_flow.log`（放置静默失败/挂件拼名）、`bare_addon.log`（挂件报告位锁定实验）、
-`slot_scan.log`（can_place 槽位扫描校准）；探针脚本的新输出也落这里
-（`state_trace.jsonl` 等，gitignored，缺失时相关测试自动 skip）。
+`slot_scan.log`（can_place 槽位扫描校准）。**注意：`*.log` 与 `state_trace.jsonl` 均被
+.gitignore 忽略**——fresh clone 没有它们；代码注释里的引用指向本机留档，本机勿删，
+缺失时相关测试自动 skip。
 
 ## 已删除（去哪找）
 

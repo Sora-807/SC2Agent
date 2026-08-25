@@ -1,6 +1,6 @@
 # ADR-0030 经济维持器与工兵所有权（EconomyKeeper × WorkerLease）
 
-- 状态：草案（待确认）
+- 状态：已采纳（实现落点 `modules/production/economy.py::EconomyKeeper`——常驻维持器/目标值语义/reserve_idle 已落地；2026-08-25 文档核对时补标）
 - 范围：SCV/工兵的所有权归属、采矿维持机制、`assign_workers` 语义、生产建造工的取用方式
 - 关联：需求文档 v0.1 §1（模块表）/ S3（补兵滞回）/ S11（生产队列）/ R1-R3、ADR-0021（策略图语义）、
   ADR-0029（目标解析）、`docs/P0-影响边界.md`「生产模块安排」、`docs/issues-flow-production.md` P7/P9/P11/P14

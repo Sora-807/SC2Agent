@@ -60,7 +60,7 @@
 ```ts
 interface Envelope<T> {
   topic: Topic
-  rev: 5                 // 契约版本;不匹配前端拒绝渲染并提示。与 modules/view/schema.py::REV 由测试锁死一致
+  rev: 18                // 契约版本;不匹配前端拒绝渲染并提示。与 modules/view/schema.py::REV 由测试锁死一致
   seq: number            // **世界版本号** = GameState.seq。同一 tick 的多个 topic **共享**它;
                          // 帧内顺序由流的顺序给(JSONL 行序 / WS 发送序),不靠 seq 排。
                          // 它同时是命令的 based_on_seq(R8 的门靠 session.seq - based_on_seq 判断)——

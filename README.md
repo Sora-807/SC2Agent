@@ -24,7 +24,7 @@
 ## 现状（诚实自评）
 
 - 后端核心链路通了：状态/驱动/策略引擎/约束/投影/生产运行时/经济维持器/只读视图/REST+WS API。
-- 前端数据面齐了（概览/地图/生产/Flow/规划/调试六页 + 提案审批 + 复盘时间线 + 真机 live）。
+- 前端数据面齐了（概览/地图/生产/Flow/规划/调试六页 + 提案流（自动应用）+ 复盘时间线 + 真机 live）。
 - 真机验过 terran 的一截（移动命令、帧流、地形三栅格、stdout 协议纯净）；protoss/zerg 未真机验。
 - **可用性落后于设想**：固定布局逼用户来回切页、地形坡道在渲染里几乎看不见、策略图无拖拽缩放。这些当时是有意后置的取舍，欠的是渲染/交互层，数据都在。
 - 多策略实例、timer/局部变量、敌人聚类、崩溃恢复、mechanics 规则层尚未做。
@@ -34,7 +34,7 @@
 
 - **一套帧契约贯通一切**：live 推送 / 复盘录制 / 离线模拟 / Agent 观察包，全是同一种帧（`ViewFrame`）。回放和实时看到的不是两份数据。改契约就 bump `REV`，前后端两侧由 contract test 锁死。
 - **严格分层**：`game`（地基，零依赖）→ `driver`（唯一碰 SC2）→ `world` / `flow` / `constraint` / `planner` / `tactical_map` / `production` → `view`（只读视图）→ `api`（传输）。`tests/architecture` 用一张禁止表机械锁死依赖方向，违反即测试失败。
-- **人在环审批**：Agent **没有直接命令工具**，只能推提案（hunk：insert/delete/modify/reorder）。人审批后才生效；提案附 `based_on_seq` 新鲜度版本号、拒绝理由回流给 Agent 下一轮。靠"不给那个工具"物理保证，不是约定。
+- **Agent 对局域只能提案**：Agent **没有直接命令工具**，只能推提案（hunk：insert/delete/modify/reorder）——靠"不给那个工具"物理保证，不是约定。提案附 `based_on_seq` 新鲜度版本号、校验错误回流给 Agent 下一轮。人审环节 2026-08 起停用：校验通过的提案创建后**立即自动应用**（`decision.auto=True` 留审计），accept/reject 能力休眠保留。
 - **离线规划 + 复盘回路**：仿真器（确定性 `worldsim`）是人和 Agent 共同的验证器；提案可双投影对比"采纳前/后"曲线；录像跨会话回放；Agent 工作区是磁盘物理隔离的共享文件面。
 - **三态裁决**：每个命令结局必居其一——`ok`（驱动确认）/ `failed`（驱动拒绝 + 原因）/ `None`（已受理待裁决，真机异步世界里的正常态，不是 bug）。
 
@@ -71,14 +71,14 @@ sc2Agent/
 | 前端 | React + TypeScript + Vite、pnpm、zustand、uPlot、vitest |
 | Agent | 内嵌 `vendor/agentic`（文件契约式引擎）、OpenAI 兼容 LLM 客户端 |
 | 真机 | 《星际争霸 II》客户端 + burnysc2 |
-| 可选 | 语音交互栈（ASR + TTS + Live2D，实验性，正在开发，尚未并入主分支） |
+| 可选 | 语音交互栈（ASR + TTS + Live2D，实验性，本地开发中，未并入主分支） |
 
 ## 环境要求
 
 - **Python 3.12**（3.13/3.14 与 burnysc2 不兼容）。用 `uv` 管依赖。
 - **Node.js + pnpm**（前端）。
 - **《星际争霸 II》**：仅真机模式需要。离线 / sim 模式不开游戏也能跑全链路。
-- **NVIDIA GPU + CUDA**：仅实验性语音栈需要，现阶段（语音栈未并入主分支）无需配置。
+- **NVIDIA GPU + CUDA**：仅实验性语音栈需要，不用语音可跳过。
 
 ## 快速开始
 
@@ -133,7 +133,7 @@ cd web && pnpm typecheck               # 前端类型检查
 | 派生量一律后端算 | 坐标换算历史上反复踩坑，TS 里不留第二份 |
 | 中文文案一律来自后端 catalog | 前端不建第二套 i18n 字典 |
 | UI 与 Agent 共用同一套命令 API | UI 操作 Agent 可脚本化，Agent 动作 UI 看得见 |
-| Agent 只能提案，不给直接命令工具 | 物理上不能绕过审批（红线 P1 / 机制 Q1） |
+| Agent 只能提案，不给直接命令工具 | 改动必经提案校验这道闸，单一入口可审计（红线 P1 / 机制 Q1） |
 
 ## 许可证
 
