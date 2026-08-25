@@ -71,8 +71,12 @@ def derive_from(gs: GameState, catalog: Catalog) -> SimState:
     - 索引一律稳定 ID（catalog.stable_id_for；未知型回退 burnysc2 名）。
     """
     mineral_tags = {u.tag for u in gs.resources if u.type_name.startswith("MINERALFIELD")}
-    refinery_tags = {u.tag for u in gs.units
-                     if u.owner is Owner.SELF and u.type_name == "REFINERY" and u.build_progress >= 1.0}
+    # 气矿建筑走 catalog（三族 REFINERY/EXTRACTOR/ASSIMILATOR）——2026-08-25 审计批4
+    # 清 "REFINERY" 硬编码（与 economy._gas_names 同源修法），Z/P 气矿工不再被漏分类
+    gas_names = frozenset(e.burnysc2_name for e in catalog.where(capability="gas"))
+    gas_building_tags = {u.tag for u in gs.units
+                         if u.owner is Owner.SELF and u.type_name in gas_names
+                         and u.build_progress >= 1.0}
     total = mineral = gas = idle = 0
     buildings: dict[str, int] = {}
     units: dict[str, int] = {}
@@ -87,7 +91,7 @@ def derive_from(gs: GameState, catalog: Catalog) -> SimState:
             total += 1
             if any(o.target_tag in mineral_tags for o in u.orders):
                 mineral += 1
-            elif any(o.target_tag in refinery_tags for o in u.orders):
+            elif any(o.target_tag in gas_building_tags for o in u.orders):
                 gas += 1
             elif not u.orders:
                 idle += 1

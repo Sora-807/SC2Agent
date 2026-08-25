@@ -33,21 +33,27 @@ class WorkerAllocator:
     def _worker_names(self) -> frozenset[str]:
         return frozenset(e.burnysc2_name for e in self._catalog.where(role="worker"))
 
+    def _gas_building_names(self) -> frozenset[str]:
+        """气矿建筑（三族 REFINERY/EXTRACTOR/ASSIMILATOR）——catalog 单源，不写死族名
+        （2026-08-25 审计批4：与 economy._gas_names 同源修法，清掉 "REFINERY" 硬编码）。"""
+        return frozenset(e.burnysc2_name for e in self._catalog.where(capability="gas"))
+
     def _workers(self, gs: GameState) -> list:
         names = self._worker_names()
         return [u for u in gs.units if u.owner is Owner.SELF and u.type_name in names]
 
     def _nodes(self, gs: GameState, gas: bool, base_pos) -> list:
-        """资源节点：gas=True 取精炼厂（SELF REFINERY），否则取矿脉（gs.resources MINERALFIELD）。
+        """资源节点：gas=True 取气矿建筑（SELF，三族），否则取矿脉（gs.resources MINERALFIELD）。
 
-        gas gather 目标 = 精炼厂 building tag（不是气井）：精炼厂建筑 3 SCV 能采；
-        gather(气井) 只 1 SCV 挤得进（气井点被精炼厂占）——真机踩坑（1/精炼厂、气≈0）。
-        order 目标 = 精炼厂 tag（gather(refinery)→order.target=refinery）→ _saturation/检测一致。
+        gas gather 目标 = 气矿建筑 tag（不是气井）：建筑 3 SCV 能采；
+        gather(气井) 只 1 SCV 挤得进（气井点被建筑占）——真机踩坑（1/精炼厂、气≈0）。
+        order 目标 = 建筑 tag（gather(refinery)→order.target=refinery）→ _saturation/检测一致。
         只取主基锚点 NODE_RADIUS 内的；base_pos=None 不过滤。
         """
         if gas:
+            names = self._gas_building_names()
             ref = [u for u in gs.units
-                   if u.owner is Owner.SELF and u.type_name == "REFINERY"
+                   if u.owner is Owner.SELF and u.type_name in names
                    and u.build_progress >= 1.0]
         else:
             ref = [u for u in gs.resources if u.type_name.startswith("MINERALFIELD")]
