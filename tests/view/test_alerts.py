@@ -259,6 +259,23 @@ def test_enemy_contact_escalates_by_window_stats():
     assert "@ (50,50)" in contact[0].text_zh        # 最后出现位置如实带上
 
 
+def test_enemy_contact_ignores_neutral_units():
+    """I25 兜底：owner=ENEMY 的岩石/矿脉（world 层漏网时）不算敌方踪迹。
+
+    事故：白名单外的岩石 alliance=3 → Owner.ENEMY，每 10s 触发一次 warn 警报，
+    把 sleep 叫醒又 observe 不到真威胁，困 Agent 空转整局。"""
+    svc = AlertService(catalog=CAT)
+    rocks = [_enemy(10 + i, name="DESTRUCTIBLEROCKTALL4X4", x=57.0, y=62.0) for i in range(5)]
+    fired = svc.evaluate(_gs(t=100.0, units=rocks))
+    assert not [a for a in fired if a.kind == "enemy_contact"]
+    assert svc._contact == {}
+    # 真敌兵照常报；与岩石混编时只数真敌兵
+    fired = svc.evaluate(_gs(t=131.0, units=[_enemy(1), _enemy(2), _enemy(3)] + rocks))
+    contact = [a for a in fired if a.kind == "enemy_contact"]
+    assert len(contact) == 1
+    assert "见过 3 个不同敌兵" in contact[0].text_zh
+
+
 def test_active_alerts_exposes_recent_warn_plus():
     """活跃面：最近 15 游戏秒内报过的 warn+ 可查 —— sleep 轮询的唤醒数据源。"""
     svc = AlertService(catalog=CAT)
@@ -287,3 +304,28 @@ def test_queue_blocked_distinguishes_destroyed_from_unbuilt():
         hit = [a for a in fired if a.kind == "queue_blocked"][0]
         assert mark in hit.text_zh
         assert hit.payload["producer_ever_ready"] is ever
+
+
+def test_queue_blocked_destroyed_hint_checks_current_presence():
+    """I27：ever=True 只表「曾建成」；建筑**当前在场**时绝不挂「大概率被摧毁」。
+
+    事故（rec-20260825-012256）：矿不够/训练槽满的阻塞 + 兵营活着，整局报
+    「产出建筑曾建成、现在不在——大概率被摧毁」，甚至同屏自相矛盾
+    （「兵营就绪但订单已满」+「大概率被摧毁」），误导重建。"""
+    base = {"name": "main", "head_status": "阻塞",
+            "items": [{"stable_id": "terran/marine", "op": "train"}],
+            "blocked": {"reason": "production_capacity：兵营 就绪但订单已满",
+                        "since": 90.0, "frames": 10, "warned": True,
+                        "producer_ever_ready": True}}
+    svc = AlertService(catalog=CAT)
+    # 兵营在场（已建成）→ 非被摧毁
+    gs = _gs(t=100.0, units=[_unit(1, "BARRACKS")])
+    hit = [a for a in svc.evaluate(gs, production={"queues": [base]})
+           if a.kind == "queue_blocked"][0]
+    assert "非被摧毁" in hit.text_zh
+    assert "大概率被摧毁" not in hit.text_zh
+    # 兵营真没了（曾建成、现在不在）→ 被摧毁提示照常给（这条 hint 的本职）
+    svc2 = AlertService(catalog=CAT)
+    hit2 = [a for a in svc2.evaluate(_gs(t=100.0), production={"queues": [base]})
+            if a.kind == "queue_blocked"][0]
+    assert "大概率被摧毁" in hit2.text_zh

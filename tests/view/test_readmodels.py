@@ -145,11 +145,11 @@ def test_no_private_field_access_needed():
 
 @pytest.mark.parametrize(
     "count,expected",
-    [(0, "补兵中"), (1, "补兵中"), (2, "滞回区"), (3, "滞回区"), (4, "满足")],
+    [(0, "补兵中"), (1, "补兵中"), (2, "补兵中"), (3, "补兵中"), (4, "满足")],
 )
-def test_refill_state_matches_hysteresis_rule(count, expected):
-    """min=2 target=4：<2 补兵中；[2,4) 滞回区；>=4 满足。
-
+def test_refill_state_matches_growth_rule(count, expected):
+    """min=2 target=4，从未到过 target（成长期，I24）：floor=target，0-3 全是"补兵中"
+    （还在吸收，free 池空/滴入都不改状态）；到 4 满足。
     判定与 `Allocator.refresh` 同源（同一套 floor/cap/need），所以 UI 显示的状态
     不可能和引擎实际行为对不上。
     """
@@ -159,6 +159,15 @@ def test_refill_state_matches_hysteresis_rule(count, expected):
     g = eng.snapshot()["groups"][0]
     assert g["composition"]["terran/marine"]["current"] == count
     assert g["refill_state"] == expected
+
+
+def test_refill_state_hysteresis_only_after_target_reached():
+    """I24：到过 target 后的伤亡才进滞回区——2/4 时成长期="补兵中"、伤亡期="滞回区"。"""
+    eng = _engine()
+    eng.on_game_state(_gs(0, 0.0, [_marine(10 + i, float(i)) for i in range(4)]))  # 补到 4
+    eng.on_game_state(_gs(1, 1.0, [_marine(12, 2.0), _marine(13, 3.0)]))           # 伤亡到 2
+    g = eng.snapshot()["groups"][0]
+    assert g["refill_state"] == "滞回区"
 
 
 def test_group_center_and_hp_from_real_units_not_guessed():

@@ -9,7 +9,7 @@ world / projection / session 是纯函数（B0）；flow / production / ops 读�
 """
 from __future__ import annotations
 
-from game.catalog import Catalog
+from game.catalog import Catalog, neutral_kind
 from game.operation import OP_CATALOG
 from game.state import GameState, Owner, Unit
 
@@ -226,21 +226,10 @@ def _unknown_stable_id(raw: str) -> str:
     前端从 catalog.entries 查到中文名而非显示"未知"。
     真正无法识别的类型才打 `unknown/` 前缀（红线 C1：动态帧不出现 burnysc2 名）。
     """
-    name = raw.lower()
-    # 中立资源/建筑（按名称模式归一，覆盖 catalog 变体表没穷举的子类型）
-    if "mineral" in name:
-        return "neutral/mineralfield"
-    if "geyser" in name:
-        return "neutral/vespenegeyser"
-    if "xelnagatower" in name:
-        return "neutral/xelnagatower"
-    # 可破坏障碍物（岩石/残骸/斜坡/墙/门/冰/可崩塌塔子类型 → 通用"障碍物"）
-    if any(kw in name for kw in (
-        "destructible", "debris", "ramp", "collapsible",
-        "blocker", "barrier", "unbuildable", "sandbag", "rockcover",
-    )):
-        return "neutral/destructible"
-    return "unknown/" + name
+    kind = neutral_kind(raw)  # 关键词表单一事实源（game.catalog，I25；world.adapter 同源）
+    if kind is not None:
+        return f"neutral/{kind}"
+    return "unknown/" + raw.lower()
 
 
 def _form_of(raw: str, main: str) -> str | None:

@@ -257,3 +257,40 @@ def load_all() -> Catalog:
     for race in KNOWN_RACES:
         _load_race(cat, race)
     return cat
+
+
+# ---------------- 中立物名称分类（ISSUES I25 单一事实源） ----------------
+
+#: 中立物 type 名关键词 → stable_id 尾段（小写匹配、子串即可）。
+#: 按模式判、不枚举 type 名白名单：SC2 可破坏障碍物每张图自带几十种子类型
+#: （DESTRUCTIBLEROCK*/DEBRIS*/RAMP*/COLLAPSIBLE*/...），白名单永远漏。
+_NEUTRAL_KIND_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("mineral", "mineralfield"),
+    ("geyser", "vespenegeyser"),
+    ("xelnagatower", "xelnagatower"),
+    # 可破坏障碍物（岩石/残骸/斜坡/墙/门/可崩塌塔子类型 → 通用"障碍物"）
+    ("destructible", "destructible"),
+    ("debris", "destructible"),
+    ("ramp", "destructible"),
+    ("collapsible", "destructible"),
+    ("blocker", "destructible"),
+    ("barrier", "destructible"),
+    ("unbuildable", "destructible"),
+    ("sandbag", "destructible"),
+    ("rockcover", "destructible"),
+)
+
+
+def neutral_kind(type_name: str) -> str | None:
+    """type 名 → 中立物类别（neutral/<kind> 的尾段）；None = 不是中立物。
+
+    单一事实源（ISSUES I25）：world.adapter（把中立物过滤进 resources、不当 ENEMY）
+    与 view.adapt（归一 stable_id）共用这一份关键词表。此前 view 有关键词、world 是
+    12 个 type 的白名单，岩石子类型只在 view 认得、world 把它按 alliance=3 归成
+    Owner.ENEMY —— 正是"敌方踪迹……最后出现 障碍物"假警报的根因。
+    """
+    name = str(type_name).lower()
+    for kw, kind in _NEUTRAL_KIND_PATTERNS:
+        if kw in name:
+            return kind
+    return None

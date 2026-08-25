@@ -2,8 +2,9 @@
 
 职责（docs/contract/需求文档-v0.1.md §1；docs/contract/P0-影响边界.md D1）：
 - 字段对齐：health→hp、health_max→hp_max、alliance+type→Owner 枚举、orders adapt。
-- 按 TYPE 判 neutral：矿脉/气井/装饰物（alliance=3 但非 enemy）过滤出 GameState.units
-  （flow 的 enemy_count_near 不会误数矿脉；见 docs/reference/driver_spike.md alliance 二义）。
+- 按名称模式判 neutral：矿脉/气井/岩石/装饰物（alliance=3 但非 enemy）过滤出
+  GameState.units（flow 的 enemy_count_near 不会误数矿脉；关键词表单一事实源在
+  game.catalog.neutral_kind，I25；见 docs/reference/driver_spike.md alliance 二义）。
 - V1 no-op：position/creep/visibility/map_size 透传（spike 已证左下原点 + dims 对齐）。
 - 稳定 type_name / ability 映射留 catalog（V1 透传 burnysc2 名）。
 - 规则层（power/addon via mechanics.LayerComputer）D11 后加（届时 adapt 需注入 mechanics）。
@@ -11,19 +12,20 @@
 from __future__ import annotations
 
 from game import GameState, Order, Owner, RawGameState, RawOrder, RawUnit, Unit
+from game.catalog import neutral_kind
 
-# 中性资源/装饰物类型（按 type 名判，过滤出 GameState.units；可扩）
-NEUTRAL_TYPES: frozenset[str] = frozenset({
-    "MINERALFIELD", "MINERALFIELD750", "MINERALFIELD1000", "MINERALFIELD1500",
-    "VESPENEGEYSER", "RICHVESPENEGEYSER", "SPACEPLATFORMGEYSER",
-    # doodads / destructibles（示例）
-    "DESTRUCTIBLEROCK6X6", "DESTRUCTIBLEROCK4X4", "DESTRUCTIBLERAMPDIAGONAL",
-    "XELNAGATOWER", "FORCEFIELD",
-})
+#: 模式判不了的非资源中立物（法术效果等），显式补（I25）
+_EXTRA_NEUTRAL_TYPES: frozenset[str] = frozenset({"FORCEFIELD"})
 
 
 def is_neutral_resource(type_name: str) -> bool:
-    return type_name in NEUTRAL_TYPES
+    """按名称模式判中立物（单一事实源 `game.catalog.neutral_kind`；I25 根治）。
+
+    旧实现是 12 个 type 名的硬编码白名单——SC2 可破坏障碍物每张图自带几十种子类型，
+    白名单外的岩石 alliance=3 被归成 Owner.ENEMY，是"假敌方警报困 Agent 空转"的根因
+    （ISSUES I25）。矿脉/气井/瞭望塔/岩石/残骸等一律按关键词归中性。
+    """
+    return str(type_name).upper() in _EXTRA_NEUTRAL_TYPES or neutral_kind(type_name) is not None
 
 
 def _alliance_to_owner(alliance: int) -> Owner:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from game.catalog import Catalog
+from game.catalog import Catalog, neutral_kind
 from game.state import GameState, Owner
 
 from view.schema import AlertView
@@ -108,6 +108,11 @@ class AlertService:
         for u in gs.units:
             if u.owner is not Owner.ENEMY:
                 continue
+            if neutral_kind(u.type_name) is not None:
+                # I25 兜底：中性物（岩石/矿脉/装饰）不算敌方踪迹——根治在 world.adapter
+                # （按名称模式归 NEUTRAL/resources），这里双保险，防 sim/旧路径漏网。
+                # 同款排除见 recap.py 的 stable_id neutral/ 前缀过滤。
+                continue
             seen_now += 1
             self._contact[u.tag] = (now, u.type_name, (float(u.position.x), float(u.position.y)))
         # 窗外记忆淘汰（滚动窗）
@@ -173,13 +178,19 @@ class AlertService:
                 # warned = 后端判定已超 STALL_WARN_SECS → 升级为 error（阈值判断在后端，不在前端）
                 severity = "error" if blocked["warned"] else "warn"
             # E 批（2026-08-24，只告警不动作）：区分「产出建筑被摧毁」与「还没建」——
-            # 曾建成过才消失 = 大概率被毁（重排/重建）；从没建过 = 建造被卡/掉单
+            # I27（2026-08-25）：ever 只表「曾建成」（累计集，只增不减），必须与**当前帧**
+            # 对账才能挂「被摧毁」——事故：矿不够/训练槽满的阻塞也挂「大概率被摧毁」，
+            # 兵营活着被整局报毁，误导 Agent/人去重建（rec-20260825-012256 自相矛盾文案）。
             ever = blocked.get("producer_ever_ready")
             hint = ""
-            if ever is True:
-                hint = "；产出建筑曾建成、现在不在 —— 大概率被摧毁：重排队首或重建"
-            elif ever is False:
-                hint = "；产出建筑从没建成过 —— 检查建造项是否被卡/掉单"
+            if ever is not None:
+                alive = self._producer_alive(gs, head)
+                if alive:
+                    hint = "；产出建筑在场，等矿/等训练槽位（非被摧毁）"
+                elif ever is True:
+                    hint = "；产出建筑曾建成、现在不在 —— 大概率被摧毁：重排队首或重建"
+                else:
+                    hint = "；产出建筑从没建成过 —— 检查建造项是否被卡/掉单"
             who = f"uid={blocked.get('uid')} " if blocked.get("uid") else ""
             out.append(AlertView(
                 id=f"queue_blocked/{q['name']}",
@@ -194,6 +205,29 @@ class AlertService:
                          "producer_ever_ready": ever, "uid": blocked.get("uid")},
             ))
         return out
+
+    def _producer_alive(self, gs: GameState, head: dict | None) -> bool | None:
+        """I27：阻塞项的产出/前置建筑**当前帧**是否在场（alive 且已建成）。
+
+        `producer_ever_ready` 来自 runtime 的累计集（只增不减），语义是「曾建成」；
+        不与当前帧对账，「矿不够/训练槽满」这类建筑明明在场的阻塞也会被挂上
+        「大概率被摧毁」（真机整局误报）。返回 None = 无关项（与 ever 的 None 对齐）。
+        """
+        if not head or not head.get("stable_id"):
+            return None
+        entry = self.catalog.by_stable_id(head["stable_id"])
+        if entry is None:
+            return None
+        want: set[str] = set()
+        if head.get("op") == "train" and entry.produced_by:
+            want.add(entry.produced_by)
+        elif head.get("op") == "build":
+            want.update(entry.prerequisites or ())
+        if not want:
+            return None
+        names = {n for n in (self.catalog.burnysc2_name_for(sid) for sid in want) if n}
+        return any(u.owner is Owner.SELF and u.type_name in names
+                   and u.build_progress >= 1.0 for u in gs.units)
 
     def _skipped_alerts(self, gs: GameState, q: dict) -> list[AlertView]:
         """skipped 项（ADR-0032 账本）：prereq_missing 家族（D1②③）+ placement_collision。

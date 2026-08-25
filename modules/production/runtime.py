@@ -104,7 +104,7 @@ class ProductionRuntime(BuildFlightsMixin):
         # 一旦发出去（帧/提案/agent 上下文里）就永远不复用
         self._uid_next: dict[str, int] = {}
         # 曾建成过的建筑类型 stable_id（E 批 2026-08-24）：判定「曾被摧毁 vs 从没建过」
-        self._ever_ready: set[str] = set()
+        self._ever_built: set[str] = set()  # 曾建成的 stable_id（累计只增不减；I27 改名自 _ever_ready——语义是「曾建成」非「现在就绪」，当前在场由警报层对账）
         # 在训记账（G3，rev 17）：emit 训练单时记开始时刻 —— SC2 订单不带进度，
         # 复盘截断线左侧的"训练中部分条"全靠这本账 + catalog build_time
         self._trainings: list[dict] = []
@@ -337,10 +337,11 @@ class ProductionRuntime(BuildFlightsMixin):
         return self._item_ever_ready(rec.get("item"))
 
     def _item_ever_ready(self, item: QueueItem | None) -> bool | None:
-        """skipped/阻塞项相关建筑「曾建成过」——True=曾有现无（被摧毁），False=从没建过。
+        """skipped/阻塞项相关建筑「曾建成过吗」（累计语义，**不含**当前是否在场——
+        I27：当前在场由警报层与帧对账，这里只回答历史）。
 
         train 看产出建筑；build 看前置里有没有曾建成的（科技建筑被打掉的情形③）。
-        无关类型（两者都没有）→ None。
+        无关类型（两者都没有）→ None。payload 键名 `producer_ever_ready` 是契约，不改。
         """
         if item is None or item.type is None:
             return None
@@ -354,7 +355,7 @@ class ProductionRuntime(BuildFlightsMixin):
             ever.update(entry.prerequisites)
         if not ever:
             return None
-        return any(sid in self._ever_ready for sid in ever)
+        return any(sid in self._ever_built for sid in ever)
 
     def snapshot(self) -> dict:
         """生产运行时的显式只读快照（供 view / agent / 复盘录制）。
@@ -461,7 +462,7 @@ class ProductionRuntime(BuildFlightsMixin):
                 entry = self._catalog.by_burnysc2_name(
                     self._catalog.normalize_burnysc2_name(u.type_name.upper()))
                 if entry is not None:
-                    self._ever_ready.add(entry.stable_id)
+                    self._ever_built.add(entry.stable_id)
                     ready.add(entry.stable_id)
         self._frame_ready_types = frozenset(ready)
         # G3：在训记账的淘汰 —— 产出建筑没了 = 完成/被取消；订单空**且已超训练时长**
@@ -533,7 +534,9 @@ class ProductionRuntime(BuildFlightsMixin):
         if flights:
             still_pending = []
             for flight in flights:
-                if flight.get("builder") is not None:
+                if flight.get("builder") is not None or flight.get("entity_tag") is not None:
+                    # builder 在 → 正常确认；entity_tag 在（I26 收编）→ 走锁实体的进度
+                    # 判定路径，别进重试（重发 = 又一座真建筑）
                     outcome = self._confirm_build(flight, gs)
                     if outcome == "waiting":
                         still_pending.append(flight)
@@ -720,6 +723,7 @@ class ProductionRuntime(BuildFlightsMixin):
             "attempted": {slot_name} if slot_name else set(),
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_reported(entry, pos),  # 实体应出现的报告位置（位置匹配确认）
+            "emitted_pos": [self._expected_reported(entry, pos)],  # I26：历次发射位（晚到实体收编判据）
             "radius": 1.5,
         }
         self._charge(head.type)  # P3：入账（同帧后续项/其他队列都看得见）

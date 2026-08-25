@@ -8,6 +8,8 @@
 ---
 
 ## I24 Group 补员滞回 floor：单兵营慢出兵时 group 永远涨不到 target，新兵不自动入组（用户 2026-08-25 立项）
+> **已修复（2026-08-25，方案 1 落地，测试锁定；待真机复验）**：`GroupState.reached_target` 区分成长期/伤亡期，floor 判定收敛 `_effective_floor` 单点（refresh/snapshot 同源）。成长期不受 min 截断（兵一个一个来也一路吸到 target）；到过 target 后伤亡才用 min 滞回（S3 原意保留）。observe 的 refill_state 成长期如实显示「补兵中」。方案 2（min 语义护栏）由新语义自然消解——min 语义现在只在伤亡期生效；方案 3（set_rally）仍在清单 #18。
+
 
 > 2026-08-25 代码核对：**未动工**；下述点位与当前代码一致。
 
@@ -59,6 +61,8 @@ hold → Agent 一直「等兵」但等不到。observe 段的 `refill_state` �
 且 free 池有同型空闲单位 → 警报」（让 Agent 看见这个坑）。
 
 ## I25 假敌方警报：可破坏岩石被当敌方，困 Agent 于空转死循环（用户 2026-08-25 立项）
+> **已修复（2026-08-25，方案 1+2 同批落地；待真机复验）**：关键词分类器下沉 `game.catalog.neutral_kind()`（单一事实源，原 view/adapt 的模式表）——world/adapter 按模式归中性（白名单退役，只留 FORCEFIELD 显式补），岩石不再以 Owner.ENEMY 进 units；alerts `_contact_alerts` 加同源排除兜底（双保险）。
+
 
 > 2026-08-25 代码核对：**未动工**；下述点位与当前代码一致。
 
@@ -99,9 +103,43 @@ hold → Agent 一直「等兵」但等不到。observe 段的 `refill_state` �
 （可观测性）同源——「看见的」是错的，比「看不见」更坑。
 
 ## I26 补给站反复建造：build flight 假失败重发不查既有实体，吃光矿饿死机枪兵（用户 2026-08-25 立项）
+> **已修复（2026-08-25，方案 1+2 合一落地；待真机复验）**：flight 记 `emitted_pos`（历次发射位），新增 `_claim_new_entity`——「新于基线 + 无主 + 落在本 flight 发过的位置」三判据收编晚到实体（confirm 与三条 retry 路径共用）；drain 对已锁定实体的 flight 走确认不走重试。full_flow「不认没发过位置上的实体」教训保留为判据 3（测试锁死）。方案 3（flight 事件流）归 I17 家族仍开放。
+
 
 > 2026-08-25 代码核对：**未动工**；下述点位与当前代码一致（`_retry_build` 无 pre-emit
 > 查实体 guard；`_confirm_build` 90 帧判据原样）。
+
+> **2026-08-25 复验（trace `2026-08-25T093323_e5c71d81` + 录像 `rec-20260825-093336`）
+> 发现残留缺口**：方案 1+2 堵住了「重发造重复建筑」，但 **flight 被丢 → 队列项被提前标
+> COMPLETED** 这条仍开。本轮现象：兵营 BUILD 项 q04 被判 `prereq_missing` 跳过（并非
+> 重造多座兵营，而是**前置 depot 在建期间对 ExecView 不可见**），连带 q07/q10/q11 机枪兵
+> 级联跳过，直到 agent 手动重提 q09 兵营 + q12 机枪兵才出兵。
+>
+> 链路：depot 实体若未被 `_claim_new_entity` 锁定（位置不匹配 `emitted_pos`），`_confirm_build`
+> 落到 builder 路径（`flights.py:131-158`），90 帧无 build_order / builder 丢失 → 返回
+> `"failed"`；`_drain` Phase 1（`runtime.py:545-547`）release 后留 still_pending 重试，
+> `_retry_build`（`flights.py:175-186`）若候选耗尽返回 False → **flight 不入 still_pending
+> 而被丢弃**。紧接着 `_sweep_completions`（`runtime.py:330-331`）看到 depot 项 IN_PROGRESS
+> 且 `id(it) not in flight_items` → **直接 `_finish_item` 标 COMPLETED，完全不查
+> `build_progress`**（docstring `:317-318` 假设「flight 移除 = 实体完工」，但 flight 会因
+> 假 failed 被丢、实体还在建 → 假设破裂）。于是 depot 三处全无（不在 `ready_types`
+> [没建成]、不在 `inflight_types` [flight 丢了]、不在 `queued_types` [项已 COMPLETED]），
+> 兵营 `_prereq_verdict`（`semantics.py:97-110`）判缺前置 → SKIP。skip 是终态（ADR-0032），
+> depot 物理建成后也不复活。
+>
+> 注意：runtime 的前置判定**不读** observe 的 `buildings` JSON（`view/observe.py:_count_buildings`
+> `:342-343` 按 `build_progress<1` 排除在建建筑，是独立的显示口径问题，不是跳过根因——
+> 本轮 agent 自诊误把显示字段当根因，见 `memory/sc2-agent-self-diagnosis-rationalizes`）。
+>
+> **录像直证（`frame/production.in_flight` 逐帧）**：q02 depot flight 在 gt=100（frames=31）
+> 至 gt=110（frames=87）全程 `builder=None`、`entity=None`（`_claim_new_entity` 未锁到实体，
+> 落 builder 路径），gt=115 **in_flight 由 1→0**——flight 在 ~90 帧超时被丢，此刻 depot
+> 远未建成。flight 一丢，`_sweep_completions` 即把 q02 项标 COMPLETED（不查 build_progress），
+> depot 自此对 ExecView 三处全无，兵营 q04 随即 skip。链路从推理升级为逐帧实锤。
+>
+> **补丁方向**：`_sweep_completions`（`runtime.py:330-331`）标 BUILD 项 COMPLETED 前加一道
+> `build_progress` 对账——flight 缺席时去 `gs.units` 核对该 type 实体是否真有 `>=1.0` 的；
+> 没有就保留 IN_PROGRESS（不假完成）。属 I26 方案 3（flight 事件流）的轻量子集，或单列。
 
 **现状**（同一局 + trace 核对）：计划只要 2 个补给站（`runtime/plans/simple-test.yaml`
 queue 只有 2 个 `build supplydepot count:1`；Agent turn_26 的 propose 也只提交 2 个），
@@ -137,6 +175,8 @@ queue 只有 2 个 `build supplydepot count:1`；Agent turn_26 的 propose 也�
 方案 3 归 trace/可观测性（I17 家族）——是这次诊断「机制命名级、非逐帧实锤」的根因。
 
 ## I27 「大概率被摧毁」误报：_ever_ready 只增不减，把「曾建成」当「现在被毁」（用户 2026-08-25 立项）
+> **已修复（2026-08-25，方案 1+2+3 全落地；待真机复验）**：alerts 新增 `_producer_alive`（当前帧对账）——建筑在场时无论 ever 与 reason 一律不挂「被摧毁」，改报「在场，等矿/等训练槽位」；真消失才报。runtime `_ever_ready` 改名 `_ever_built`（语义=曾建成；payload 键 `producer_ever_ready` 是契约不动）。
+
 
 > 2026-08-25 代码核对：**未动工**；`_ever_ready` 仍只有 `:464` 一个 `.add()` 突变点，
 > hint 仍纯按 `ever` 挂、不与 block reason 对账。
@@ -327,6 +367,110 @@ agent 发消息时就该自动知道上下文：正在哪个页面（规划地�
 
 ---
 
+## I28 建造完工的 SCV 不回采矿：维持器目标已满不派空闲工，建造工被 SC2 清单后不 auto-gather（用户 2026-08-25 立项）
+
+> **2026-08-25 已定位（trace `2026-08-25T093323` + 录像 `rec-20260825-093336`，未动工）**：
+> 录像逐帧坐实——barracks 建造工（tag 4339269633）完工（gt=191, bp=1.0）后，SC2 在
+> 191→195 之间把 build 单清成 `order=None`，但该 SCV **不会 auto-gather**（不像从 CC
+> 新训出的 SCV 会自动采矿），原地 [126.5,110.2] 发呆到 gt=230+。`frame/economy` gt=200：
+> `mineral {quota:8,target:8,actual:13}` + `idle {actual:1}` + 多个矿脉 workers<cap（未饱和）。
+
+**现状**：开局 `start_session` 设 `mineral_workers=8` 全程未提；采矿目标硬卡 8。真机里
+新训 SCV 从 CC 出来 auto-gather 自然入矿（actual 涨到 13，超目标），但**完工释放的建造工
+不会 auto-gather**。维持器两条设计合谋把它晾着：
+
+- `_targets`（`economy.py:319,323`）：`m_target = min(m_want=8, m_cap, m_room)` → 目标 8。
+- `_plan`（`economy.py:349-394`）：Step1 只 keep 8 个在矿上、Step2 `need=m_target-kept=0`
+  不再派 → 空闲建造工 `plan[tag]=None`（保持空闲，:393-394 setdefault）；且 Step3 对超额矿工
+  「不主动 stop」（:392 注释）→ 形成**「矿超员(13>8) + 同时有空闲工(1) + 矿脉有空位」
+  的退化态**：既不把空闲工派去空矿脉、也不把超员工拉下矿。
+
+- `_release_flight`（`runtime.py:834-838`）只 `reservations.release(owner)` 解除征用，
+  **不主动下令回矿**——靠维持器接管，而维持器因目标已满不接管。
+
+**影响**：每造完一座建筑就少一个采矿工且不恢复；多建筑后采矿人力持续流失，收入曲线
+比预期低。与 I26 同一局暴露，但根因独立（I26 是 flight 假丢→假完成，I28 是维持器目标
+封顶 + 建造工不 auto-gather）。
+
+**候选方案**：
+1. **维持器把绝对目标当地板而非硬上限**（正解，中难）——`_plan` Step2 之后补一轮：
+   仍有 `cur=None` 且非 foreign 的空闲工、且矿脉 `room>0`（未饱和）时，派去填容量
+   （不超过 m_cap），不再因 `m_want` 已满而停手。直接让建造工回矿。
+2. **`_release_flight` 主动回矿**（低难，与 1 互补）——释放征用时同步给该 SCV 发一条
+   gather/return 指令（`Emission`），不等维持器。代价：与维持器双路由，要错峰或标位防顶单。
+3. **目标随工人数自适应**（策略面）——`mineral_workers` 不写死 8，按 `总工 - gas - 在建 -
+   reserve` 派生，或 agent 在出工高峰期重提 `assign_workers` 提高配额。属 [[sc2-planner-direction]]
+   的经济校准范畴。
+
+**建议归属**：方案 1 是正解，落 `production/economy.py:_plan`（中难，要加测试锁「空闲工+
+空矿脉→必派」）。方案 2 并行兜底。方案 3 归 planner/策略。与 I26 区分：I26 修队列项假完成，
+I28 修维持器不派空闲工。
+
+---
+
+## I29 规划页「文件与试算」侧栏概念混乱+拥挤：规划文件与从模板落地应合并成一个「新建」入口（用户 2026-08-25 立项，先挂账不改）
+
+> **2026-08-25 已定位（查 `QueueSidebar.tsx` + `api/plans.ts` + `api/routes/plans.py`，未动工）**：
+> 用户反馈右侧「文件与试算」卡里框太多、显杂；核心困惑是「规划文件」节和「从模板落地」像重复。
+
+**两者本不是一回事**（查实后端来源）：
+- **规划文件** = `runtime/plans/<id>.yaml` 磁盘文件（`PlanStore`）。操作 列表/打开/保存/复制新建/空白新建/删除。
+  它的下拉框 = 选「**已存在的规划文件**」来编辑。性质 = 可编辑工作副本（文件是真相源，人+agent 改同一份）。
+- **从模板落地** = `MODULE_REGISTRY`（`planner/build_order.py` 代码定义的内置战术模板，如 `bio_tank_opening`，
+  **只读**、唯一真相源）。操作 模块清单(只读) + 落地 = 调模块函数生成队列 → **写一份新 plan YAML**（`plans_from_module`
+  最终走 `plans.create`）。它的下拉框 = 选「**内置模板**」来实例化成新规划文件。
+
+**为什么像重复**（根因）：
+1. 两个下拉框并排（文件清单 + 模块清单），都「从列表选一个、产出一个规划」——看着像平行功能，其实一个是
+   选已有文件改、一个是用模板生新文件。
+2. 「新建规划」实际有**三个动作散落**：复制新建（复制当前→新文件）、空白新建（空→新文件）、从模板落地（模块→新文件）。
+   三者同是「新建一份规划文件」只是来源不同，却拆成 3 个按钮/下拉 → 显得是两套。
+3. **落地后的模块就是份普通规划文件**（open/save/改/删全走规划文件那套），所以模块下拉只在「生新文件」那一刻
+   有意义，平时不该和文件下拉并排常驻。
+
+**拥挤的另一面**：`QueueSidebar` 把 4 节塞进 1/3 宽窄列——规划文件 / 放置引用 / 成本与试算 / 前瞻警报，
+含 3 个下拉框（文件/模块/放置引用）+ 5 按钮（保存/复制新建/空白新建/从模板落地/删除）+ 成本 + 视野输入 + 试算按钮。
+高频的「选文件→改队列→保存→试算」和低频的空白/从模板/删除平铺，故显杂。
+
+**候选方案**：
+1. **合并「新建」入口**（正解，中难）——三个新建动作收成一个「新建规划」，带来源选择
+   （空白 / 复制当前 / 从模板[选这时才出模块下拉]）。两个并排下拉消失，模块下拉折进来源选择。
+   配套：空白新建/从模板/删除这些低频项收进「更多」折叠，日常只留 文件下拉+保存。
+2. **「文件」与「试算」物理分离**（并行）——试算按钮/视野秒/前瞻警报移到下方「试算投影」卡头部（触发紧贴结果），
+   侧栏纯「文件」（规划文件+放置引用）。贴合用户心智「文件」与「试算」本就是两件事；与 I30 自动试算配合更顺。
+3. **侧栏内分「文件/试算」两 tab**（低难兜底）——不动位置，顶部 tab 切换降竖向密度，代价是切 tab。
+
+**建议归属**：方案 1 是正解（解决概念混乱），落 `web/src/panels/QueueSidebar.tsx` + `queue-store.ts`
+（`create`/`createFromModule` 可合成一个带 `source` 的 `create(source, payload)`）。方案 2 与 I30 同批做最顺。
+等用户定布局方向再动（见 [[sc2-planning-redesign-direction]] 前端编辑四修后续）。
+
+---
+
+## I30 试算不自动：改队列后应防抖自动重算，现仅手动 + 开/存时跑对照版（用户 2026-08-25 立项，先挂账不改）
+
+> **2026-08-25 已定位（查 `queue-store.ts`，未动工）**：用户反馈改完队列不自动试算，要手点。
+
+**现状**（`web/src/planning/queue-store.ts`）：
+- `open(id)`（:122）：打开规划时自动跑一次 `baseSim`（**已保存文件**的干跑，做对照）。
+- `save()`（:140）：保存后再跑一次 `baseSim`。
+- `simulate()`（:232）：**纯手动**，按钮触发（`QueueSidebar:132-137`），跑的是**草稿**干跑 `sim`。
+- `update()`/`setItems()`（:252-257）：改队列只置 `dirty=true`，**不触发任何试算**。
+
+→ 改队列后投影卡停留在旧结果（顶部标「未保存草稿」），用户得手点「试算」。`baseSim` 那次自动只在开/存时跑，
+且跑的是文件版不是草稿版。
+
+**候选方案**：
+1. **改队列后防抖自动重算**（正解，低-中难）——`update`/`setItems` 后挂 ~400-600ms 防抖自动调 `simulate()`；
+   空队列跳过（置 `sim:null`）、`busy` 时跳过（不并发）、出错只落 `msg` 不阻断编辑。跑的是草稿 `sim`（与现手动同）。
+   实现：queue-store 加一个 `scheduleAutoSim()`（`setTimeout` + 存 token 防重叠），`update`/`setItems`/`patch`
+   （改 horizon 也该触发）末尾调；`open`/`save` 后清防抖（已自跑 baseSim）。
+2. **跑前自动保存**（否决）——草稿未存就跑仿真会让人困惑「我改的算进去了吗」；保持「跑的是当前草稿、与存不存无关」。
+
+**建议归属**：方案 1，落 `queue-store.ts`（加防抖 + 在 `update`/`setItems`/`patch`(horizon) 末尾触发）。
+与 I29 方案 2 同批做最顺（试算入口移到底部投影卡后，自动试算让手动按钮退居二线）。
+
+---
+
 ## 开放任务清单（2026-08-25 核对版；处理一条关一条）
 
 > 2026-08-25 对代码与 WORKLOG 全面核对后重排（原清单 24 条 → 现 18 条开放；关闭/失效条目
@@ -335,31 +479,33 @@ agent 发消息时就该自动知道上下文：正在哪个页面（规划地�
 
 **P0（本局真机三报，2026-08-25 立项）**
 
-1. **I24 group 补员滞回 floor**——单兵营慢出兵时 group 卡在 min 永远涨不到 target，
+1. **I24 group 补员滞回 floor——已修复（2026-08-25 待真机复验）**单兵营慢出兵时 group 卡在 min 永远涨不到 target，
    新兵不入组 → 策略死锁 hold、Agent 一直「等兵」等不到；详见 I24 节。
-2. **I25 假敌方警报**——`NEUTRAL_TYPES` 白名单太窄 + `alerts._contact_alerts` 无
+2. **I25 假敌方警报——已修复（2026-08-25 待真机复验）**`NEUTRAL_TYPES` 白名单太窄 + `alerts._contact_alerts` 无
    neutral/ 排除 → 岩石算敌方、warn 叫醒 sleep，困 Agent 于 sleep-observe 空转整局；
    详见 I25 节。
-3. **I26 补给站反复建造**——`_confirm_build` 假失败 → `_retry_build` 重发不查既有
+3. **I26 补给站反复建造——已修复（2026-08-25 待真机复验）**`_confirm_build` 假失败 → `_retry_build` 重发不查既有
    实体，q02 把 9 个槽位各发一座真补给站，吃光矿饿死机枪兵；详见 I26 节。
 
 **P1**
 
-4. **I27「大概率被摧毁」误报**——`_ever_ready` 只增不减 + hint 不与 block reason
+4. **I27「大概率被摧毁」误报——已修复（2026-08-25 待真机复验）**`_ever_ready` 只增不减 + hint 不与 block reason
    对账 → 兵营活着也报被毁，误导重建；详见 I27 节。与 I17 同轮收。
 5. **I23 策略面缺口**——术语 flow→策略清扫 + 装配可视化 + 编写向导（原#3「策略
    编辑 UI（人用）」已并入 C 项）；详见 I23 节。
 6. **I21 用户视窗上下文自动注入**——发消息时带 ui_context：页面/规划/地图/视窗/
    悬停（用户不想重复交代正在看什么）；详见 I21 节。
 7. **event_occurred / has_ready_base / user_cancel 谓词（I12-B1 剩余）（原#2）**——
-   依赖：引擎事件流（GameEvent 目录 D7）/ 三族 town hall 目录 / 用户接管通道。
-   设计决策未做（事件从哪来：driver events vs 世界推导）。
+   **事件源已拍板（2026-08-25）：世界推导**——从帧差/现有警报派生结构化事件（建筑被毁/
+   单位伤亡/敌方接触/用户取消队列项），不走 driver 原始 events（driver 无关、sim/live/
+   回放同源）；has_ready_base 从 catalog 三族 town hall 判 built≥1 落地。
    （2026-08-25 核对：`predicates.py:68-72` 仍 3 条未实现；timer/locals 写侧已全通。）
 8. **对局可观测性深度（I17 剩余）（原#12）**——警报加 `remediation_zh`（"怎么修"）+
    采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）+
    装配缺口时序化/live 化。子项 5（observe 在建项映射）已落地关闭。1/2 低难可插队先做。
-9. **modules/ 代码债剩余（I15）（原#11）**——P0 bug 批与 god files（G1-G3）已清；
-   剩：B6（planner 仍 Terran-only）+ B7（命令返回 shape 不一致）+ 死代码清理 + 去重
+9. **modules/ 代码债剩余（I15）（原#11）**——P0 bug 批与 god files（G1-G3）已清，B7
+   （命令 shape）§0.41 已修；剩：B6（planner 仍 Terran-only，**路线已拍板 2026-08-25：
+   catalog capabilities 推导**，投影真支持三族）+ 死代码清理 + 去重
    （详见 [`REFACTOR.md`](REFACTOR.md)）。
 10. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
     improvement-notes + agent/seeds + 提示词整改）；剩余：几局后校验 agent 是否真读真写、
@@ -375,16 +521,18 @@ agent 发消息时就该自动知道上下文：正在哪个页面（规划地�
 12. **开局工人口径：真机 8 工 vs 种子 12 工（原#17）**——真机录像首帧 8 工/13 cap，
     种子（planner.opening / worldsim.bootstrap / session 默认）仍全 12 工（2026-08-25
     核对确认）。供给值已单源修正为 13；工人数是另一处 sim/真机偏差：干跑经济曲线比真机
-    乐观。需拍板：种子改 8 对齐本机，还是先确认真机地图/模式是否非标准开局（改动波及
-    全部干跑数字与夹具，宜单独一批）。
+    乐观。**已拍板（2026-08-25）：先查 8 工根因**——12 工是标准 melee 口径，先确认那局
+    用的地图/模式是否非标准开局，再决定改种子还是改测试环境（直接改种子会波及全部干跑
+    数字与夹具，且可能把干跑永久校到一张非标准图上）。
 13. **槽位 placeable 后端校验收口（原#6）**——terrain.placeable 栅格进摆放校验面
     （2026-08-25 核对：仍只查不压己方建筑/在途预留，不查地形栅格）。
 14. **模块模板参数化 UI（B3 增量，原#7）**——from-module 端点已支持 params，前端
     「从模板落地」不带参数（marine_target/tank_count 调不了）。
 15. **组/槽位形状颜色标记（I4 候选 3，原#8）**——地图 chip 与策略图同词的视觉语言
     （现为纯文字同词，无按 group 的颜色/形状）。
-16. **live 投影窗口语义（原#10，需拍板）**——live 仍是 120s 窗口投影（`PROJECTION_HORIZON=120`）；
-    要不要像试算一样 until_complete？（涉及 live 帧大小）。
+16. **live 投影窗口语义（原#10）——已拍板（2026-08-25）：until_complete + 封顶**——
+    与试算同口径（`COMPLETION_CAP` 钳制）；live 队列有界，预期 horizon 不会失控，落地时
+    实测帧大小，超预期再回调。
 17. **复盘（回放源）切换加载慢（原#19，用户拍板可后排）**——换源/拖时间轴前端卡顿：
     整份 JSONL 拉取+逐行解析+全量重建。候选：分窗解析/增量渲染/录制索引。
 18. **repair / set_rally 操作（原尾注，D3 立项批 6 后排期）**——repair 不在 OP_CATALOG

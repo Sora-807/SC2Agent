@@ -79,3 +79,30 @@ def test_is_neutral_resource():
     assert is_neutral_resource("VESPENEGEYSER")
     assert not is_neutral_resource("SCV")
     assert not is_neutral_resource("ZERGLING")
+
+
+def test_is_neutral_resource_patterns_cover_unlisted_rock_subtypes():
+    """I25：按名称模式判（game.catalog.neutral_kind 单一事实源），不再枚举白名单——
+    各图自带的岩石/残骸/斜坡子类型几十种，白名单外的岩石曾被当 Owner.ENEMY
+    （假敌方警报根因）。"""
+    assert is_neutral_resource("DESTRUCTIBLEROCK6X6")
+    assert is_neutral_resource("DESTRUCTIBLEROCKTALL4X4")       # 白名单从未列过
+    assert is_neutral_resource("DESTRUCTIBLEDEBRIS6X6")
+    assert is_neutral_resource("COLLAPSIBLEROCKTALLDIAGONAL")   # 斜坡崩塌塔
+    assert is_neutral_resource("RICHMINERALFIELD")              # 富矿变体
+    assert is_neutral_resource("FORCEFIELD")                    # 法术效果（显式补）
+    # 己方/敌方单位不许误伤
+    for t in ("MARINE", "SIEGETANKSIEGED", "BANELING", "MOTHERSHIP", "SUPPLYDEPOT"):
+        assert not is_neutral_resource(t), t
+
+
+def test_unlisted_rocks_routed_to_resources_not_enemy():
+    """I25 根治验收：白名单外的岩石 alliance=3 也进 resources，不再以 ENEMY 进 units。"""
+    units = [_raw_unit(1, 1, "SCV"),
+             _raw_unit(2, 3, "DESTRUCTIBLEROCKTALL4X4", pos=(57.0, 62.0)),
+             _raw_unit(3, 3, "ZERGLING")]
+    gs = adapt(_raw(units))
+    assert {u.tag for u in gs.units} == {1, 3}          # 岩石不在 units
+    assert {u.tag for u in gs.resources} == {2}         # 岩石归资源/中立物
+    assert gs.units[0].owner is Owner.SELF
+    assert gs.units[1].owner is Owner.ENEMY             # 真敌兵照常

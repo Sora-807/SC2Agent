@@ -166,3 +166,50 @@ def test_min_zero_still_fills_empty_group():
     assert alloc.count("G1", "terran/marine") == 1
     alloc.refresh(_gs([_u(3)]))                         # 组空了 → 再补
     assert alloc.count("G1", "terran/marine") == 1
+
+
+# ---- I24 成长期/伤亡期区分（2026-08-25）----
+
+
+def test_growth_phase_absorbs_past_min_to_target():
+    """I24 根因回归：单兵营慢出兵（一次只多一个 free），group 不能一补到 min 就停。
+
+    min=2 target=8：旧代码 group 补到 2 即停止吸收（滞回 floor=2），第 3 个起新兵
+    全留 free 池、策略 `>= 8` 条件死锁。成长期 floor=target，兵一个一个来也一路吸到 8。
+    """
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"min": 2, "target": 8, "max": 20}})
+    alive: list[int] = []
+    for i in range(1, 9):
+        alive.append(i)
+        alloc.refresh(_gs([_u(t) for t in alive]))
+        assert alloc.count("G1", "terran/marine") == i, f"第 {i} 个新兵必须入组（成长期）"
+
+
+def test_hysteresis_only_after_reached_target():
+    """I24：min 滞回只对「到过 target 后的伤亡」生效——补到 8、伤亡到 [2,8) 时
+    free 池有同型闲兵也不抢（保留 S3 抗抖动原意）；跌破 2 才补回 8。"""
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"min": 2, "target": 8, "max": 20}})
+    alloc.refresh(_gs([_u(i) for i in range(1, 9)]))
+    assert alloc.count("G1", "terran/marine") == 8
+    # 伤亡到 5（[2,8) 滞回区）→ free 池有闲兵也不补
+    alloc.refresh(_gs([_u(i) for i in range(4, 9)] + [_u(20), _u(21)]))
+    assert alloc.count("G1", "terran/marine") == 5
+    # 跌破 min（剩 1）→ 补回 target
+    alloc.refresh(_gs([_u(8)] + [_u(i) for i in range(10, 20)]))
+    assert alloc.count("G1", "terran/marine") == 8
+
+
+def test_refill_state_growth_vs_hysteresis_phase():
+    """I24：同一 cur∈[min,target)，成长期显示「补兵中」（还在吸收），到过 target 后的
+    伤亡才显示「滞回区」——observe 的状态不再把「等兵等不到」误标成「设计如此」。"""
+    alloc = Allocator(CAT)
+    alloc.create_group("G1", {"terran/marine": {"min": 2, "target": 4, "max": 4}})
+    alloc.refresh(_gs([_u(1), _u(2)]))                 # 成长期 2/4：还在补
+    snap = {c["group_id"]: c for c in alloc.snapshot()}["G1"]
+    assert snap["refill_state"] == "补兵中"
+    alloc.refresh(_gs([_u(i) for i in range(1, 5)]))   # 补到 target=4 → 进入伤亡期
+    alloc.refresh(_gs([_u(3), _u(4)]))                 # 伤亡到 2/4（>= min）→ 滞回区
+    snap = {c["group_id"]: c for c in alloc.snapshot()}["G1"]
+    assert snap["refill_state"] == "滞回区"

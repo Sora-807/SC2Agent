@@ -38,6 +38,47 @@ class BuildFlightsMixin:
         return frozenset(u.tag for u in gs.units
                          if u.owner is Owner.SELF and u.type_name == name)
 
+    def _claim_new_entity(self, flight: dict, gs: GameState):
+        """I26：收编「本 flight 历次发过命令的位置上」新出现的同型实体。
+
+        事故：确认只按**当前**预期位做位置匹配，命令其实落了但实体晚到/换位重发后
+        旧位实体才出现 → 被判放置失败 → 换槽重发 → 每次重发都是一座真建筑 + 再扣
+        一次矿（计划 2 座补给站真机造出 9 座，吃光经济饿死生产链）。
+
+        判据三条缺一不可（防 full_flow「类型计数替别的项确认」回流）：
+        1. 新于本 flight 基线（seen_tags，每次发射时重置）；
+        2. 未被任何 flight 锁定（entity_tag）——并行同型建造各认各的；
+        3. 落在本 flight 历次发射位（emitted_pos）半径内——槽位/气井有在途预留，
+           别的 flight 不可能出现在这些位置上；从没发过命令的位置上的实体一律不认。
+        """
+        emitted = flight.get("emitted_pos") or []
+        if not emitted:
+            return None
+        locked = {f.get("entity_tag") for fs in self._build_flights.values() for f in fs}
+        radius2 = max(float(flight.get("radius", 1.5)), 1.5) ** 2
+        new_tags = self._type_entity_tags(gs, flight["type"]) - flight["seen_tags"]
+        cands = [
+            u for u in gs.units
+            if u.tag in new_tags and u.tag not in locked
+            and any((u.position.x - p.x) ** 2 + (u.position.y - p.y) ** 2 <= radius2
+                    for p in emitted)
+        ]
+        if not cands:
+            return None
+        cur = flight.get("expect_pos")
+        if cur is None:
+            return cands[0]
+        return min(cands, key=lambda u: (u.position.x - cur.x) ** 2 + (u.position.y - cur.y) ** 2)
+
+    def _claim_or_none(self, flight: dict, gs: GameState) -> bool:
+        """尝试收编；成功则锁定实体（builder 置空——建筑自己会盖完）并返回 True。"""
+        ent = self._claim_new_entity(flight, gs)
+        if ent is None:
+            return False
+        flight["entity_tag"] = ent.tag
+        flight["builder"] = None
+        return True
+
     def _confirm_build(self, flight: dict, gs: GameState) -> str:
         """在途建造：started（建筑**完工**）/ failed（放置失败/超时/实体消失 → 转重试）/ waiting。
 
@@ -76,6 +117,15 @@ class BuildFlightsMixin:
                 if ent.build_progress >= 1.0:
                     return "started"
                 flight["entity_tag"] = ent.tag   # 锁定 → 后续帧按进度判
+                return "waiting"
+            # I26：当前预期位没等到，但本 flight 发过的位置上有无主新实体 → 收编
+            #（命令其实落了，只是确认没赶上——收编防假失败换位重发连造真建筑）
+            ent = self._claim_new_entity(flight, gs)
+            if ent is not None:
+                if ent.build_progress >= 1.0:
+                    return "started"
+                flight["entity_tag"] = ent.tag
+                flight["builder"] = None
                 return "waiting"
             # 类型计数误报（同类型其他在途实体晚到）→ 不算，继续等本放置位实体
         name = self._catalog.burnysc2_name_for(flight["type"])
@@ -120,6 +170,10 @@ class BuildFlightsMixin:
             return self._retry_build_addon(flight, q_name, gs)
         if entry is not None and "gas" in entry.capabilities:
             return self._retry_build_gas(flight, q_name, gs)
+        # I26：重发前先查「命令其实落了」——发过的位置上有无主新实体就收编，不重发
+        #（重发 = 又一座真建筑 + 再扣一次矿；真机 q02 一路重试把 9 个槽位各发了一座）
+        if self._claim_or_none(flight, gs):
+            return True
         pos, slot_name, reason = self._resolve_placement(
             head, gs, attempted=frozenset(flight["attempted"])
         )
@@ -144,7 +198,9 @@ class BuildFlightsMixin:
         flight["frames"] = 0
         flight["seen_tags"] = self._type_entity_tags(gs, head.type)
         flight["attempted"] = set(flight["attempted"]) | {slot_name}
-        flight["expect_pos"] = self._expected_reported(entry, pos)  # 换位重发 → 换预期位置
+        expect = self._expected_reported(entry, pos)  # 换位重发 → 换预期位置
+        flight["expect_pos"] = expect
+        flight["emitted_pos"] = list(flight.get("emitted_pos") or []) + [expect]
         flight["radius"] = 1.5
         return True
 
@@ -157,6 +213,9 @@ class BuildFlightsMixin:
         返回 True = 项保留（已重发或暂缺继续等）；False = 已丢弃。
         """
         head = flight["item"]
+        # I26：重发前先收编（发过的母建筑位置上有无主挂件实体）
+        if self._claim_or_none(flight, gs):
+            return True
         if flight.get("retries", 0) >= 6:
             # ADR-0032：母建筑候选耗尽 = 执行期失败 → skipped 留账本（不摘除）
             self._mark_skip(head, Verdict(
@@ -176,7 +235,9 @@ class BuildFlightsMixin:
         flight["builder"] = parent.tag
         flight["frames"] = 0
         flight["seen_tags"] = self._type_entity_tags(gs, head.type)
-        flight["expect_pos"] = self._expected_addon_reported(parent)
+        expect = self._expected_addon_reported(parent)
+        flight["expect_pos"] = expect
+        flight["emitted_pos"] = list(flight.get("emitted_pos") or []) + [expect]
         flight["radius"] = 1.5
         return True
 
@@ -255,6 +316,7 @@ class BuildFlightsMixin:
             "attempted": set(),
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": self._expected_addon_reported(parent),  # 并行挂件也按位置确认（防互认）
+            "emitted_pos": [self._expected_addon_reported(parent)],  # I26：晚到实体收编判据
             "radius": 1.5,
         })
         return "emitted"
@@ -267,6 +329,9 @@ class BuildFlightsMixin:
         与挂件重试对称：候选集是"未试过且未被占的气井"，用 flight["attempted_geysers"] 排除。
         """
         head = flight["item"]
+        # I26：重发前先收编（发过的气井位置上有无主精炼厂实体）
+        if self._claim_or_none(flight, gs):
+            return True
         tried = frozenset(flight.get("attempted_geysers") or ())
         res = check_gas(gs, self._catalog, head.type)
         geyser = self._pick_free_geyser(gs, exclude=tried) if res.ok else None
@@ -294,6 +359,7 @@ class BuildFlightsMixin:
         flight["seen_tags"] = self._type_entity_tags(gs, head.type)
         flight["attempted_geysers"] = set(tried) | {geyser.tag}
         flight["expect_pos"] = geyser.position
+        flight["emitted_pos"] = list(flight.get("emitted_pos") or []) + [geyser.position]
         flight["radius"] = 3.0
         return True
 
@@ -362,6 +428,7 @@ class BuildFlightsMixin:
             "attempted_geysers": {geyser.tag},  # P4：重试要换井，不能重撞同一口
             "seen_tags": self._type_entity_tags(gs, head.type),
             "expect_pos": geyser.position,  # 精炼厂实体应出现在气井位置
+            "emitted_pos": [geyser.position],  # I26：晚到实体收编判据
             "radius": 3.0,
         }
         self._reserve_for_flight(flight, builder.tag)  # 气矿也是 SCV 在建，一样要征用

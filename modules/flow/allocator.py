@@ -16,16 +16,34 @@ from flow.predicates import unit_is_type
 
 
 def _refill_floor(spec: dict, target: int) -> int:
-    """补兵触发下限（S3 滞回；D6 + H2 边界）。
+    """伤亡期补兵触发下限（S3 滞回；D6 + H2 边界）。
 
     - min 省略 → 下限 = target（跌破就补，与滞回前行为一致，不给旧配置换语义）
     - min 给了 → 只有跌破 min 才补回 target（滞回：数量在 [min, target) 不补，
       避免每死一个兵就抢一次 free 池）
     - **min = 0 → 下限取 1**（H2）：字面 0 会让 "len(cur) < 0" 永假、连首次都不填，
       等于静默关掉补兵。0 的意图是"不主动维持"，语义定为"只在空组时补"。
+
+    注意这只是**伤亡期**的下限；成长期（未到过 target）见 `_effective_floor`（I24）。
     """
     floor = spec.get("min", target)
     return max(int(floor), 1)
+
+
+def _effective_floor(spec: dict, target: int, reached_target: bool) -> int:
+    """I24：成长期与伤亡期用不同的补兵下限（refill 判定唯一入口，refresh/snapshot 共用）。
+
+    - **成长期**（该类型从未到过 target）→ 下限 = target：一直从 free 池吸收到满编，
+      不被 min 提前截断。否则单兵营慢出兵时 group 一补到 min 就停止吸收、永远涨不到
+      target，策略的 `>= target` 条件死锁（ISSUES I24）。
+    - **伤亡期**（到过 target 后减员）→ 用 `_refill_floor`（min 滞回）：[min, target)
+      不补、跌破 min 才补回 target，保留"别每死一个兵就抢一次 free 池"的原意（S3）。
+
+    min 省略时两者相等（都是 target），旧配置行为不变。
+    """
+    if not reached_target:
+        return target
+    return _refill_floor(spec, target)
 
 
 #: 补兵状态取值（前端只做"字符串→颜色"映射，不复算规则）
@@ -35,7 +53,8 @@ REFILL_STATES = ("补兵中", "已截断", "滞回区", "满足")
 def _refill_state(cur: int, floor: int, target: int, cap: int) -> str:
     """与 `Allocator.refresh` 的分支一一对应，别的地方不要重写这套判断。
 
-    - `cur >= floor`：不补 → 到 target 算"满足"，否则是滞回区（死一个不立刻抢 free 池）
+    - `cur >= floor`：不补 → 到 target 算"满足"，否则是滞回区（伤亡期死一个不立刻抢
+      free 池；成长期 floor=target，这段只在到过 target 后才会出现）
     - `cur < floor`：要补 → need>0 是"补兵中"；need<=0 说明被 max 截断（target>max 的配置）
     """
     if cur >= floor:
@@ -56,6 +75,8 @@ class GroupState:
     group_id: str
     composition: dict  # stable_id -> {min, target, max}
     leased_by_type: dict = field(default_factory=dict)  # stable_id -> set[tag]
+    #: 到过 target 的类型集合（I24 成长期/伤亡期区分；group 重建时随状态一起重置）
+    reached_target: set = field(default_factory=set)  # stable_id
 
 
 class Allocator:
@@ -94,25 +115,26 @@ class Allocator:
         # 征用中的单位（正在盖房子的 SCV）不进 free 池 —— 否则战斗组会把它抢走
         # （issues P14 的结构性修法，ADR-0030 D3.3）
         free = own - leased_all - self.reserved_tags()
-        # 补兵（S3 滞回 + FCFS：按 gs.units 顺序取前 N 个 free）
+        # 补兵（S3 滞回 + FCFS：按 gs.units 顺序取前 N 个 free；I24 成长期不受 min 截断）
         for g in self._groups.values():
             for stable_id, spec in g.composition.items():
                 cur = g.leased_by_type.setdefault(stable_id, set())
                 target = spec.get("target", spec.get("max", 0))
                 cap = spec.get("max", target)
-                floor = _refill_floor(spec, target)
-                if len(cur) >= floor:
-                    continue  # 滞回区间 [floor, target)：死一个不立刻抢 free 池
-                need = min(target, cap) - len(cur)
-                if need <= 0:
-                    continue
-                # 单侧归一：架起后实体名变 SIEGETANKSIEGED，仍匹配 terran/siegetank（T3 语义不变）
-                cands = [u.tag for u in gs.units
-                         if u.owner == Owner.SELF and u.tag in free
-                         and unit_is_type(self._catalog, u.type_name, stable_id)]
-                take = set(cands[:need])
-                cur |= take
-                free -= take
+                floor = _effective_floor(spec, target, stable_id in g.reached_target)
+                if len(cur) < floor:
+                    need = min(target, cap) - len(cur)
+                    if need > 0:
+                        # 单侧归一：架起后实体名变 SIEGETANKSIEGED，仍匹配 terran/siegetank（T3 语义不变）
+                        cands = [u.tag for u in gs.units
+                                 if u.owner == Owner.SELF and u.tag in free
+                                 and unit_is_type(self._catalog, u.type_name, stable_id)]
+                        take = set(cands[:need])
+                        cur |= take
+                        free -= take
+                # 补满当帧即进入伤亡期（下一帧起 min 滞回才生效）；补到 min 但未满编不标记
+                if target > 0 and len(cur) >= target:
+                    g.reached_target.add(stable_id)
 
     def count(self, group_id: str, stable_id: str | None = None) -> int:
         g = self._groups.get(group_id)
@@ -143,7 +165,7 @@ class Allocator:
                 cur = len(g.leased_by_type.get(stable_id, set()))
                 target = spec.get("target", spec.get("max", 0))
                 cap = spec.get("max", target)
-                floor = _refill_floor(spec, target)
+                floor = _effective_floor(spec, target, stable_id in g.reached_target)
                 comp[stable_id] = {
                     "min": int(spec.get("min", target)),
                     "target": int(target),

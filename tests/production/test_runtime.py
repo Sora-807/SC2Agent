@@ -115,9 +115,12 @@ def test_build_placement_failure_retries_next_slot():
     assert len(rt._build_flights.get("open", [])) == 1  # 仍在途（flight 在列表里）
 
 
-def test_build_confirm_matches_position_not_type_count():
-    """真机教训（full_flow.log）：同类型建筑连续建时，晚到实体不能替别的项确认——
-    按放置位置匹配（奇数尺寸 R=P、偶数尺寸 R=P+0.5 锁定公式）。"""
+def test_build_confirm_claims_late_entity_at_attempted_slot():
+    """I26：本 flight 发过的位置上晚到的同型实体要**收编**——命令其实落了，只是
+    90 帧判失败时实体还没出现。旧语义只认**当前**预期位，把这种实体当"别人的"，
+    换槽重发 → 真机 2 座的计划造出 9 座补给站（每次重发 = 又一座真建筑 + 再扣矿）。
+    槽位有在途预留，别的 flight 不可能用本 flight 发过的槽位——收编安全。
+    （full_flow「按位置匹配」教训的精确化：不认的是**没发过命令的位置**上的实体。）"""
     port = _Port()
     rt = _runtime(port)
     rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
@@ -128,14 +131,54 @@ def test_build_confirm_matches_position_not_type_count():
     for _ in range(91):
         rt.on_game_state(gs0)  # 无实体无 build order → 第 90 帧判失败 → 重发 s2
     assert port.submitted[1].params["position"] == [5.5, 2.5]  # s2（预期报告位 (6.0,3.0)）
-    # s1 位置出现 depot 实体（类型相同、位置不匹配）→ 不能确认
+    # s1 实体晚到（重试已发生）→ 发过的位置 → 收编锁定，不再等 s2 的实体
     rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
-                          _u(9, "SUPPLYDEPOT", x=2.5, y=2.5, progress=0.1)], minerals=400))
-    assert len(rt._build_flights.get("q", [])) == 1  # 仍在途（flight 在列表里）
-    # s2 位置实体出现 → 位置匹配 → flight 确认；项留账本 in_progress（ADR-0032）
-    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
-                          _u(10, "SUPPLYDEPOT", x=6.0, y=3.0, progress=0.1)], minerals=400))
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.1)], minerals=400))
+    assert rt._build_flights["q"][0]["entity_tag"] == 9
     assert rt.queue("q").items[0].status == "in_progress"
+    # 实体完工 → started → 项完成；全程没有第三次发射
+    for _ in range(3):
+        rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                              _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=1.0)], minerals=400))
+    assert len(port.submitted) == 2
+    assert rt.queue("q").items[0].status == "completed"
+
+
+def test_build_confirm_ignores_entity_at_never_emitted_position():
+    """full_flow 教训仍然成立（I26 收编判据第 3 条）：从没发过命令的位置上的同型
+    晚到实体不认领——那是别的 flight/玩家的事，认了就是替别的项假确认。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("q", [QueueItem(op="build", type="terran/supplydepot",
+                                      placement=PlacementInRegion("home"))])
+    gs0 = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs0)  # emit s1
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=50.0, y=50.0, progress=0.1)], minerals=400))
+    assert rt._build_flights["q"][0].get("entity_tag") is None  # 没被假确认
+    # 无实体（无关位置的不算）+ 无 build order → 90 帧照常判失败重发（行为不变）
+    for _ in range(90):
+        rt.on_game_state(gs0)
+    assert len(port.submitted) == 2  # 重试 s2 正常发生
+
+
+def test_retry_claims_late_entity_without_reemitting():
+    """I26 重试侧：假失败后的重试帧，发过的位置上实体已出现 → 收编，不重发
+    （不再吃下一个槽位、不再扣一次矿）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/supplydepot",
+                                       placement=PlacementInRegion("home"))])
+    gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs)               # emit s1
+    for _ in range(90):
+        rt.on_game_state(gs)           # 第 90 帧判失败（builder=None）
+    assert len(port.submitted) == 1
+    # 第 91 帧：s1 实体出现（命令其实落了）→ 重试路径先收编，不重发 s2
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.5)], minerals=400))
+    assert len(port.submitted) == 1    # 没有第二次发射
+    assert rt._build_flights["open"][0]["entity_tag"] == 9
 
 
 def test_build_dropped_when_candidates_exhausted():
