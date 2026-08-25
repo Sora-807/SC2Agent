@@ -37,9 +37,9 @@ class EconomyPolicy:
 
     mineral_per_patch: int = MINERAL_SATURATION  # 0..2
     gas_per_refinery: int = GAS_SATURATION       # 0..3
-    mineral_workers: int | None = None  # 绝对目标（非 None 时优先于 per_patch）
-    gas_workers: int | None = None      # 绝对目标（非 None 时优先于 per_refinery）
-    reserve_idle: int = 0               # 保留的空闲工兵数（给建造/修理/应急）
+    mineral_workers: int | None = None  # 绝对目标=地板（至少 N 个；矿脉未饱和时空闲工继续补，I28）
+    gas_workers: int | None = None      # 绝对目标（精确配额，不越配额填）
+    reserve_idle: int = 0               # 保留的空闲工兵数（给建造/修理/应急；补矿时留够再派）
     node_radius: float = NODE_RADIUS
 
 
@@ -329,6 +329,9 @@ class EconomyKeeper:
 
         原则：先留住已在目标上的（sticky，不发命令）；缺口用空闲工兵补；
         还不够才从超额任务里抽人；气优先于矿（气更稀缺，且 gas 目标通常是显式配额）。
+        矿的绝对目标是**地板**（至少 N 个）：目标已满但矿脉未饱和时，真空闲工
+        继续补满容量（I28 —— 建造完工的 SCV 不会 auto-gather，目标封顶会把它
+        永久晾在原地）；气是精确配额，不越配额填。
         **外来订单的工人（建造/移动/攻击等，非本维持器所派）整体跳过**：不占名额、
         不改派 —— 2026-08-24 事故的另一半（维持器的 gather 把 production 排队的
         build 单顶掉，提案"看起来没效果"就是这个链条）。征用表（reservations）是
@@ -388,6 +391,31 @@ class EconomyKeeper:
                     plan[pool.pop(0)] = node.tag
                     room[node.tag] -= 1
                     need -= 1
+
+        # 2.5) I28：绝对目标当地板，不是硬上限 —— 目标已满但仍有**真空闲**工且
+        # 矿脉未饱和时继续补满容量。真机教训（rec-20260825-093336）：建造完工的
+        # SCV 不会 auto-gather（不像 CC 新训的 SCV），目标 8 已满 → 维持器不派 →
+        # 「矿超员(13>8) + 同时有空闲工 + 矿脉空位」退化态，每造完一座建筑就
+        # 永久少一个采矿工。容量按**现状在岗**对账（kept 之外的超额矿工也占位），
+        # 超额的不改派、只补空位；reserve_idle 是保底空闲数，留够再派；
+        # 气不走地板（gas_workers 是显式配额，精确语义）。
+        occupancy = {n.tag: 0 for n in nodes}
+        for tag in by_tag:
+            nt = current.get(tag)
+            if nt in occupancy:
+                occupancy[nt] += 1
+        for tag, nt in plan.items():
+            if nt in occupancy and current.get(tag) != nt:
+                occupancy[nt] += 1
+        idle = [tag for tag in sorted(by_tag)
+                if tag not in plan and current.get(tag) is None]
+        for tag in idle[:self.policy.reserve_idle]:
+            plan[tag] = None  # 保底空闲：显式占位，不被 3) 的 setdefault 覆盖语义
+        pullable = idle[self.policy.reserve_idle:]
+        for node in [n for n in nodes if not n.is_gas]:
+            while pullable and occupancy[node.tag] < node.cap:
+                plan[pullable.pop(0)] = node.tag
+                occupancy[node.tag] += 1
 
         # 3) 其余保持现状（不主动 stop）；reserve_idle 只保证"不再往上派"，不强行拉人下矿
         for tag in by_tag:

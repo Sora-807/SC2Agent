@@ -314,12 +314,20 @@ class ProductionRuntime(BuildFlightsMixin):
     def _sweep_completions(self, q: Queue, gs: GameState) -> None:
         """完成扫账：count 归零的 in_progress 项，flight/训练账本里都没它的份 → completed。
 
-        BUILD 看 `_build_flights`（对象身份），TRAIN 看 `_trainings`（uid）——
-        两个账本的淘汰逻辑（实体完工 / 订单结束超时）就是完成信号。
+        BUILD 看 `_build_flights` 的 **uid**（与 TRAIN 同形态；对象 id 在队列重提
+        往返时会换对象）、TRAIN 看 `_trainings`（uid）——两个账本的淘汰逻辑
+        （实体完工 / 订单结束超时）就是完成信号。
+
+        I26 残留（真机 rec-20260825-093336）：flight 缺席 ≠ 实体完工 —— 重提队列
+        （submit_queue）会取消在途 flight，而往返项带着 in_progress 回队；假完成
+        把在建前置从 ExecView 三处（ready/inflight/queued）抹掉，下游级联 skip
+        （q02 depot → q04 兵营连锁整局不出兵）。BUILD 项收尾前与场上实体对账：
+        有完工同型 → completed；没有 → 保留 in_progress（在建中 = 等盖完，期间
+        项仍在 queued_types、下游走 pending 不误 skip；命令真丢 = stall 警报 +
+        agent 重提收口 —— skip 是终态，不拿猜测冒险）。
         """
         live_train_uids = {t.get("uid") for t in self._trainings}
-        flight_items = {id(f.get("item"))
-                        for flights in self._build_flights.values() for f in flights}
+        flight_uids = {f.get("uid") for f in self._build_flights.get(q.name, ())}
         for it in q.items:
             if it.status != STATUS_IN_PROGRESS or it.count > 0:
                 continue
@@ -327,8 +335,11 @@ class ProductionRuntime(BuildFlightsMixin):
                 if it.uid is None or it.uid in live_train_uids:
                     continue
                 self._finish_item(it, gs)
-            elif it.op is QueueOp.BUILD and id(it) not in flight_items:
-                self._finish_item(it, gs)
+            elif it.op is QueueOp.BUILD and it.uid not in flight_uids:
+                if it.type in self._frame_ready_types:
+                    self._finish_item(it, gs)
+                # else：场上无完工同型实体（本 type 级对账，flight 已不在无法按
+                # 位置归属）—— 不假完成，见 docstring
 
     # ---- 读模型（B1）----
 

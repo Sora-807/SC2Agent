@@ -201,6 +201,100 @@ def test_build_dropped_when_candidates_exhausted():
     assert len(port.submitted) == 2 and port.submitted[1].action == "train"  # 后续项继续
 
 
+def _roundtrip(item: QueueItem, **over) -> QueueItem:
+    """账本往返项（agent 重提队列时从帧反解回灌）：带 uid/已扣 count/已执行状态。"""
+    kw = dict(op=item.op, type=item.type, count=item.count, placement=item.placement,
+              task=item.task, uid=item.uid, status=item.status, reason=item.reason,
+              started_at=item.started_at, completed_at=item.completed_at)
+    kw.update(over)
+    return QueueItem(**kw)
+
+
+def test_repropose_roundtrip_does_not_fake_complete_building_item():
+    """I26 残留（真机 rec-20260825-093336）：重提队列（submit_queue）取消在途
+    flight，往返项带 in_progress 回队 → 旧 sweep 假设「flight 移除 = 实体完工」
+    直接标 completed —— 实际补给站还在建，自此对 ExecView 三处全无。现在：
+    场上无完工同型实体就不完成，等实体真盖完。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/supplydepot",
+                                       placement=PlacementInRegion("home"))])
+    gs0 = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs0)  # emit s1 → q01 in_progress
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.3)], minerals=400))
+    # agent 重提：整队往返（uid 保留）→ submit_queue 取消 flight，但建筑还在建
+    old = rt.queue("open").items[0]
+    rt.submit_queue("open", [_roundtrip(old, count=0, status="in_progress")])
+    assert rt._build_flights.get("open") == []  # flight 已被取消（复现链的 gt=115）
+    # 实体仍 0.5 → 不假完成（旧代码这里就变 completed 了），也不重发
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.5)], minerals=400))
+    assert rt.queue("open").items[0].status == "in_progress"
+    assert len(port.submitted) == 1  # 没有为已扣 count 的项再发一次 build
+    # 实体盖完 → 这才 completed
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=1.0)], minerals=400))
+    assert rt.queue("open").items[0].status == "completed"
+
+
+def test_repropose_roundtrip_downstream_waits_not_skips():
+    """同链下半段：depot 往返 in_progress 且实体在建 → 兵营走 pending（等前置，
+    queued_types 认 in_progress），不再被假完成连锁成终态 skip；depot 盖完后
+    兵营照常发射（真机 q04 兵营级联 skip 整局不出兵的回归锁）。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [
+        QueueItem(op="build", type="terran/supplydepot", placement=PlacementInRegion("home")),
+        QueueItem(op="build", type="terran/barracks", placement=PlacementInRegion("home")),
+    ])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=500))
+    # depot 发射（inflight）；兵营 pending 等前置
+    items = rt.queue("open").items
+    assert items[0].status == "in_progress" and items[1].status == "pending"
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.3)], minerals=500))
+    # 重提（depot 往返 in_progress + 兵营 pending）→ flight 取消
+    rt.submit_queue("open", [_roundtrip(items[0], count=0),
+                             _roundtrip(items[1])])
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=0.5)], minerals=500))
+    items = rt.queue("open").items
+    assert items[0].status == "in_progress"
+    assert items[1].status == "pending"  # 不是 skipped（旧代码假完成后这里级联 skip）
+    assert "等前置" in rt.blocked["open"]["reason"]
+    # depot 盖完 → 兵营当帧放行发射
+    rt.on_game_state(_gs([_u(1, "COMMANDCENTER"), _u(2, "SCV"),
+                          _u(9, "SUPPLYDEPOT", x=3.0, y=3.0, progress=1.0)], minerals=500))
+    items = rt.queue("open").items
+    assert items[0].status == "completed"
+    assert items[1].status == "in_progress"
+    assert any(op.action == "build" and op.params["type"] == "terran/barracks"
+               for op in port.submitted)
+
+
+def test_sweep_no_entity_keeps_in_progress_and_queue_alive():
+    """flight 缺席且场上同型实体全无（命令真丢/建筑被拆）→ 也不假完成不假跳：
+    保留 in_progress（诚实账本），后续项照常执行 —— 真死由 stall 警报 + agent
+    重提收口，skip 是终态不拿猜测冒险。"""
+    port = _Port()
+    rt = _runtime(port)
+    rt.submit_queue("open", [QueueItem(op="build", type="terran/supplydepot",
+                                       placement=PlacementInRegion("home")),
+                             QueueItem(op="train", type="terran/scv")])
+    gs = _gs([_u(1, "COMMANDCENTER"), _u(2, "SCV")], minerals=400)
+    rt.on_game_state(gs)
+    items = rt.queue("open").items
+    # 重提：只往返 depot（in_progress/count=0）+ train —— flight 取消，实体从未出现
+    rt.submit_queue("open", [_roundtrip(items[0], count=0), _roundtrip(items[1])])
+    for _ in range(5):
+        rt.on_game_state(gs)
+    items = rt.queue("open").items
+    assert items[0].status == "in_progress"   # 不假完成也不终态化
+    assert items[1].status in ("in_progress", "completed")  # 队列不被冻住
+    assert any(op.action == "train" for op in port.submitted)
+
+
 def test_same_frame_no_duplicate_unit_commands():
     """同帧跨队列不对同一单位重复发令（burnysc2 同帧同单位命令去重丢单——真机踩坑：
     建造工兵被 steward 的 gather 抢走导致 build 静默丢失）。"""

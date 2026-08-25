@@ -186,12 +186,63 @@ def test_mineral_per_patch_controls_saturation():
     assert len({n for _t, n in assigned}) == 2
 
 
-def test_absolute_worker_target_caps_assignment():
+def test_absolute_worker_target_is_floor_not_cap():
+    """I28 语义：矿的绝对目标是**地板**（至少 N 个）不是硬上限 —— 6 个空闲工、
+    目标 3、4 矿（容量 8）未饱和 → 全派（真机教训：建造完工的 SCV 不会
+    auto-gather，目标封顶会把它永久晾在原地）。"""
     port = _Port()
     k = _keeper(port)
     k.set_target("mineral", 3)
     k.on_game_state(_gs([_scv(i) for i in range(1, 7)], _patches(4), seq=0))
-    assert len(port.gathers()) == 3
+    assert len(port.gathers()) == 6  # 矿脉未饱和：超目标的空闲工也补满
+
+
+def test_floor_fill_stops_at_patch_saturation():
+    """地板填充不超过矿脉容量：2 矿（容量 4）+ 6 空闲工 → 只派 4，剩 2 留空闲。"""
+    port = _Port()
+    k = _keeper(port)
+    k.set_target("mineral", 3)
+    k.on_game_state(_gs([_scv(i) for i in range(1, 7)], _patches(2), seq=0))
+    assert len(port.gathers()) == 4
+
+
+def test_idle_builder_pulled_when_target_met_but_patches_unsaturated():
+    """I28 回放锁（rec-20260825-093336）：目标 8 已满（8 人在矿）+ 建造完工的
+    SCV（无订单不扛货=真空闲）+ 矿脉未饱和 → 维持器必须把它派去填空位。
+    旧实现：need=0 不派 → 「矿超员 + 同时有空闲工 + 矿脉空位」退化态。"""
+    port = _Port()
+    k = _keeper(port)
+    k.set_target("mineral", 8)
+    # 8 人在 5 个矿上（2+2+2+1+1，两个矿各有 1 空位）；第 9 个是完工的建造工
+    patches = _patches(5)
+    miners = ([_scv(1, gathering=900), _scv(2, gathering=900), _scv(3, gathering=901),
+               _scv(4, gathering=901), _scv(5, gathering=902), _scv(6, gathering=902),
+               _scv(7, gathering=903), _scv(8, gathering=904)]
+              + [_u(9, "SCV", x=30.0, y=30.0)])   # 完工 SCV：无订单、不扛货、站在房子旁
+    k.on_game_state(_gs(miners, patches, seq=0))
+    pulls = [t for t, _n in port.gathers() if t == 9]
+    assert pulls, "目标已满但矿脉未饱和：空闲建造工必须被派去采矿"
+
+
+def test_floor_fill_keeps_reserve_idle_workers():
+    """reserve_idle 是保底空闲数：2 个空闲工 + reserve_idle=1 → 只派 1 个。"""
+    port = _Port()
+    k = _keeper(port, policy=EconomyPolicy(reserve_idle=1))
+    k.on_game_state(_gs([_scv(i) for i in range(1, 3)], _patches(4), seq=0))
+    assert len(port.gathers()) == 1
+
+
+def test_floor_fill_not_applied_to_gas():
+    """气是精确配额：gas 目标 1 已满 + 气矿有空位（cap 3）+ 有空闲工 → 不越配额补气。"""
+    port = _Port()
+    k = _keeper(port)
+    k.set_target("gas", 1)
+    units = ([_scv(1, gathering=500), _scv(2)]
+             + [_u(500, "REFINERY", progress=1.0)])
+    k.on_game_state(_gs(units, _patches(1), seq=0))
+    gas_pulls = [t for t, n in port.gathers() if n == 500]
+    assert gas_pulls == []          # 不给气补第 2 人
+    assert (2, 900) in port.gathers()  # 空闲工去矿（地板填充只作用于矿）
 
 
 def test_set_target_rejects_negative():
