@@ -728,10 +728,11 @@ region_layer 的 regions/pos_marks/build_slots），无效直接校验失败给�
 10. **对局可观测性深度（I17 剩余）（原#12）**——警报加 `remediation_zh`（"怎么修"）+
    采气工 shortfall 警报 + 策略死步骤检测（I12-B2 深化：`when:` 可满足性 vs 规划产出）+
    装配缺口时序化/live 化。子项 5（observe 在建项映射）已落地关闭。1/2 低难可插队先做。
-11. **modules/ 代码债剩余（I15）（原#11）**——P0 bug 批与 god files（G1-G3）已清，B7
-   （命令 shape）§0.41 已修，B6（planner 三族）已修（2026-08-25 N1 批：catalog 推导 +
-   Zerg 语义钩子，三族开局投影测试绿，WORKLOG §0.66）；剩：死代码清理 + 去重
-   （详见 [`REFACTOR.md`](REFACTOR.md)）。
+11. **modules/ 代码债剩余（I15）（原#11）——REFACTOR §1-§5 全部清偿（2026-08-25
+   PLAN-NEXT N1-N5 工程批收官）**：P0 bug 批/G1-G3 god files/B6 三族化/B7 命令
+   shape/§3 死代码/§4 去重/§5 stub/瘦身（runtime 482·live 538·路由 178 内）全闭，
+   执行史 WORKLOG §0.66-0.70；§6 长函数表仍是低优先随手项（见
+   [`REFACTOR.md`](REFACTOR.md) §6）。
 12. **Agent 跨会话记忆效果观察（I19 剩余）（原#15）**——结构与种子全齐（memory/ 四文件 +
     improvement-notes + agent/seeds + 提示词整改）；剩余：几局后校验 agent 是否真读真写、
     `system-capabilities` 派生是否对账——不行再上机制（开局自动 seed 检查）。
