@@ -8,20 +8,23 @@
 
 | 文档 | 内容 |
 |---|---|
-| `ARCHITECTURE.md` | 现行架构全景（模块分层与方向）——**REV/队列语义等局部过时，待刷新**（队列账本以 ADR-0032 为准、supply_guard 以 ADR-0034 为准） |
-| `PLAN-AGENT-EVAL.md` | 评测框架立项——D1-D16 已裁决可执行，eval/ 已落地 MVP（95c4911） |
+| `ARCHITECTURE.md` | 现行架构全景（模块/职责/依赖/契约/数据流/真机状态）——2026-08-25 全面刷新（REV 18/账本语义/自动应用口径） |
+| `PLAN-NEXT.md` | **后续任务单一队列**（N1-N6 批次 + D1-D4 待定决策；新任务只进这份） |
+| `PLAN-AGENT-EVAL.md` | eval 专线（用户主导，活跃中；D1-D16 已裁决，MVP+四批已落地） |
 | `WORKLOG.md` | 执行史（§0.x 每轮：做了什么/为什么/回归数字），最新在上 |
-| `ISSUES.md` | 问题清单：开放 issue 详解 + 开放任务清单（2026-08-25 全量核对重排，18 条开放） |
+| `ISSUES.md` | 问题台账：开放 issue 详解 + 开放任务清单（三账分工见 PLAN-NEXT 头注） |
 | `ISSUES-ARCHIVE.md` | 已处理留档 + 垃圾箱（被推翻/失效描述；2026-08-25 从 ISSUES.md 分出） |
 | `AGENT-LOOP.md` | Agent 数据触达闭环蓝图（I17-I20 母题；§6 新产物闭环检查清单） |
-| `REFACTOR.md` | modules/ 代码债审计与重构进度（P0 bug/G1-G3/B7 已清；剩 B6/死代码/去重；部分条目状态待复核） |
+| `REFACTOR.md` | 代码债明细账（file:line 级；B6/死代码/去重——执行排期在 PLAN-NEXT N2） |
+
+> 三账分工：PLAN-NEXT=执行队列，ISSUES=问题台账（为什么），REFACTOR=债明细（在哪）。
 
 ## contract/ —— 契约与边界（代码有活性引用，不可随手改）
 
 | 文件 | 是什么 |
 |---|---|
 | `plan-frontend.md` | **帧契约唯一真相源**（web/contract/index.ts 与 view/schema 的 §2） |
-| `plan-backend-view.md` | 后端视图层计划（frame/flow.groups 等出处） |
+| `plan-backend-view.md` | 后端视图层设计史（frame/flow.groups 等出处；⚠️ 设计快照性质，现状以 ARCHITECTURE/ADR 为准——2026-08-25 已补队列账本修正注） |
 | `test-plan.md` | constraint 门控项 / world resource_nodes 的定义处 |
 | `需求文档-v0.1.md` | 产品级规则出处（R5 等；ISSUES I12 引证） |
 | `P0-影响边界.md` | D1 状态两面（raw/处理后）/ D2 操作权威源 —— game 层五个模块的边界定义 |
@@ -40,7 +43,8 @@
 ## spec/ —— Flow v0.2 schema 契约（YAML 策略的深层语义）
 
 `001-group` / `002-strategy` / `003-step 与 atom 目录` / `004-FlowIR 与 ExitRecord` /
-`005-assembly` / `006-allocation` + README。写策略 YAML 遇到"为什么这样写"先翻这里。
+`005-assembly` / `006-allocation` + README。**状态：已实施**（早于 ADR-0031/0032/0033，
+模板展开与队列账本未入——以后两者为准，见 README 头注）。写策略 YAML 遇到"为什么这样写"先翻这里。
 
 ## reference/ —— 参考与设计语言
 
