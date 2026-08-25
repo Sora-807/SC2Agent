@@ -475,10 +475,30 @@ function paint(
   motion: Motion,
 ): void {
   const { map, world, production, economy } = props;
-  const alpha = motion.alpha;
   const ghostSlotName = motion.ghostSlotName;
   const names = shortNameMap(props.catalog);
 
+  // 各图层按 z-order 逐层绘制（原 paint 巨型分段拆为模块级函数；语义逐字不变，仅搬运）。
+  drawBackgroundLayers(ctx, vp, map, baked, props);
+  drawSlots(ctx, vp, props, map, production, ghostSlotName);
+  drawMarks(ctx, vp, props, map);
+  drawResources(ctx, vp, props, map, world);
+  drawReserved(ctx, vp, props);
+  drawWorldLayers(ctx, vp, world, motion, names, economy, props);
+  drawPlacementDebug(ctx, vp, props, production);
+  drawSlotGhost(ctx, vp, props, motion);
+  drawSelection(ctx, vp, props, world);
+  drawPlacementPreviewGhost(ctx, vp, props);
+}
+
+/** 底色 + 地形/可建/格点/区域/虫苔/可见性位图层（静态与帧栅格） */
+function drawBackgroundLayers(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  map: MapStatic,
+  baked: Baked,
+  props: Parameters<typeof MapCanvas>[0],
+): void {
   // 底：terrain 为 null 时用纯色 —— 后端 B4 之前不伪造地形（不静默）
   ctx.fillStyle = canvasBase().void;
   const [x0, y0] = worldToScreen(vp, 0, map.size[1]);
@@ -502,7 +522,17 @@ function paint(
   if (layersOn(props, "visibility") && baked.gridImages.visibility) {
     drawImage(ctx, vp, baked.gridImages.visibility, map);
   }
+}
 
+/** 槽位层：默认四角刻度 / 规划实线框 + 名字 / 在途建造虚线框 / 拖动原位虚线空心 */
+function drawSlots(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+  map: MapStatic,
+  production: ProductionFrame | null,
+  ghostSlotName: string | null,
+): void {
   // 槽位：默认四角小刻度（低权）；「有在途建造指向它」或摆放调试开时才画实线虚线框（根因 J / F11e）。
   // F16：规划模式（slotsOverride 非 null）画实线框 + 名字 —— 用户反馈：半透明刻度
   // 完全看不见放哪了、列表里的 depotxx 对不上号；驾驶态维持低权（F11e 原则不变）。
@@ -569,7 +599,15 @@ function paint(
       }
     }
   }
+}
 
+/** 点位标记（PosMark）：菱形 + 名字；选中高亮 */
+function drawMarks(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+  map: MapStatic,
+): void {
   // 点位标记（PosMark）：菱形 + 名字。之前这层**完全没画** —— 帧里有 pos_marks，
   // 画布一个都不画，所以"离线放标记 / 在线看标记"里连"看"都做不到。
   // 形状用菱形而非矩形/圆：U16 要求标记与建筑(矩形)、单位(chip) 不撞形。
@@ -601,7 +639,16 @@ function paint(
       }
     }
   }
+}
 
+/** 资源圆点（无预留区时）：矿/气 + 采集人数 */
+function drawResources(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+  map: MapStatic,
+  world: WorldFrame | null,
+): void {
   if (layersOn(props, "resources") && !props.reserved) {
     // 资源圆点：地图页（live，带采集人数）用；规划视图改画预留框（props.reserved），
     // 圆点与框重复 —— 规划里不再画点（用户拍板）。
@@ -624,7 +671,14 @@ function paint(
       }
     }
   }
+}
 
+/** 固定建造点预留区（基地/气井/矿脉脚印） */
+function drawReserved(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+): void {
   // 固定建造点预留区（基地/气井/矿脉脚印，矩形来自后端单点计算）：
   // 给了就画 —— 槽位摆放必须看得见这些不可占用区（用户拍板：基地区域要标记）。
   if (props.reserved) {
@@ -661,7 +715,19 @@ function paint(
       }
     }
   }
+}
 
+/** 帧内世界层：建筑 / 单位（聚类 chip 或个体）/ 命令连线 / 敌方聚类；位置插值，进度不插值 */
+function drawWorldLayers(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  world: WorldFrame | null,
+  motion: Motion,
+  names: Map<string, string>,
+  economy: EconomyFrame | null,
+  props: Parameters<typeof MapCanvas>[0],
+): void {
+  const alpha = motion.alpha;
   if (world) {
     // 只有位置插值：从上一帧取同 tag 的坐标（进度/计数一律用当帧原值，决策 U5）
     const prevPos = new Map<number, [number, number]>();
@@ -764,7 +830,15 @@ function paint(
       }
     }
   }
+}
 
+/** 摆放调试层：在途建造的期望落点 + 已试过的槽位 */
+function drawPlacementDebug(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+  production: ProductionFrame | null,
+): void {
   // 摆放调试：在途建造的期望落点 + 已试过的槽位（F5 的叠加层，数据在 frame/production 里）
   if (layersOn(props, "placement") && production) {
     for (const f of production.in_flight) {
@@ -790,7 +864,15 @@ function paint(
       }
     }
   }
+}
 
+/** 槽位拖动 ghost（F14 2b）：半透明 footprint + 名字 + 合法性着色 */
+function drawSlotGhost(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+  motion: Motion,
+): void {
   // 槽位拖动 ghost（F14 2b）：半透明 footprint + 名字（经 motion 传入 ——
   // paint 是模块级函数，拿不到组件内的 ref；ref 值由 draw 循环每帧带进来）。
   const ghost = motion.slotGhost;
@@ -817,7 +899,15 @@ function paint(
     ctx.font = fontCss("note");
     ctx.fillText(ghost.name, sx + 2, sy + (vp.scale * size) / 2);
   }
+}
 
+/** 选中高亮（命中/选中始终按个体 —— chip 只是显示，U18） */
+function drawSelection(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+  world: WorldFrame | null,
+): void {
   // 选中高亮（命中/选中始终按个体 —— chip 只是显示，U18）
   if (props.selection && world) {
     const u = world.units.find((x) => x.tag === props.selection!.tag);
@@ -830,7 +920,14 @@ function paint(
       ctx.stroke();
     }
   }
+}
 
+/** F16 放置预览 ghost：吸附后的落点 + 合法性着色（绿=可放 / 红=非法）；画在最顶层 */
+function drawPlacementPreviewGhost(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  props: Parameters<typeof MapCanvas>[0],
+): void {
   // F16 放置预览 ghost：吸附后的落点 + 合法性着色（绿=可放 / 红=非法）。
   // 画在最后（最顶层）：用户说「完全半透明导致看不见放在哪里了」—— 预览必须一眼可见。
   if (props.ghost) {
