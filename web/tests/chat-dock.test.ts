@@ -5,6 +5,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { withoutDelivered } from "../src/api/agent-chat";
 
 const src = readFileSync(new URL("../src/shell/ChatDock.tsx", import.meta.url), "utf-8");
 const client = readFileSync(new URL("../src/api/agent-chat.ts", import.meta.url), "utf-8");
@@ -172,5 +173,22 @@ describe("ChatDock：真流式（2026-08-22 十五轮，接 BaseAgent start_stre
     expect(c).toMatch(/m\.nudge\s*\?\s*<NudgeBar/);   // nudge 标记的消息先进系统条
     expect(c).toContain("var(--warn-fg)");               // warn token 全宽条（主题纪律：不吃裸色）
     expect(code(client)).toContain("nudge?: boolean");     // 契约面：ChatMessage 可带 nudge
+  });
+});
+
+describe("插话排队条：送达即撤（2026-08-25 用户报「排队中一直挂着，发出去了也不消失」）", () => {
+  it("根因接线：SSE interject_delivered（drain 时刻）→ 撤排队条 —— 不再只等 round/finally", () => {
+    // round 事件要等整场对局跟随结束才来（talk._round_with_follow），期间排队条
+    // 只能靠 interject_delivered 撤 —— 契约面与接线面双侧锁
+    expect(code(client)).toContain("interject_delivered");
+    expect(code(src)).toContain("interject_delivered");
+    expect(code(src)).toContain("withoutDelivered(q, ev.texts)");
+  });
+
+  it("withoutDelivered：按文本撤一条（重复文本先撤最早），未送达的留着", () => {
+    expect(withoutDelivered(["a", "b", "a"], ["a"])).toEqual(["b", "a"]);
+    expect(withoutDelivered(["a", "b"], ["b", "a"])).toEqual([]);
+    expect(withoutDelivered(["a", "b"], ["c"])).toEqual(["a", "b"]);
+    expect(withoutDelivered([], ["a"])).toEqual([]);
   });
 });

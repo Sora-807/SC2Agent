@@ -522,6 +522,26 @@ def test_interject_queue_and_undelivered_round(api: TestClient, tmp_path: Path):
     assert any(m.content and "改打空军" in m.content for m in second)
 
 
+def test_interject_delivered_event_on_stream(api: TestClient, tmp_path: Path):
+    """排队条修复（2026-08-25 用户报「排队中一直挂着，发出去了也不消失」）：
+    插话送达（drain）→ SSE 流立刻发 interject_delivered —— 前端据此撤排队条。
+    round 事件要等整场对局跟随结束才来，期间没有这个事件排队条就永远不动。"""
+    fake = FakeLLMClient([_done("收到") for _ in range(3)])
+    talk = AgentTalk(_client_for(api), llm_factory=lambda: fake,
+                     trace_root=tmp_path / "traces", workspace_root=tmp_path / "ws")
+    # 预置未送达插话（首轮没工具检查点）→ 跟随循环 drain 补送 → drain 时刻回调
+    talk.interjections.add("改打空军")
+    handle = talk.start_round("开局看一眼")
+    seen: list[dict] = []
+    while True:
+        ev = handle.events.get(timeout=30)
+        if ev is None or ev.get("type") == "round":
+            break
+        seen.append(ev)
+    delivered = [e for e in seen if e.get("type") == "interject_delivered"]
+    assert delivered and delivered[0]["texts"] == ["改打空军"]
+
+
 # ---------------- 断流三修（2026-08-24 用户报「工具调用之后没有下文」） ----------------
 
 def test_max_turns_pause_leaves_visible_note(api: TestClient, tmp_path: Path):

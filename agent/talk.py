@@ -284,7 +284,11 @@ class AgentTalk:
         # 用户插话（2026-08-24）：对局跟随的轮很长，用户要能随时插话 —— 队列经
         # AdvisorSpec 注入工具层（sleep 早醒 / 工具结果捎带）；这里同时记轮内流水，
         # 轮末按真实时序写进历史（原话 → 插话 → 回复）。
-        self.interjections = InterjectionQueue()
+        # on_delivered（2026-08-25 排队条修复）：插话送达模型的 drain 时刻 → 当前
+        # SSE 流发 interject_delivered，前端撤「排队中」条（round 事件要等整场
+        # 对局跟随结束才来，期间排队条挂着不动 = 用户看着像没发出去）。
+        self.interjections = InterjectionQueue(on_delivered=self._notify_interject_delivered)
+        self._stream_events: queue.Queue | None = None   # 当前流式轮的事件队列（无流式轮 = None）
         self._round_interjects: list[str] = []   # 本轮到达的插话（历史用）
         self._round_active = False
         self._engine_error: str | None = None
@@ -378,6 +382,9 @@ class AgentTalk:
         def emit(ev: StreamEvent) -> None:
             handle.events.put(_event_dict(ev))
 
+        # 插话送达事件也走这条流（drain 可能发生在引擎线程的工具检查点里）
+        self._stream_events = handle.events
+
         async def runner() -> None:
             try:
                 # 跟随循环里每个引擎轮各自经 _schedule_round（带独立看门狗），
@@ -385,11 +392,23 @@ class AgentTalk:
                 result = await self._round_with_follow(text, emit=emit)
             except Exception as exc:  # noqa: BLE001 —— 流面错误也要走完事件流（不挂死 SSE）
                 result = {"error": f"{type(exc).__name__}: {exc}"}
+            finally:
+                self._stream_events = None
             handle._finish(result)
 
         fut = asyncio.run_coroutine_threadsafe(runner(), self._loop)
         fut.add_done_callback(lambda _f: handle.events.put(None))
         return handle
+
+    def _notify_interject_delivered(self, texts: list[str]) -> None:
+        """插话送达模型（drain 时刻）→ 当前流式轮的 SSE 队列发 interject_delivered。
+
+        跨线程读写 `_stream_events` 的竞态最坏情形 = 事件落进已收尾的队列（无人
+        消费，自然丢弃）或晚到（前端还有轮末/finally 两道清队列兜底）—— 可接受。
+        """
+        q = self._stream_events
+        if q is not None:
+            q.put({"type": "interject_delivered", "texts": list(texts)})
 
     def _schedule_round(self, coro):
         """协程排上专属循环 + 挂看门狗。say 与 start_round 共用 —— 两条路都不许挂死。

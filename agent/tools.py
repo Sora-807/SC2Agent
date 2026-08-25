@@ -23,6 +23,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from agentic.types import Tool
 
@@ -201,12 +202,16 @@ class InterjectionQueue:
     硬打断（vendor 不改），思考通常几十秒，等下一个工具检查点。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_delivered: Callable[[list[str]], None] | None = None) -> None:
         self._lock = threading.Lock()
         self._items: list[str] = []
         # 排空账本 [(text, time.time())]：A 批（2026-08-24）—— 落史 segments 用它把
         # 用户插话按真实时序插进轮内时间线（对齐 trace 事件的 ts）
         self._drained: list[tuple[str, float]] = []
+        # drain = 插话真正交到模型手里的时刻（2026-08-25 排队条修复）：回调通知
+        # 流面发 interject_delivered —— 前端据此撤「排队中」条。round 事件要等
+        # 整场对局跟随结束才来，期间排队条会一直挂着，用户看着像没发出去。
+        self._on_delivered = on_delivered
 
     def add(self, text: str) -> None:
         with self._lock:
@@ -216,7 +221,12 @@ class InterjectionQueue:
         with self._lock:
             out, self._items = self._items, []
             self._drained.extend((t, time.time()) for t in out)
-            return out
+        if out and self._on_delivered is not None:
+            try:
+                self._on_delivered(out)
+            except Exception:  # noqa: BLE001 —— UI 通知失败不许弄丢插话本身（主链路照走）
+                pass
+        return out
 
     def take_drained(self) -> list[tuple[str, float]]:
         """取走排空账本（轮末消费）：[(插话文本, 排空墙钟 epoch)]，取后清空。"""

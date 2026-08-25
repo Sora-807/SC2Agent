@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode, type UIEvent } from "react";
 import {
-  cleanChat, getChat, interjectChat, sayChatStream,
+  cleanChat, getChat, interjectChat, sayChatStream, withoutDelivered,
   type ChatChange, type ChatEvent, type ChatMessage, type ChatSegment, type ChatStep,
 } from "../api/agent-chat";
 import { useFrames } from "../store/frames";
@@ -408,6 +408,12 @@ export function ChatDock() {
     setMessages((m) => [...m, { role: "user", text, at: Date.now() / 1000 }]);
     setInput("");
     sayChatStream(text, (ev) => {
+      if (ev.type === "interject_delivered") {
+        // 插话已送达模型（sleep 早醒/工具捎带的 drain 时刻）—— 排队条立刻撤；
+        // 轮末 segments 会按真实时序把它内嵌进 agent 消息（记录不丢）
+        setPendingSays((q) => withoutDelivered(q, ev.texts));
+        return;
+      }
       if (ev.type === "round") {
         if (ev.error) {
           setChatErr(ev.error);   // G7：失败理由原样显形

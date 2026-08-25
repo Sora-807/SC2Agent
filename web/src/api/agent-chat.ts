@@ -110,9 +110,24 @@ export type ChatEvent =
   | { type: "turn_start" | "turn_end" | "llm_timeout"; turn_no?: number }
   | { type: "tool_call"; tool: string; args?: Record<string, unknown>;
       result_preview?: string; turn_no?: number }
+  | { type: "interject_delivered"; texts: string[] }
   | { type: "run_end"; outcome?: string; result?: string; summary?: string }
   | { type: "round"; reply?: string; outcome?: string; changes?: ChatChange[];
       messages?: ChatMessage[]; error?: string };
+
+/** 排队条状态更新（2026-08-25 排队中不消失修复）：送达一条撤一条。
+ *  按文本精确匹配；同文本重复排队时先撤最早入队的那条。 */
+export function withoutDelivered(
+  queue: readonly string[],
+  delivered: readonly string[],
+): string[] {
+  const rest = [...queue];
+  for (const t of delivered) {
+    const i = rest.indexOf(t);
+    if (i >= 0) rest.splice(i, 1);
+  }
+  return rest;
+}
 
 /** 流式说一句：逐事件回调；流面失败（旧后端/网络）自动回退到整段接口。 */
 export async function sayChatStream(text: string, onEvent: (ev: ChatEvent) => void): Promise<void> {
