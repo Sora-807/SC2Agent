@@ -2,7 +2,7 @@
 
 > 本文记录「三个并行审查 → 修复批次 → WS 断线 → F14 全链 → I5/I6 → F15-F19 → 用户四轮反馈」
 > 这一执行轮的工作、决策与发现。
-> 承接：docs/PLAN.md（计划）、docs/ARCHITECTURE.md（架构）、docs/ISSUES.md（问题清单）。
+> 承接：docs/archive/PLAN.md（计划，已归档）、docs/ARCHITECTURE.md（架构）、docs/ISSUES.md（问题清单）。
 > 每节最后标了哪些 ISSUES/红线被关闭。
 
 ## 0. 提交清单（本执行轮，按时间序）
@@ -76,7 +76,7 @@ tests/api/test_loadouts_swap.py 18）；前端 361 passed + tsc/build 绿；夹�
 ## 0.51 四十四轮：真机七报立项（PLAN-LIVE-ROUND2，本轮只立项不执行）（2026-08-24，未提交）
 
 用户真机（仿真快进）再报七项，本轮全部**钉根因 + 立项**，修复留下一执行轮：
-`docs/PLAN-LIVE-ROUND2.md`（A~F 六批：投影真值 / 跟随强化 / start_session 配置面 /
+`docs/archive/PLAN-LIVE-ROUND2.md`（A~F 六批：投影真值 / 跟随强化 / start_session 配置面 /
 无builder 告警 / observe 结构化读法 / 图标+done 前端）。已核实的根因：
 
 - **投影矩阵「炸掉」**：`producer._project` 在 live 队列空的瞬间回退**参考计划**
@@ -171,7 +171,7 @@ amber 被主题纪律测试拦下 → 改 warn token，纪律生效的实例）�
 ## 0.54 四十七轮：五问题根因定位 + PLAN-ROUND3 立项 + G 批（复盘投影改版）执行（2026-08-24，未提交）
 
 用户真机复盘报五问题 + 复盘投影泳道爆炸，本轮**全部钉根因**（详见
-`docs/PLAN-ROUND3.md` 根因速查表），四个拍板：observe 并入 bbox（read 路径留
+`docs/archive/PLAN-ROUND3.md` 根因速查表），四个拍板：observe 并入 bbox（read 路径留
 index.md 当源清单）、TRAIN 卡死先只告警、队列体检只诊断给建议、F17 历史累积
 退役（用户自认的决策错误）。根因要点：
 
@@ -537,7 +537,7 @@ I1-I9 + templates/ 三份；用户拍板「是输入不是规范」，字段命�
 with_reactor→reactor、slots→cap、双倍挂件→反应堆、prereq 家族合并、status 英 key
 +映射表）。八项决策 + 两个新增点全部落定（D1 警报三情形含 live 被打掉/侦查归
 Group 语义/矿区进基础数据/勿需 not_reached 四值枚举/auto_supply 彻底删/前端红蓝
-适配/初始化模块），细节见 `docs/PLAN-V2.md`（六批：①队列执行模型 uid+skip 语义
+适配/初始化模块），细节见 `docs/archive/PLAN-V2.md`（六批：①队列执行模型 uid+skip 语义
 →②地图规划双分支+命名空间+热切 →③simulate v2 四段输出+initial-states →
 ④observe v2 全局+矿区 →⑤catalog 生成+改名+初始化模块 →⑥audit 合并退役；
 ADR-0032/0033/0034 + ADR-0027 修订待写）。待用户输入：agent 切地图设计文档。

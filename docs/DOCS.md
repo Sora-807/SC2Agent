@@ -9,10 +9,6 @@
 | 文档 | 内容 |
 |---|---|
 | `ARCHITECTURE.md` | 现行架构全景（模块分层与方向）——**REV/队列语义等局部过时，待刷新**（队列账本以 ADR-0032 为准、supply_guard 以 ADR-0034 为准） |
-| `PLAN.md` | 首批计划——已由 PLAN-V2 / PLAN-LIVE-ROUND2 接续完成（归档候选，留作 F10-F14 根因 file:line 证据） |
-| `PLAN-V2.md` | V2 六批重设计——已全部执行，真源已迁 WORKLOG/ADR（归档候选） |
-| `PLAN-LIVE-ROUND2.md` | 真机第二轮六批——已全部执行（归档候选） |
-| `PLAN-ROUND3.md` | 第三轮 A-H 批——大部分落地；H 批（supply_guard 显式开关）被 ADR-0034 推翻（归档候选） |
 | `PLAN-AGENT-EVAL.md` | 评测框架立项——D1-D16 已裁决可执行，eval/ 已落地 MVP（95c4911） |
 | `WORKLOG.md` | 执行史（§0.x 每轮：做了什么/为什么/回归数字），最新在上 |
 | `ISSUES.md` | 问题清单：开放 issue 详解 + 开放任务清单（2026-08-25 全量核对重排，18 条开放） |
@@ -62,6 +58,12 @@
 `slot_scan.log`（can_place 槽位扫描校准）。**注意：`*.log` 与 `state_trace.jsonl` 均被
 .gitignore 忽略**——fresh clone 没有它们；代码注释里的引用指向本机留档，本机勿删，
 缺失时相关测试自动 skip。
+
+## archive/ —— 已完成的计划原文（2026-08-25 归档）
+
+`PLAN.md` / `PLAN-V2.md` / `PLAN-LIVE-ROUND2.md` / `PLAN-ROUND3.md` 四份（README.md
+有逐份去向表；执行史在 WORKLOG、决策在 ADR，此处只留计划原文作根因证据）。
+注意 `PLAN-ROUND3.md` 的 H 批已被 ADR-0034 推翻。
 
 ## 已删除（去哪找）
 

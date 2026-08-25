@@ -23,7 +23,7 @@ assign_workers 立即发（无资源门控）：WorkerAllocator 展开成 gather
 
 **分文件（REFACTOR G2）**：在途建造确认/挂件/气矿在 `production/flights.py`（Mixin），
 placement 解析在 `production/placement.py`（纯函数），执行语义在
-`production/semantics.py`（纯函数）；本文件留编排
+`constraint/semantics.py`（纯函数，单点权威——planner/健康检查共享）；本文件留编排
 （队列 CRUD / 帧账本 / 阻塞记录 / snapshot / drain / 选择器 / 输出与征用）。
 """
 from __future__ import annotations
