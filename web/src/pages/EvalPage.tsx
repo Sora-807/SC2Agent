@@ -4,11 +4,12 @@
  *
  * 跑批两条入口（同一份归档 runtime/eval/）：本页「跑评测」按钮（POST /api/eval/run
  * 后台跑 + 轮询 job 进度）与 CLI（uv run python -m eval.run）。
- * 钻取路由：`#/eval?project=<id>`——hash 必须走 URLSearchParams 构造（值里的
- * `+` 会被 query 解码成空格，字符串拼接会坏）。
+ * 钻取路由：`#/eval?project=<id>`（批 B 再加 `?run=<run_dir>`）——hash 必须走
+ * URLSearchParams 构造（run_dir 含 `+`，字符串拼接会被解码成空格）。
  */
 import { useEffect, useState } from "react";
 import { EvalProjectDetail } from "../panels/EvalProjectDetail";
+import { EvalRunDetail } from "../panels/EvalRunDetail";
 import { fetchOverview, type Overview } from "../api/eval";
 import { Card, Empty } from "../shell/ui";
 import { API_BASE, useFrames } from "../store/frames";
@@ -19,7 +20,7 @@ export function evalHash(params: Record<string, string>): string {
   return `#/eval?${q.toString()}`;
 }
 
-export function EvalPage(props: { projectId?: string | null }) {
+export function EvalPage(props: { projectId?: string | null; runDir?: string | null }) {
   const apiOk = useFrames((s) => s.api.ok);
   const [ov, setOv] = useState<Overview | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -68,13 +69,30 @@ export function EvalPage(props: { projectId?: string | null }) {
     );
   }
 
-  // 项目详情钻取：overview 仍要拉（底部的「该项目的运行记录」从 runs 过滤）
+  // 钻取态：run 优先于 project（`?project=X&run=Y` 从项目页点进 run，返回时
+  // 保留项目上下文）。overview 仍要拉（项目页底部运行记录从 runs 过滤）。
+  if (props.runDir) {
+    return (
+      <EvalRunDetail
+        runDir={props.runDir}
+        onBack={() => {
+          window.location.hash = props.projectId ? evalHash({ project: props.projectId })
+                                                 : "#/eval";
+        }}
+        onOpenProject={(id) => { window.location.hash = evalHash({ project: id }); }} />
+    );
+  }
   if (props.projectId) {
     return (
       <EvalProjectDetail
         id={props.projectId}
         runs={(ov?.runs ?? []).filter((r) => r.project === props.projectId)}
-        onBack={() => { window.location.hash = "#/eval"; }} />
+        onBack={() => { window.location.hash = "#/eval"; }}
+        onOpenRun={(dir) => {
+          window.location.hash = props.projectId
+            ? evalHash({ project: props.projectId, run: dir })
+            : evalHash({ run: dir });
+        }} />
     );
   }
 
@@ -86,6 +104,9 @@ export function EvalPage(props: { projectId?: string | null }) {
   const job = ov.job;
   const goProject = (id: string): void => {
     window.location.hash = evalHash({ project: id });
+  };
+  const goRun = (dir: string): void => {
+    window.location.hash = evalHash({ run: dir });
   };
 
   return (
@@ -174,7 +195,9 @@ export function EvalPage(props: { projectId?: string | null }) {
             </thead>
             <tbody>
               {ov.runs.map((r, i) => (
-                <tr key={r.run_dir + i} className="border-t border-l1">
+                <tr key={r.run_dir + i}
+                    className="cursor-pointer border-t border-l1 hover:bg-inset"
+                    onClick={() => goRun(r.run_dir)}>
                   <td className="py-1 text-dim">{r.ts}</td>
                   <td className="text-dim">{r.label}</td>
                   <td className="font-mono">{r.project}</td>

@@ -10,10 +10,12 @@ import 全部延迟到函数体：eval 包顶层（fixture）import api.app，�
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 router = APIRouter()
 
@@ -119,6 +121,86 @@ def _out_root():
     from eval.run import OUT_ROOT
 
     return OUT_ROOT
+
+
+def _resolve_under(root: Path, run_dir: str) -> Path:
+    """run_dir（相对 eval_root）→ 受控绝对路径。越界=400（绝对路径/`..`），
+    不存在=404——错误语义拆开（I39 口径：别把「路径坏了」说成「没有」）。"""
+    try:
+        resolved = (root / run_dir).resolve()
+        resolved.relative_to(root.resolve())
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail=f"run_dir 越界：{run_dir!r}") from None
+    if not resolved.is_dir():
+        raise HTTPException(status_code=404,
+                            detail=f"run 不存在：{run_dir}（可用记录看 /api/eval/overview 的 runs 表）") from None
+    return resolved
+
+
+def _index_row(root: Path, run_dir: str) -> dict | None:
+    """index.jsonl 里匹配 run_dir 的那行；中断批次的孤儿 run（批末才 append）→ None。"""
+    from eval.archive import load_index
+
+    for row in load_index(root):
+        if row.get("run_dir") == run_dir:
+            return row
+    return None
+
+
+# 注意注册顺序：/prompt 必须在 {run_dir:path} 之前，否则 path 转换器会把它吞进 run_dir
+@router.get("/api/eval/runs/{run_dir:path}/prompt")
+def eval_run_prompt(run_dir: str, request: Request) -> Response:
+    """本 run 的提示词全文快照（D16）——text/plain，点开才取（懒加载）。
+
+    快照在批次目录 prompts/<hash>.md，**批末**才写：中断批次的 run 没有 → 404
+    （真实情况，不是异常路径）。
+    """
+    from eval.run import OUT_ROOT
+
+    root = getattr(request.app.state, "eval_root", None) or OUT_ROOT
+    rd = _resolve_under(root, run_dir)
+    result_file = rd / "result.json"
+    if not result_file.is_file():
+        raise HTTPException(status_code=404, detail=f"run 没有 result.json：{run_dir}") from None
+    meta = (json.loads(result_file.read_text(encoding="utf-8")).get("meta") or {})
+    h = meta.get("prompt_hash")
+    prompt_file = rd.parent.parent / "prompts" / f"{h}.md" if h else None
+    if not prompt_file or not prompt_file.is_file():
+        raise HTTPException(status_code=404,
+                            detail="该批次未写提示词快照（批末才落盘——被中断的批次没有）") from None
+    return Response(prompt_file.read_text(encoding="utf-8"),
+                    media_type="text/plain; charset=utf-8")
+
+
+@router.get("/api/eval/runs/{run_dir:path}")
+def eval_run_detail(run_dir: str, request: Request, messages: int = 0) -> dict:
+    """单 run 全量指标（PLAN-EVAL-FRONTEND 批 B：直读归档，不重跑不重算）。
+
+    run_dir 来自 index 行原样（相对 eval_root，批次目录含 `+`——path 形态是
+    字面量，query 里会被解码成空格，这是走 path-param 的原因）。messages 默认
+    剥掉只返条数（极端归档 8 万+字符）；?messages=1 附 400 字/条摘要（与
+    result.py 报告瘦身同款裁剪，单源）。index_row 匹配不到 = 中断批次的孤儿 run。
+    """
+    from eval.result import _clip_messages  # 同款裁剪逻辑，单源
+    from eval.run import OUT_ROOT
+
+    root = getattr(request.app.state, "eval_root", None) or OUT_ROOT
+    rd = _resolve_under(root, run_dir)
+    result_file = rd / "result.json"
+    if not result_file.is_file():
+        raise HTTPException(status_code=404, detail=f"run 没有 result.json：{run_dir}") from None
+    result = json.loads(result_file.read_text(encoding="utf-8"))
+    grades_file = rd / "grades.json"
+    grades = (json.loads(grades_file.read_text(encoding="utf-8"))
+              if grades_file.is_file() else [])
+    msgs = result.pop("messages", [])
+    return {
+        **result,
+        "messages_count": len(msgs),
+        "messages": _clip_messages(msgs) if messages else [],
+        "grades": grades,
+        "index_row": _index_row(root, run_dir),
+    }
 
 
 def _default_factory():

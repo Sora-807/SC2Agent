@@ -13,6 +13,9 @@ const src = code("shell/ChatDock.tsx");
 const client = code("api/agent-chat.ts");
 // 流式事件的转移逻辑在 chat-live.ts（2026-08-23 时间线化），行为断言见 chat-live.test.ts
 const live = code("shell/chat-live.ts");
+// 改动 chip 2026-08-26 提取共享（评测 run 详情渲染同一份 ChangeRecord 归档），
+// 样式/跳转断言跟着搬到这里
+const chip = code("shell/change-chip.tsx");
 
 describe("ChatDock：商量回路已接上", () => {
   it("不再有 B10 时代的禁用占位（placeholder 文案退役）", () => {
@@ -69,9 +72,10 @@ describe("ChatDock：商量回路已接上", () => {
   });
 
   it("改动按钮（十五轮拍板样式）：蓝框圆角、透明底、黑字、与回复同宽对齐", () => {
-    const c = src;
+    const c = chip;
     expect(c).toContain("ChangeChip");
-    expect(c).toContain("m.changes");
+    expect(src).toContain("m.changes");
+    expect(src).toContain('from "./change-chip"');   // ChatDock 渲染共享件
     expect(c).toMatch(/w-full rounded-lg border-\[1\.5px\] border-accent-blue/);
     expect(c).toMatch(/window\.location\.hash = c\.target/);  // 跳转目标后端算好，不信 LLM 拼链接
   });
@@ -118,7 +122,7 @@ describe("ChatDock：真流式（2026-08-22 十五轮，接 BaseAgent start_stre
   });
 
   it("改动 chip 跳对局页前先切 drive 模式（2026-08-24：规划模式守卫曾把它重定向回规划首页）；跳规划页同样先切 offline（复盘页点规划 chip 跳不过去的另一半）", () => {
-    const c = src;
+    const c = chip;
     expect(c).toContain('c.target.startsWith("#/plan-")');
     expect(c).toContain('setMode("offline")');
     expect(c).toContain('setMode("drive")');

@@ -13,13 +13,14 @@
 import { useEffect, useRef, useState, type ReactNode, type UIEvent } from "react";
 import {
   cleanChat, getChat, interjectChat, sayChatStream, withoutDelivered,
-  type ChatChange, type ChatEvent, type ChatMessage, type ChatSegment, type ChatStep,
+  type ChatEvent, type ChatMessage, type ChatSegment, type ChatStep,
 } from "../api/agent-chat";
 import { useFrames } from "../store/frames";
 import { useQueueStore } from "../planning/queue-store";
 import { Markdown } from "./markdown";
 import { chatScroll, isNearBottom } from "./chat-scroll";
 import { applyLiveEvent, type LiveEntry } from "./chat-live";
+import { ChangeChip } from "./change-chip";
 
 /** 斜杠指令（2026-08-24 首批只有 clean）：输入 / 弹建议，回车/点选执行 —— 不发给 LLM */
 const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
@@ -260,32 +261,6 @@ function NudgeBar({ m }: { m: ChatMessage }) {
       </svg>
       <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.text}</span>
     </div>
-  );
-}
-
-/** 改动按钮（用户 2026-08-22 拍板样式）：蓝框圆角、透明底、黑字，**与回复同宽**
- *  对齐不缺一块；点击跳到后端算好的 hash（不信 LLM 拼链接）。 */
-function ChangeChip({ c }: { c: ChatChange }) {
-  return (
-    <button
-      onClick={() => {
-        // 目标页可能不属于当前模式 —— 按目标前缀切模式，否则 App 的
-        // 「页面不属于本模式」守卫会把它弹回模式首页（2026-08-24 用户报
-        // 复盘页点规划 chip 跳不过去；此前只处理了对局方向这半边）
-        if (c.target.startsWith("#/plan-")) {
-          if (useFrames.getState().mode !== "offline") {
-            void useFrames.getState().setMode("offline");
-          }
-        } else {
-          void useFrames.getState().setMode("drive");
-        }
-        window.location.hash = c.target.replace(/^#/, "");
-      }}
-      title={"跳到" + c.target + "（agent 本轮" + (c.action === "open" ? "让你看" : "改") + "的东西）"}
-      className="w-full rounded-lg border-[1.5px] border-accent-blue bg-transparent px-2 py-1 text-left text-note font-medium text-strong hover:bg-blue-soft"
-    >
-      {c.action === "add" ? "＋" : c.action === "open" ? "↗" : "✎"} {c.label}
-    </button>
   );
 }
 

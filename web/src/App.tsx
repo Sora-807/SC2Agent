@@ -101,7 +101,8 @@ export function App() {
                                 initialPlanId={params.get("plan")}
                                 initialMapPlanId={params.get("map")} />
                 )}
-                {page === "eval" && <EvalPage projectId={params.get("project")} />}
+                {page === "eval" && <EvalPage projectId={params.get("project")}
+                                               runDir={params.get("run")} />}
                 {page === "debug" && <DebugPage />}
               </>
             )}

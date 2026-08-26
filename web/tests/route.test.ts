@@ -43,11 +43,13 @@ describe("评测页接线（2026-08-25 前端面 + PLAN-EVAL-FRONTEND 批 A 钻�
     const route = code("shell/route.ts");
     expect(route).toContain('{ key: "eval", label: "评测"');
     const app = code("App.tsx");
-    expect(app).toContain('page === "eval" && <EvalPage projectId={params.get("project")} />');
+    expect(app).toContain('page === "eval" && <EvalPage projectId={params.get("project")');
+    expect(app).toContain('runDir={params.get("run")}');
     expect(app).toContain('from "./pages/EvalPage"');
     const api = code("api/eval.ts");
     expect(api).toContain("/api/eval/overview");
     expect(api).toContain("/api/eval/projects/");
+    expect(api).toContain("/api/eval/runs/");
   });
 
   it("钻取 hash 必须走 URLSearchParams（run_dir 含 +，字符串拼接会解码成空格）", async () => {
