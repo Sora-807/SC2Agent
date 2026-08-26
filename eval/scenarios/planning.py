@@ -64,6 +64,11 @@ class PlansGrader:
         return Grade(self.axis, self.name, passed=ok,
                      reason_zh=f"顺序 {kinds}（期望 refinery 在 factory 前）")
 
+    def describe(self) -> dict:
+        # 零构造参数的主动 grader：期望只在 grade() 逻辑里，显式补给
+        # eval.describe（前端「项目详情」才看得到在验什么，EF3）
+        return {"期望": "opening-v2 规划里 terran/refinery 排在 terran/factory 前"}
+
 
 def _prepare(tmp: Path) -> None:
     plans = tmp / "plans"
@@ -111,6 +116,11 @@ class StrategyGrader:
         return Grade(self.axis, self.name, passed=ok,
                      reason_zh=f"{self.strategy_id} 有 {steps} 步（要求 ≥{self.must_steps}）"
                                + ("；写时校验通过（能进 store 即已编译）" if ok else ""))
+
+    def describe(self) -> dict:
+        # 期望主要在构造参数里（strategy_id/must_steps），这句是语义补充（EF3）
+        return {"期望": f"策略 {self.strategy_id} 存在且步数 ≥{self.must_steps}"
+                        "（能进 store 即编译通过）"}
 
 
 @scenario("P2-strategy-from-lib", tags=["planning"],
@@ -165,6 +175,10 @@ class MapPlanGrader:
         return Grade(self.axis, self.name, passed=ok,
                      reason_zh=(f"{total} 个槽位两两不重叠" if ok
                                 else f"仍有重叠：{overlap}"))
+
+    def describe(self) -> dict:
+        # 期望主要在构造参数里（plan_id），这句是语义补充（EF3）
+        return {"期望": f"地图规划 {self.plan_id} 存在且同 spawn 槽位两两不重叠"}
 
 
 # 预置一份带重叠的地图规划（D5 与 D4 同位）—— agent 要读懂几何校验报错并挪开

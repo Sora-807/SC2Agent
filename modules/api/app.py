@@ -53,6 +53,8 @@ def create_app(frame_dir: Path | str | None = None,
                strategies_dir: Path | str | None = None,
                loadouts_dir: Path | str | None = None,
                initial_states_dir: Path | str | None = None,
+               eval_root: Path | str | None = None,
+               eval_llm_factory: "object | None" = None,
                agent_talk: "object | None" = None,
                agent_base: str | None = None) -> FastAPI:
     registry = SourceRegistry(Path(frame_dir) if frame_dir else DEFAULT_FRAME_DIR)
@@ -103,6 +105,10 @@ def create_app(frame_dir: Path | str | None = None,
     #:（recordings 与夹具同信封 JSONL 格式；懒加载与夹具 registry 同款）。
     app.state.recording_registry = (SourceRegistry(app.state.recordings_dir)
                                     if app.state.recordings_dir else None)
+    #: 评测记录根（2026-08-25 前端面）：None = eval.run.OUT_ROOT（与 CLI 同一份）；
+    #: 测试传 tmp 目录隔离。eval_llm_factory 同理：None = openai_from_env（正式）。
+    app.state.eval_root = Path(eval_root) if eval_root else None
+    app.state.eval_llm_factory = eval_llm_factory
     #: 策略文件存储（二十七轮「开放写策略，免审」）：default 从内置常量播种（锁定）。
     from api.session import DEFAULT_ASSEMBLY, DEFAULT_STRATEGY
     from view.strategies import StrategyStore

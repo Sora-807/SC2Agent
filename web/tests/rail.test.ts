@@ -15,7 +15,8 @@ describe("railGroups 分组结构（P1：导航是模式的函数）", () => {
     expect(groups.map((g) => g.label)).toEqual(["规划", "诊断"]);
     expect(groups[0]!.items.map((p) => p.key))
       .toEqual(["plan-map", "plan-production", "plan-flow"]);
-    expect(groups[1]!.items.map((p) => p.key)).toEqual(["debug"]);
+    // 2026-08-25：诊断组加「评测」（eval 管线前端面）
+    expect(groups[1]!.items.map((p) => p.key)).toEqual(["eval", "debug"]);
   });
 
   it("实时/复盘：只有驾驶四页 + 诊断（规划入口不出现，R5）", () => {

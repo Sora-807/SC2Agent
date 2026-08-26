@@ -16,6 +16,7 @@ export const PAGES = [
   { key: "plan-map", label: "地图规划", icon: "✥", group: "plan" },
   { key: "plan-production", label: "生产规划", icon: "✎", group: "plan" },
   { key: "plan-flow", label: "Flow 装配", icon: "❖", group: "plan" },
+  { key: "eval", label: "评测", icon: "✓", group: "diag" },
   { key: "debug", label: "调试", icon: "⚙", group: "diag" },
 ] as const;
 

@@ -3,8 +3,9 @@
 每个文件一个 `APIRouter` + 同形的一组端点；`api/app.py` 的 `create_app` 统一挂载。
 辅助（帧源解析 / 命令门 / 沙盒泵）在 `api/state.py`，状态本体在 `app.state` 扁平键。
 """
-from api.routes import (agent, commands, frames_ws, initial_states, loadouts, map_plans, meta, plans,
-                        plans_simulate, proposals, recordings, session, session_start, sources, strategies)
+from api.routes import (agent, commands, eval, frames_ws, initial_states, loadouts, map_plans, meta,
+                        plans, plans_simulate, proposals, recordings, session, session_start, sources,
+                        strategies)
 
 #: 挂载顺序 = 声明顺序。路径无方法级冲突（`/api/plans/simulate` 是 POST，
 #: 不会被 GET `/api/plans/{pid}` 抢走），新增路由组时 append 即可。
@@ -23,5 +24,6 @@ ROUTERS = (
     initial_states.router,
     map_plans.router,
     loadouts.router,
+    eval.router,
     frames_ws.router,
 )

@@ -36,3 +36,33 @@ describe("parseRoute：页 + 查询参数", () => {
     expect(r.params.get("plan")).toBe("x");
   });
 });
+
+describe("评测页接线（2026-08-25 前端面 + PLAN-EVAL-FRONTEND 批 A 钻取）", () => {
+  it("diag 组含 eval 页且 App 挂载 EvalPage（源码级锁）", async () => {
+    const { code } = await import("./source-scan");
+    const route = code("shell/route.ts");
+    expect(route).toContain('{ key: "eval", label: "评测"');
+    const app = code("App.tsx");
+    expect(app).toContain('page === "eval" && <EvalPage projectId={params.get("project")} />');
+    expect(app).toContain('from "./pages/EvalPage"');
+    const api = code("api/eval.ts");
+    expect(api).toContain("/api/eval/overview");
+    expect(api).toContain("/api/eval/projects/");
+  });
+
+  it("钻取 hash 必须走 URLSearchParams（run_dir 含 +，字符串拼接会解码成空格）", async () => {
+    const { code } = await import("./source-scan");
+    const page = code("pages/EvalPage.tsx");
+    expect(page).toContain("new URLSearchParams(params)");
+    expect(page).not.toContain('"#/eval?" +');
+  });
+
+  it("evalHash：query 参数往返（+ 与 / 都不坏）", async () => {
+    const { evalHash } = await import("../src/pages/EvalPage");
+    const h = evalHash({ run: "20260825-130647-B5+L1/L1-gas-block/run1" });
+    const query = h.split("?")[1] ?? "";
+    expect(new URLSearchParams(query).get("run"))
+      .toBe("20260825-130647-B5+L1/L1-gas-block/run1");
+    expect(h.startsWith("#/eval?")).toBe(true);
+  });
+});

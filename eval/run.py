@@ -40,8 +40,10 @@ def _llm_factory(deterministic: bool):
     return factory
 
 
-async def _run_project(project: Project, runs: int, llm_factory, out_dir: Path) -> tuple[list[dict], list[dict]]:
+async def _run_project(project: Project, runs: int, llm_factory, out_dir: Path,
+                       on_progress=None) -> tuple[list[dict], list[dict]]:
     """返回 (报告行, 索引行)。索引行是归档的入口（append-only，前端读这个）。"""
+    say = on_progress or (lambda text: None)
     rows: list[dict] = []
     index_rows: list[dict] = []
     for run_no in range(1, runs + 1):
@@ -70,9 +72,44 @@ async def _run_project(project: Project, runs: int, llm_factory, out_dir: Path) 
         irow.update({"project": project.id, "run_dir": rel})
         index_rows.append(irow)
         ok = sum(1 for g in grades if g.ok)
-        print(f"  [{project.id}] run {run_no}/{runs}：{ok}/{len(grades)} 轴过"
-              f"（outcome={result.meta.get('outcome')}）")
+        say(f"  [{project.id}] run {run_no}/{runs}：{ok}/{len(grades)} 轴过"
+            f"（outcome={result.meta.get('outcome')}）")
     return rows, index_rows
+
+
+async def run_batch(projects: list, runs: int, llm_factory, out_root: Path,
+                    on_progress=None) -> dict:
+    """一批场景跑完（CLI main 与 API 触发共用体）。返回 {report, label, out_dir, failed}。
+
+    on_progress(text)（可选）：每完成一个 run/阶段的进度行 —— CLI 传 print，
+    API 传 job 状态收集器（前端轮询看进度）。
+    """
+    say = on_progress or (lambda text: None)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    label = "+".join(p.id for p in projects)
+    # 目录名与 label 分离：全量一批 13 个场景时 label 300+ 字符，直接当目录名
+    # 爆 Windows MAX_PATH=260（WinError 3，2026-08-26 run_eval.bat 实测）。目录名
+    # 截断 + 尾 hash 保唯一；完整场景清单在 report.md/index.jsonl 里，不丢信息。
+    dir_label = (label if len(label) <= 80
+                 else label[:68] + f"...x{len(projects)}-{hash(label) & 0xFFFF:04x}")
+    out_dir = out_root / f"{stamp}-{dir_label}"
+
+    all_rows: list[dict] = []
+    all_index: list[dict] = []
+    for project in projects:
+        say(f"[{project.id}] × {runs} runs")
+        rows, index_rows = await _run_project(project, runs, llm_factory, out_dir,
+                                              on_progress=say)
+        all_rows.extend(rows)
+        all_index.extend(index_rows)
+
+    path = write_report(out_dir, label, all_rows)
+    append_index(out_root, all_index, label, path)
+    failed = [r for r in all_rows
+              if any(not g.ok and g.passed is not None for g in r["grades"])]
+    say(f"完成：{len(all_index)} runs，失败 {len(failed)} —— 报告 {path}")
+    return {"report": str(path), "label": label, "out_dir": str(out_dir),
+            "failed": len(failed)}
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -105,27 +142,12 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
     runs = args.runs or (1 if args.deterministic else DEFAULT_RUNS)
 
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    label = "+".join(p.id for p in projects)
-    out_dir = OUT_ROOT / f"{stamp}-{label}"
-    llm_factory = _llm_factory(args.deterministic)
-
-    all_rows: list[dict] = []
-    all_index: list[dict] = []
-    for project in projects:
-        print(f"[{project.id}] × {runs} runs")
-        rows, index_rows = await _run_project(project, runs, llm_factory, out_dir)
-        all_rows.extend(rows)
-        all_index.extend(index_rows)
-
-    path = write_report(out_dir, label, all_rows)
-    append_index(OUT_ROOT, all_index, label, path)
-    print(f"\n报告：{path}")
-    print(f"归档：{out_dir}（result.json/grades.json × {len(all_index)} run）"
+    out = await run_batch(projects, runs, _llm_factory(args.deterministic), OUT_ROOT,
+                          on_progress=print)
+    print(f"\n报告：{out['report']}")
+    print(f"归档：{out['out_dir']}（result.json/grades.json × 全部 run）"
           f" + 索引 {OUT_ROOT / 'index.jsonl'}")
-    failed = [r for r in all_rows
-              if any(not g.ok and g.passed is not None for g in r["grades"])]
-    return 1 if failed else 0
+    return 1 if out["failed"] else 0
 
 
 if __name__ == "__main__":

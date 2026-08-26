@@ -22,6 +22,7 @@ import { DebugPage } from "./pages/DebugPage";
 import { FlowPage } from "./pages/FlowPage";
 import { PlanningPage } from "./pages/PlanningPage";
 import { ProductionPage } from "./pages/ProductionPage";
+import { EvalPage } from "./pages/EvalPage";
 
 export function App() {
   const [page, go, params] = useRoute();
@@ -100,6 +101,7 @@ export function App() {
                                 initialPlanId={params.get("plan")}
                                 initialMapPlanId={params.get("map")} />
                 )}
+                {page === "eval" && <EvalPage projectId={params.get("project")} />}
                 {page === "debug" && <DebugPage />}
               </>
             )}

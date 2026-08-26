@@ -152,13 +152,22 @@ def test_nobody_imports_eval_or_voice():
 
     modules/ 与 agent/ 里出现 `import eval` / `import voice` 即方向反了：
     评测框架或语音栈渗进引擎，被测系统就依赖了自己的裁判/外设。
+    例外：`api/routes/eval.py` 是 eval 包自己的 API 薄壳（2026-08-25 前端面）——
+    它 import eval 是同域装配（与 strategies 路由之于 view.strategies 同理），
+    不是引擎依赖评测。
     """
+    #: eval 资源域的 API 薄壳（路由文件名与 eval 包同名是刻意对齐；
+    #: rel 从仓库根起算，即 "modules/api/routes/eval.py"）
+    EVAL_SHELL = {"modules/api/routes/eval.py"}
     violations = []
     for root in (MODULES_DIR, AGENT_DIR):
         for f in _pkg_files(root):
+            rel = f.relative_to(root.parent).as_posix()
+            if rel in EVAL_SHELL:
+                continue
             bad = _imports_in(f) & {"eval", "voice"}
             if bad:
-                violations.append(f"{f.relative_to(root.parent)}: imports {sorted(bad)}")
+                violations.append(f"{rel}: imports {sorted(bad)}")
     assert not violations, "引擎/agent 反向 import 了 eval 或 voice:\n" + "\n".join(violations)
 
 
